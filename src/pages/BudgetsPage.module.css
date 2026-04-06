@@ -1,0 +1,330 @@
+/* ──────────────────────────────────────────────
+   Budgets Page
+   ────────────────────────────────────────────── */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.sectionLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin-bottom: 12px;
+}
+
+/* ── Hero — Dynamic Allocation ── */
+.hero {
+  background: var(--color-primary);
+  border-radius: var(--radius-xl);
+  padding: 28px 28px 24px;
+  color: #fff;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero::after {
+  content: '';
+  position: absolute;
+  top: -40px;
+  right: -40px;
+  width: 200px;
+  height: 200px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 50%;
+}
+
+.heroLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+  margin-bottom: 8px;
+}
+
+.heroTitle {
+  font-family: var(--font-headline);
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.heroSubtitle {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 20px;
+}
+
+.heroStats {
+  display: flex;
+  gap: 32px;
+}
+
+.heroStat {
+  text-align: left;
+}
+
+.heroStatValue {
+  font-family: var(--font-headline);
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
+.heroStatValueGreen {
+  color: #4ade80;
+}
+
+.heroStatLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.45);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ── Savings Goals ── */
+.goalsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.goalCard {
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  padding: 20px;
+  box-shadow: var(--shadow-xs);
+  text-align: center;
+}
+
+.goalRingWrapper {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+
+.goalName {
+  font-family: var(--font-headline);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: 4px;
+}
+
+.goalTarget {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-bottom: 2px;
+}
+
+.goalSaved {
+  font-family: var(--font-headline);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+/* ── Spending Limits ── */
+.limitsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.limitCard {
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  padding: 18px;
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow var(--transition-base);
+}
+
+.limitCard:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.limitHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.limitIcon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.limitIcon .material-symbols-outlined {
+  font-size: 17px;
+}
+
+.limitBadge {
+  padding: 3px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badgeWarning {
+  color: var(--color-warning);
+  background: rgba(232, 163, 23, 0.08);
+}
+
+.badgeStable {
+  color: var(--color-secondary);
+  background: rgba(0, 88, 190, 0.06);
+}
+
+.badgeHealthy {
+  color: var(--color-success);
+  background: rgba(0, 150, 104, 0.06);
+}
+
+.limitName {
+  font-family: var(--font-headline);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: 4px;
+}
+
+.limitSpent {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.limitSpentValue {
+  font-family: var(--font-headline);
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--color-text-primary);
+}
+
+.limitSpentOf {
+  font-size: 12.5px;
+  color: var(--color-text-tertiary);
+}
+
+.limitBar {
+  height: 6px;
+  background: var(--color-surface-alt);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.limitFill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width var(--transition-slow);
+}
+
+.limitPct {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-align: right;
+}
+
+/* ── Historical Variance Table ── */
+.varianceCard {
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  padding: 20px;
+  box-shadow: var(--shadow-xs);
+  overflow-x: auto;
+}
+
+.varianceTitle {
+  font-family: var(--font-headline);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: 16px;
+}
+
+.varianceTable {
+  width: 100%;
+  font-size: 13px;
+}
+
+.varianceTable th {
+  padding: 8px 14px;
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  background: var(--color-surface-alt);
+  border-bottom: var(--border-ghost);
+}
+
+.varianceTable td {
+  padding: 10px 14px;
+  border-bottom: var(--border-ghost);
+}
+
+.varianceTable tr:last-child td {
+  border-bottom: none;
+}
+
+.varianceUp {
+  color: var(--color-error);
+  font-weight: 600;
+}
+
+.varianceDown {
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.varianceFlat {
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+}
+
+/* ── Responsive ── */
+@media (max-width: 1024px) {
+  .goalsGrid,
+  .limitsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .heroStats {
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 768px) {
+  .goalsGrid,
+  .limitsGrid {
+    grid-template-columns: 1fr;
+  }
+  .hero {
+    padding: 20px;
+  }
+  .heroStatValue {
+    font-size: 22px;
+  }
+}

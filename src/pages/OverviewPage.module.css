@@ -1,0 +1,504 @@
+/* ──────────────────────────────────────────────
+   Overview Page — Executive Dashboard
+   ────────────────────────────────────────────── */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* ── Section Label ── */
+.sectionLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin-bottom: 12px;
+}
+
+/* ── Hero Stats Grid ── */
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.statCard {
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  padding: 20px;
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow var(--transition-base);
+}
+
+.statCard:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.statHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.statTitle {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.statIcon {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.statIcon .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.statIconBlue {
+  background: rgba(0, 88, 190, 0.08);
+  color: var(--color-secondary);
+}
+
+.statIconGreen {
+  background: rgba(0, 150, 104, 0.08);
+  color: var(--color-success);
+}
+
+.statIconRed {
+  background: rgba(186, 26, 26, 0.08);
+  color: var(--color-error);
+}
+
+.statIconDark {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--color-text-primary);
+}
+
+.statValue {
+  font-family: var(--font-headline);
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--color-text-primary);
+  letter-spacing: -0.5px;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+
+.statChange {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.statChangeUp {
+  color: var(--color-success);
+  background: rgba(0, 150, 104, 0.06);
+}
+
+.statChangeDown {
+  color: var(--color-error);
+  background: rgba(186, 26, 26, 0.06);
+}
+
+.statChange .material-symbols-outlined {
+  font-size: 14px;
+}
+
+.statPeriod {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-left: 6px;
+}
+
+/* ── Charts Row ── */
+.chartsRow {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+}
+
+.chartCard {
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  padding: 20px;
+  box-shadow: var(--shadow-xs);
+}
+
+.chartHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.chartTitle {
+  font-family: var(--font-headline);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.chartPeriodPills {
+  display: flex;
+  gap: 2px;
+}
+
+.chartPill {
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.chartPill:hover {
+  color: var(--color-text-secondary);
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.chartPillActive {
+  color: var(--color-text-primary);
+  background: rgba(0, 0, 0, 0.06);
+  font-weight: 600;
+}
+
+.chartArea {
+  height: 200px;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 0 4px;
+}
+
+.chartBar {
+  flex: 1;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  min-height: 4px;
+  transition: opacity var(--transition-fast);
+}
+
+.chartBar:hover {
+  opacity: 0.8;
+}
+
+.chartLegend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: var(--border-ghost);
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.legendDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Donut Chart */
+.donutWrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 0;
+}
+
+.donutLegend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.donutLegendItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+}
+
+.donutLegendLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+}
+
+.donutLegendDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.donutLegendValue {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  font-family: var(--font-headline);
+}
+
+/* ── Bottom Row ── */
+.bottomRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* Sheets Status Card */
+.sheetsCard {
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  padding: 20px;
+  box-shadow: var(--shadow-xs);
+}
+
+.sheetsHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.sheetsIcon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  background: rgba(0, 150, 104, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-success);
+}
+
+.sheetsIcon .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.sheetsTitle {
+  font-family: var(--font-headline);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.sheetsBadge {
+  margin-left: auto;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-success);
+  background: rgba(0, 150, 104, 0.08);
+  border-radius: var(--radius-sm);
+}
+
+.sheetsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: var(--border-ghost);
+  font-size: 13px;
+}
+
+.sheetsRow:last-child {
+  border-bottom: none;
+}
+
+.sheetsLabel {
+  color: var(--color-text-secondary);
+}
+
+.sheetsValue {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* Anomalies Feed */
+.anomaliesCard {
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  padding: 20px;
+  box-shadow: var(--shadow-xs);
+}
+
+.anomaliesTitle {
+  font-family: var(--font-headline);
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.anomalyBadge {
+  padding: 2px 7px;
+  font-size: 10.5px;
+  font-weight: 700;
+  background: rgba(186, 26, 26, 0.08);
+  color: var(--color-error);
+  border-radius: var(--radius-sm);
+}
+
+.anomalyItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: var(--border-ghost);
+}
+
+.anomalyItem:last-child {
+  border-bottom: none;
+}
+
+.anomalyDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 6px;
+}
+
+.anomalyContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.anomalyText {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  line-height: 1.4;
+}
+
+.anomalyTime {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+}
+
+/* ── Governance Footer ── */
+.governance {
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: var(--shadow-xs);
+}
+
+.govLeft {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.govIcon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  background: rgba(0, 0, 0, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.govIcon .material-symbols-outlined {
+  font-size: 17px;
+  color: var(--color-text-secondary);
+}
+
+.govTitle {
+  font-family: var(--font-headline);
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.govSubtitle {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.govStats {
+  display: flex;
+  gap: 24px;
+}
+
+.govStat {
+  text-align: center;
+}
+
+.govStatValue {
+  font-family: var(--font-headline);
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--color-text-primary);
+}
+
+.govStatLabel {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Responsive ── */
+@media (max-width: 1024px) {
+  .statsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .chartsRow {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .statsGrid {
+    grid-template-columns: 1fr;
+  }
+  .bottomRow {
+    grid-template-columns: 1fr;
+  }
+  .governance {
+    flex-direction: column;
+    gap: 16px;
+    text-align: center;
+  }
+  .statValue {
+    font-size: 24px;
+  }
+}
