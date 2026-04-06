@@ -243,6 +243,47 @@
   font-size: 14px;
   font-weight: 500;
   color: var(--color-text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.accountName:hover {
+  color: #0058be;
+}
+
+.renameIcon {
+  font-size: 14px;
+  color: #c6c6cd;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.accountName:hover .renameIcon {
+  opacity: 1;
+  color: #0058be;
+}
+
+.renameInput {
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  border: 1px solid #0058be;
+  border-radius: 4px;
+  padding: 4px 8px;
+  width: 100%;
+  background: #ffffff;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(0, 88, 190, 0.1);
+}
+
+.originalName {
+  font-size: 11px;
+  color: #76777d;
+  margin-top: 2px;
+  font-style: italic;
 }
 
 .accountSub {

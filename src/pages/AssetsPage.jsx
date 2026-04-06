@@ -1,3 +1,4 @@
+import { useState, useCallback } from 'react';
 import { useData } from '../contexts/DataContext';
 import styles from './AssetsPage.module.css';
 
@@ -6,15 +7,43 @@ function fmt(n) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
 }
 
-function formatDate(dateStr) {
-  if (!dateStr) return '—';
-  const d = new Date(dateStr);
-  if (isNaN(d)) return dateStr;
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+const NICKNAMES_KEY = 'wa-account-nicknames';
+
+function loadNicknames() {
+  try { return JSON.parse(localStorage.getItem(NICKNAMES_KEY)) || {}; } catch { return {}; }
+}
+
+function saveNicknames(map) {
+  localStorage.setItem(NICKNAMES_KEY, JSON.stringify(map));
 }
 
 export function AssetsPage() {
   const { balances, loading } = useData();
+  const [nicknames, setNicknames] = useState(loadNicknames);
+  const [editingKey, setEditingKey] = useState(null);
+  const [editValue, setEditValue] = useState('');
+
+  const startRename = useCallback((originalName) => {
+    setEditingKey(originalName);
+    setEditValue(nicknames[originalName] || originalName);
+  }, [nicknames]);
+
+  const saveRename = useCallback(() => {
+    if (!editingKey) return;
+    const val = editValue.trim();
+    const next = { ...nicknames };
+    if (val && val !== editingKey) {
+      next[editingKey] = val;
+    } else {
+      delete next[editingKey];
+    }
+    setNicknames(next);
+    saveNicknames(next);
+    setEditingKey(null);
+    setEditValue('');
+  }, [editingKey, editValue, nicknames]);
+
+  const displayName = (originalName) => nicknames[originalName] || originalName;
 
   if (loading) {
     return (
@@ -127,7 +156,22 @@ export function AssetsPage() {
             {assets.map((item, i) => (
               <div className={styles.tableRow} key={`asset-${i}`}>
                 <div>
-                  <div className={styles.accountName}>{item.name}</div>
+                  {editingKey === item.name ? (
+                    <input
+                      className={styles.renameInput}
+                      value={editValue}
+                      onChange={e => setEditValue(e.target.value)}
+                      onBlur={saveRename}
+                      onKeyDown={e => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') setEditingKey(null); }}
+                      autoFocus
+                    />
+                  ) : (
+                    <div className={styles.accountName} onClick={() => startRename(item.name)} title="Click to rename">
+                      {displayName(item.name)}
+                      <span className={`material-symbols-outlined ${styles.renameIcon}`}>edit</span>
+                    </div>
+                  )}
+                  {nicknames[item.name] && <div className={styles.originalName}>{item.name}</div>}
                 </div>
                 <div className={styles.updated}>{item.updated}</div>
                 <div className={`${styles.balance} ${(item.balance || 0) >= 0 ? styles.balancePositive : styles.balanceNegative}`}>
@@ -164,7 +208,22 @@ export function AssetsPage() {
             {liabilities.map((item, i) => (
               <div className={styles.tableRow} key={`liability-${i}`}>
                 <div>
-                  <div className={styles.accountName}>{item.name}</div>
+                  {editingKey === item.name ? (
+                    <input
+                      className={styles.renameInput}
+                      value={editValue}
+                      onChange={e => setEditValue(e.target.value)}
+                      onBlur={saveRename}
+                      onKeyDown={e => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') setEditingKey(null); }}
+                      autoFocus
+                    />
+                  ) : (
+                    <div className={styles.accountName} onClick={() => startRename(item.name)} title="Click to rename">
+                      {displayName(item.name)}
+                      <span className={`material-symbols-outlined ${styles.renameIcon}`}>edit</span>
+                    </div>
+                  )}
+                  {nicknames[item.name] && <div className={styles.originalName}>{item.name}</div>}
                 </div>
                 <div className={styles.updated}>{item.updated}</div>
                 <div className={`${styles.balance} ${styles.balanceNegative}`}>
