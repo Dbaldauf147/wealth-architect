@@ -184,16 +184,6 @@ export function App() {
 }
 
 /* Placeholder pages for routes not yet built */
-function AssetsPlaceholder() {
-  return (
-    <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
-      <span className="material-symbols-outlined" style={{ fontSize: 48, marginBottom: 16, display: 'block' }}>account_balance</span>
-      <h2 style={{ fontFamily: 'var(--font-headline)', marginBottom: 8 }}>Assets & Liabilities</h2>
-      <p>Balance sheet tracking coming soon.</p>
-    </div>
-  );
-}
-
 function SettingsPlaceholder() {
   return (
     <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>

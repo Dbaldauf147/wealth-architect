@@ -1,4 +1,4 @@
-const API_KEY = 'AIzaSyAEwH8sUimujARd4c1gAv_9bhhfNN9dVI4';
+const API_KEY = 'AIzaSyAL_5YuoXQgwLRkIb5RG1XHzoAcYqDN5mA';
 const SHEET_ID = '1G9dU4_Lt0vVHeH3UzwDUUc-fFs6rAy7d9THKYtOebCY';
 
 async function fetchSheet(tabName, range) {
