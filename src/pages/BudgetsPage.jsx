@@ -1,4 +1,10 @@
+import { useData } from '../contexts/DataContext';
 import styles from './BudgetsPage.module.css';
+
+function fmt(n) {
+  if (n == null) return '—';
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
+}
 
 const GOALS = [
   { name: 'Emergency Fund', target: '$25,000', saved: '$20,000', pct: 80, color: '#0058be' },
@@ -105,6 +111,11 @@ function ProgressRing({ pct, color, size = 110, stroke = 8 }) {
 }
 
 export function BudgetsPage() {
+  const { analytics, balances, loading } = useData();
+  const totalExpenses = analytics?.totalExpenses || 0;
+  const totalIncome = analytics?.totalIncome || 0;
+  const cashFlow = analytics?.cashFlow || 0;
+
   return (
     <div className={styles.page}>
       {/* Dynamic Allocation Hero */}
@@ -112,23 +123,23 @@ export function BudgetsPage() {
         <div className={styles.heroLabel}>Dynamic Allocation</div>
         <div className={styles.heroTitle}>Monthly Budget Performance</div>
         <div className={styles.heroSubtitle}>
-          You are currently under budget across most categories. Keep up the discipline.
+          {cashFlow >= 0 ? 'You are currently under budget. Keep up the discipline.' : 'Spending exceeds income this period. Review categories below.'}
         </div>
         <div className={styles.heroStats}>
           <div className={styles.heroStat}>
-            <div className={`${styles.heroStatValue} ${styles.heroStatValueGreen}`}>+$1,090</div>
-            <div className={styles.heroStatLabel}>Surplus</div>
+            <div className={`${styles.heroStatValue} ${cashFlow >= 0 ? styles.heroStatValueGreen : ''}`}>{fmt(cashFlow)}</div>
+            <div className={styles.heroStatLabel}>{cashFlow >= 0 ? 'Surplus' : 'Deficit'}</div>
           </div>
           <div className={styles.heroStat}>
-            <div className={styles.heroStatValue}>$6,200</div>
-            <div className={styles.heroStatLabel}>Total Budget</div>
+            <div className={styles.heroStatValue}>{fmt(totalIncome)}</div>
+            <div className={styles.heroStatLabel}>Total Income</div>
           </div>
           <div className={styles.heroStat}>
-            <div className={styles.heroStatValue}>$5,110</div>
+            <div className={styles.heroStatValue}>{fmt(totalExpenses)}</div>
             <div className={styles.heroStatLabel}>Spent to Date</div>
           </div>
           <div className={styles.heroStat}>
-            <div className={styles.heroStatValue}>18</div>
+            <div className={styles.heroStatValue}>{analytics?.transactionCount || 0}</div>
             <div className={styles.heroStatLabel}>Days Left</div>
           </div>
         </div>

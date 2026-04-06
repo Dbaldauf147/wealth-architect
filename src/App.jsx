@@ -4,6 +4,7 @@ import { OverviewPage } from './pages/OverviewPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 import { BudgetsPage } from './pages/BudgetsPage';
 import { CardsPage } from './pages/CardsPage';
+import { useData } from './contexts/DataContext';
 
 const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: 'dashboard' },
@@ -30,6 +31,7 @@ export function App() {
   const [view, setView] = useState(getHashView);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [headerTab, setHeaderTab] = useState('portfolio');
+  const { refresh, loading, lastSync } = useData();
 
   useEffect(() => {
     const onHash = () => setView(getHashView());
@@ -90,9 +92,9 @@ export function App() {
             <span className="material-symbols-outlined">settings</span>
             Settings
           </div>
-          <button className={styles.syncButton}>
-            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>sync</span>
-            Force Sync Sheets
+          <button className={styles.syncButton} onClick={refresh} disabled={loading}>
+            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>{loading ? 'hourglass_empty' : 'sync'}</span>
+            {loading ? 'Syncing...' : 'Force Sync Sheets'}
           </button>
         </div>
 
