@@ -99,71 +99,80 @@ export function AssetsPage() {
         </div>
       </div>
 
-      {/* Assets Section */}
-      <div className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <div className={styles.sectionTitle}>Assets</div>
-          <div className={`${styles.sectionTotal} ${styles.balancePositive}`}>{fmt(totalAssets)}</div>
-        </div>
-
-        <div className={styles.tableCard}>
-          <div className={styles.tableHeader}>
-            <div className={styles.tableHeaderCell}>Account</div>
-            <div className={styles.tableHeaderCell}>Updated</div>
-            <div className={styles.tableHeaderCell}>Balance</div>
+      {/* Assets & Liabilities Side by Side */}
+      <div className={styles.columnsGrid}>
+        {/* Assets Column */}
+        <div className={styles.section}>
+          <div className={styles.sectionHeader}>
+            <div className={styles.sectionTitle}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#34d399' }}>trending_up</span>
+              Assets
+            </div>
+            <div className={`${styles.sectionTotal} ${styles.balancePositive}`}>{fmt(totalAssets)}</div>
           </div>
 
-          {assets.length === 0 && (
-            <div className={styles.emptyState}>
-              <p>No asset accounts found.</p>
+          <div className={styles.tableCard}>
+            <div className={styles.tableHeader}>
+              <div className={styles.tableHeaderCell}>Account</div>
+              <div className={styles.tableHeaderCell}>Updated</div>
+              <div className={styles.tableHeaderCell}>Balance</div>
             </div>
-          )}
 
-          {assets.map((item, i) => (
-            <div className={styles.tableRow} key={`asset-${i}`}>
-              <div>
-                <div className={styles.accountName}>{item.name}</div>
+            {assets.length === 0 && (
+              <div className={styles.emptyState}>
+                <p>No asset accounts found.</p>
               </div>
-              <div className={styles.updated}>{formatDate(item.updated)}</div>
-              <div className={`${styles.balance} ${(item.balance || 0) >= 0 ? styles.balancePositive : styles.balanceNegative}`}>
-                {fmt(item.balance)}
+            )}
+
+            {assets.map((item, i) => (
+              <div className={styles.tableRow} key={`asset-${i}`}>
+                <div>
+                  <div className={styles.accountName}>{item.name}</div>
+                </div>
+                <div className={styles.updated}>{item.updated}</div>
+                <div className={`${styles.balance} ${(item.balance || 0) >= 0 ? styles.balancePositive : styles.balanceNegative}`}>
+                  {fmt(item.balance)}
+                </div>
               </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Liabilities Column */}
+        <div className={styles.section}>
+          <div className={styles.sectionHeader}>
+            <div className={styles.sectionTitle}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f87171' }}>trending_down</span>
+              Liabilities
             </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Liabilities Section */}
-      <div className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <div className={styles.sectionTitle}>Liabilities</div>
-          <div className={`${styles.sectionTotal} ${styles.balanceNegative}`}>{fmt(totalLiabilities)}</div>
-        </div>
-
-        <div className={styles.tableCard}>
-          <div className={styles.tableHeader}>
-            <div className={styles.tableHeaderCell}>Account</div>
-            <div className={styles.tableHeaderCell}>Updated</div>
-            <div className={styles.tableHeaderCell}>Balance</div>
+            <div className={`${styles.sectionTotal} ${styles.balanceNegative}`}>{fmt(totalLiabilities)}</div>
           </div>
 
-          {liabilities.length === 0 && (
-            <div className={styles.emptyState}>
-              <p>No liability accounts found.</p>
+          <div className={styles.tableCard}>
+            <div className={styles.tableHeader}>
+              <div className={styles.tableHeaderCell}>Account</div>
+              <div className={styles.tableHeaderCell}>Updated</div>
+              <div className={styles.tableHeaderCell}>Balance</div>
             </div>
-          )}
 
-          {liabilities.map((item, i) => (
-            <div className={styles.tableRow} key={`liability-${i}`}>
-              <div>
-                <div className={styles.accountName}>{item.name}</div>
+            {liabilities.length === 0 && (
+              <div className={styles.emptyState}>
+                <p>No liability accounts found.</p>
               </div>
-              <div className={styles.updated}>{formatDate(item.updated)}</div>
-              <div className={`${styles.balance} ${styles.balanceNegative}`}>
-                {fmt(item.balance)}
+            )}
+
+            {liabilities.map((item, i) => (
+              <div className={styles.tableRow} key={`liability-${i}`}>
+                <div>
+                  <div className={styles.accountName}>{item.name}</div>
+                </div>
+                <div className={styles.updated}>{item.updated}</div>
+                <div className={`${styles.balance} ${styles.balanceNegative}`}>
+                  {fmt(item.balance)}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </div>
 

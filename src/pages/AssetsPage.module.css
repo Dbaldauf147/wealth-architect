@@ -138,6 +138,20 @@
   vertical-align: middle;
 }
 
+/* ── Side by Side Grid ── */
+.columnsGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .columnsGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── Section ── */
 .section {
   display: flex;
@@ -157,6 +171,9 @@
   font-size: 16px;
   font-weight: 700;
   color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .sectionTotal {
