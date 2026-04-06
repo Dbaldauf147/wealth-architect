@@ -329,6 +329,117 @@
   font-style: italic;
 }
 
+/* Hide / Delete buttons */
+.hideBtn, .deleteBtn {
+  background: none;
+  border: none;
+  color: #c6c6cd;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+}
+
+.tableRow:hover .hideBtn,
+.tableRow:hover .deleteBtn {
+  opacity: 1;
+}
+
+.hideBtn:hover {
+  color: #76777d;
+  background: rgba(118, 119, 125, 0.08);
+}
+
+.deleteBtn:hover {
+  color: #ba1a1a;
+  background: rgba(186, 26, 26, 0.08);
+}
+
+/* Hidden row dimming */
+.tableRow:has(.hideBtn[title="Unhide"]) {
+  opacity: 0.4;
+}
+
+/* Section actions row */
+.sectionActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.addBtn {
+  background: none;
+  border: 1px solid rgba(198, 198, 205, 0.3);
+  color: #76777d;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  transition: all 0.15s ease;
+}
+
+.addBtn:hover {
+  color: #0058be;
+  border-color: #0058be;
+  background: rgba(0, 88, 190, 0.05);
+}
+
+/* Show hidden toggle */
+.showHiddenBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px dashed rgba(198, 198, 205, 0.3);
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #76777d;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.showHiddenBtn:hover {
+  border-color: #0058be;
+  color: #0058be;
+}
+
+/* Add form */
+.addForm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px;
+  margin-top: 8px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 88, 190, 0.2);
+  border-radius: 8px;
+}
+
+.addInput {
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--color-text-primary);
+  border: 1px solid rgba(198, 198, 205, 0.3);
+  border-radius: 4px;
+  padding: 6px 10px;
+  flex: 1;
+  min-width: 0;
+  background: #ffffff;
+  outline: none;
+}
+
+.addInput:focus {
+  border-color: #0058be;
+  box-shadow: 0 0 0 3px rgba(0, 88, 190, 0.1);
+}
+
 .accountSub {
   font-size: 11px;
   color: var(--color-text-tertiary);

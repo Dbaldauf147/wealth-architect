@@ -8,20 +8,68 @@ function fmt(n) {
 }
 
 const NICKNAMES_KEY = 'wa-account-nicknames';
+const HIDDEN_KEY = 'wa-hidden-accounts';
+const CUSTOM_ASSETS_KEY = 'wa-custom-assets';
+const CUSTOM_LIABILITIES_KEY = 'wa-custom-liabilities';
 
-function loadNicknames() {
-  try { return JSON.parse(localStorage.getItem(NICKNAMES_KEY)) || {}; } catch { return {}; }
+function loadJSON(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; }
 }
-
-function saveNicknames(map) {
-  localStorage.setItem(NICKNAMES_KEY, JSON.stringify(map));
-}
+function saveJSON(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
 
 export function AssetsPage() {
   const { balances, loading } = useData();
-  const [nicknames, setNicknames] = useState(loadNicknames);
+  const [nicknames, setNicknames] = useState(() => loadJSON(NICKNAMES_KEY, {}));
+  const [hidden, setHidden] = useState(() => loadJSON(HIDDEN_KEY, []));
+  const [customAssets, setCustomAssets] = useState(() => loadJSON(CUSTOM_ASSETS_KEY, []));
+  const [customLiabilities, setCustomLiabilities] = useState(() => loadJSON(CUSTOM_LIABILITIES_KEY, []));
+  const [showHidden, setShowHidden] = useState(false);
+  const [addingAsset, setAddingAsset] = useState(false);
+  const [addingLiability, setAddingLiability] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newBalance, setNewBalance] = useState('');
   const [editingKey, setEditingKey] = useState(null);
   const [editValue, setEditValue] = useState('');
+
+  const hiddenSet = new Set(hidden);
+
+  function toggleHide(name) {
+    const next = hiddenSet.has(name) ? hidden.filter(n => n !== name) : [...hidden, name];
+    setHidden(next);
+    saveJSON(HIDDEN_KEY, next);
+  }
+
+  function addCustomAsset() {
+    const name = newName.trim();
+    if (!name) return;
+    const bal = parseFloat(newBalance.replace(/[$,]/g, '')) || 0;
+    const next = [...customAssets, { name, balance: bal, updated: 'Manual', custom: true }];
+    setCustomAssets(next);
+    saveJSON(CUSTOM_ASSETS_KEY, next);
+    setNewName(''); setNewBalance(''); setAddingAsset(false);
+  }
+
+  function addCustomLiability() {
+    const name = newName.trim();
+    if (!name) return;
+    const bal = parseFloat(newBalance.replace(/[$,]/g, '')) || 0;
+    const next = [...customLiabilities, { name, balance: bal, updated: 'Manual', custom: true }];
+    setCustomLiabilities(next);
+    saveJSON(CUSTOM_LIABILITIES_KEY, next);
+    setNewName(''); setNewBalance(''); setAddingLiability(false);
+  }
+
+  function removeCustom(name, type) {
+    if (type === 'asset') {
+      const next = customAssets.filter(a => a.name !== name);
+      setCustomAssets(next);
+      saveJSON(CUSTOM_ASSETS_KEY, next);
+    } else {
+      const next = customLiabilities.filter(a => a.name !== name);
+      setCustomLiabilities(next);
+      saveJSON(CUSTOM_LIABILITIES_KEY, next);
+    }
+  }
 
   function startRename(originalName) {
     setEditingKey(originalName);
@@ -38,7 +86,7 @@ export function AssetsPage() {
       delete next[editingKey];
     }
     setNicknames(next);
-    saveNicknames(next);
+    saveJSON(NICKNAMES_KEY, next);
     setEditingKey(null);
     setEditValue('');
   }
@@ -76,8 +124,12 @@ export function AssetsPage() {
     );
   }
 
-  const assets = [...(balances.assets || [])].sort((a, b) => (b.balance || 0) - (a.balance || 0));
-  const liabilities = [...(balances.liabilities || [])].sort((a, b) => (b.balance || 0) - (a.balance || 0));
+  const allAssets = [...(balances.assets || []), ...customAssets].sort((a, b) => (b.balance || 0) - (a.balance || 0));
+  const allLiabilities = [...(balances.liabilities || []), ...customLiabilities].sort((a, b) => (b.balance || 0) - (a.balance || 0));
+  const assets = showHidden ? allAssets : allAssets.filter(a => !hiddenSet.has(a.name));
+  const liabilities = showHidden ? allLiabilities : allLiabilities.filter(a => !hiddenSet.has(a.name));
+  const hiddenCount = allAssets.filter(a => hiddenSet.has(a.name)).length + allLiabilities.filter(a => hiddenSet.has(a.name)).length;
+
   const netWorth = balances.netWorth ?? 0;
   const totalAssets = balances.totalAssets ?? 0;
   const totalLiabilities = balances.totalLiabilities ?? 0;
@@ -135,6 +187,14 @@ export function AssetsPage() {
         </div>
       </div>
 
+      {/* Hidden toggle */}
+      {hiddenCount > 0 && (
+        <button className={styles.showHiddenBtn} onClick={() => setShowHidden(p => !p)}>
+          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{showHidden ? 'visibility_off' : 'visibility'}</span>
+          {showHidden ? 'Hide' : 'Show'} {hiddenCount} hidden account{hiddenCount !== 1 ? 's' : ''}
+        </button>
+      )}
+
       {/* Assets & Liabilities Side by Side */}
       <div className={styles.columnsGrid}>
         {/* Assets Column */}
@@ -144,7 +204,12 @@ export function AssetsPage() {
               <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#34d399' }}>trending_up</span>
               Assets
             </div>
-            <div className={`${styles.sectionTotal} ${styles.balancePositive}`}>{fmt(totalAssets)}</div>
+            <div className={styles.sectionActions}>
+              <div className={`${styles.sectionTotal} ${styles.balancePositive}`}>{fmt(totalAssets)}</div>
+              <button className={styles.addBtn} onClick={() => { setAddingAsset(true); setAddingLiability(false); setNewName(''); setNewBalance(''); }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
+              </button>
+            </div>
           </div>
 
           <div className={styles.tableCard}>
@@ -185,6 +250,14 @@ export function AssetsPage() {
                       <button className={styles.renameBtn} onClick={() => startRename(item.name)} title="Rename account">
                         <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
                       </button>
+                      <button className={styles.hideBtn} onClick={() => toggleHide(item.name)} title={hiddenSet.has(item.name) ? 'Unhide' : 'Hide'}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{hiddenSet.has(item.name) ? 'visibility' : 'visibility_off'}</span>
+                      </button>
+                      {item.custom && (
+                        <button className={styles.deleteBtn} onClick={() => removeCustom(item.name, 'asset')} title="Remove">
+                          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>delete</span>
+                        </button>
+                      )}
                     </div>
                   )}
                   {nicknames[item.name] && <div className={styles.originalName}>{item.name}</div>}
@@ -196,6 +269,15 @@ export function AssetsPage() {
               </div>
             ))}
           </div>
+
+          {addingAsset && (
+            <div className={styles.addForm}>
+              <input className={styles.addInput} placeholder="Account name" value={newName} onChange={e => setNewName(e.target.value)} autoFocus />
+              <input className={styles.addInput} placeholder="$0" value={newBalance} onChange={e => setNewBalance(e.target.value)} style={{ width: 100 }} />
+              <button className={styles.renameSave} onClick={addCustomAsset}><span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span></button>
+              <button className={styles.renameCancel} onClick={() => setAddingAsset(false)}><span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span></button>
+            </div>
+          )}
         </div>
 
         {/* Liabilities Column */}
@@ -205,7 +287,12 @@ export function AssetsPage() {
               <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#f87171' }}>trending_down</span>
               Liabilities
             </div>
-            <div className={`${styles.sectionTotal} ${styles.balanceNegative}`}>{fmt(totalLiabilities)}</div>
+            <div className={styles.sectionActions}>
+              <div className={`${styles.sectionTotal} ${styles.balanceNegative}`}>{fmt(totalLiabilities)}</div>
+              <button className={styles.addBtn} onClick={() => { setAddingLiability(true); setAddingAsset(false); setNewName(''); setNewBalance(''); }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
+              </button>
+            </div>
           </div>
 
           <div className={styles.tableCard}>
@@ -246,6 +333,14 @@ export function AssetsPage() {
                       <button className={styles.renameBtn} onClick={() => startRename(item.name)} title="Rename account">
                         <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
                       </button>
+                      <button className={styles.hideBtn} onClick={() => toggleHide(item.name)} title={hiddenSet.has(item.name) ? 'Unhide' : 'Hide'}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{hiddenSet.has(item.name) ? 'visibility' : 'visibility_off'}</span>
+                      </button>
+                      {item.custom && (
+                        <button className={styles.deleteBtn} onClick={() => removeCustom(item.name, 'liability')} title="Remove">
+                          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>delete</span>
+                        </button>
+                      )}
                     </div>
                   )}
                   {nicknames[item.name] && <div className={styles.originalName}>{item.name}</div>}
@@ -257,6 +352,15 @@ export function AssetsPage() {
               </div>
             ))}
           </div>
+
+          {addingLiability && (
+            <div className={styles.addForm}>
+              <input className={styles.addInput} placeholder="Account name" value={newName} onChange={e => setNewName(e.target.value)} autoFocus />
+              <input className={styles.addInput} placeholder="$0" value={newBalance} onChange={e => setNewBalance(e.target.value)} style={{ width: 100 }} />
+              <button className={styles.renameSave} onClick={addCustomLiability}><span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span></button>
+              <button className={styles.renameCancel} onClick={() => setAddingLiability(false)}><span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span></button>
+            </div>
+          )}
         </div>
       </div>
 
