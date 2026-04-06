@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useData } from '../contexts/DataContext';
 import styles from './AssetsPage.module.css';
 
@@ -23,12 +23,12 @@ export function AssetsPage() {
   const [editingKey, setEditingKey] = useState(null);
   const [editValue, setEditValue] = useState('');
 
-  const startRename = useCallback((originalName) => {
+  function startRename(originalName) {
     setEditingKey(originalName);
     setEditValue(nicknames[originalName] || originalName);
-  }, [nicknames]);
+  }
 
-  const saveRename = useCallback(() => {
+  function saveRename() {
     if (!editingKey) return;
     const val = editValue.trim();
     const next = { ...nicknames };
@@ -41,9 +41,16 @@ export function AssetsPage() {
     saveNicknames(next);
     setEditingKey(null);
     setEditValue('');
-  }, [editingKey, editValue, nicknames]);
+  }
 
-  const displayName = (originalName) => nicknames[originalName] || originalName;
+  function cancelRename() {
+    setEditingKey(null);
+    setEditValue('');
+  }
+
+  function displayName(originalName) {
+    return nicknames[originalName] || originalName;
+  }
 
   if (loading) {
     return (
@@ -157,18 +164,27 @@ export function AssetsPage() {
               <div className={styles.tableRow} key={`asset-${i}`}>
                 <div>
                   {editingKey === item.name ? (
-                    <input
-                      className={styles.renameInput}
-                      value={editValue}
-                      onChange={e => setEditValue(e.target.value)}
-                      onBlur={saveRename}
-                      onKeyDown={e => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') setEditingKey(null); }}
-                      autoFocus
-                    />
+                    <div className={styles.renameRow}>
+                      <input
+                        className={styles.renameInput}
+                        value={editValue}
+                        onChange={e => setEditValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') cancelRename(); }}
+                        autoFocus
+                      />
+                      <button className={styles.renameSave} onClick={saveRename}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span>
+                      </button>
+                      <button className={styles.renameCancel} onClick={cancelRename}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+                      </button>
+                    </div>
                   ) : (
-                    <div className={styles.accountName} onClick={() => startRename(item.name)} title="Click to rename">
-                      {displayName(item.name)}
-                      <span className={`material-symbols-outlined ${styles.renameIcon}`}>edit</span>
+                    <div className={styles.accountNameRow}>
+                      <span className={styles.accountName}>{displayName(item.name)}</span>
+                      <button className={styles.renameBtn} onClick={() => startRename(item.name)} title="Rename account">
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
+                      </button>
                     </div>
                   )}
                   {nicknames[item.name] && <div className={styles.originalName}>{item.name}</div>}
@@ -209,18 +225,27 @@ export function AssetsPage() {
               <div className={styles.tableRow} key={`liability-${i}`}>
                 <div>
                   {editingKey === item.name ? (
-                    <input
-                      className={styles.renameInput}
-                      value={editValue}
-                      onChange={e => setEditValue(e.target.value)}
-                      onBlur={saveRename}
-                      onKeyDown={e => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') setEditingKey(null); }}
-                      autoFocus
-                    />
+                    <div className={styles.renameRow}>
+                      <input
+                        className={styles.renameInput}
+                        value={editValue}
+                        onChange={e => setEditValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') cancelRename(); }}
+                        autoFocus
+                      />
+                      <button className={styles.renameSave} onClick={saveRename}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span>
+                      </button>
+                      <button className={styles.renameCancel} onClick={cancelRename}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+                      </button>
+                    </div>
                   ) : (
-                    <div className={styles.accountName} onClick={() => startRename(item.name)} title="Click to rename">
-                      {displayName(item.name)}
-                      <span className={`material-symbols-outlined ${styles.renameIcon}`}>edit</span>
+                    <div className={styles.accountNameRow}>
+                      <span className={styles.accountName}>{displayName(item.name)}</span>
+                      <button className={styles.renameBtn} onClick={() => startRename(item.name)} title="Rename account">
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
+                      </button>
                     </div>
                   )}
                   {nicknames[item.name] && <div className={styles.originalName}>{item.name}</div>}
