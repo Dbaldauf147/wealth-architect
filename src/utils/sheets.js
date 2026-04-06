@@ -37,6 +37,8 @@ export async function fetchTransactions() {
 }
 
 // Parse Balances tab — freeform Tiller layout
+// Data is offset: col A is empty, real data starts at col B
+// So in the array: index 0=A(empty), 1=B, 2=C, 3=D, 4=E(empty), 5=F, 6=G, 7=H
 export async function fetchBalances() {
   const rows = await fetchSheet('Balances', 'A1:H50');
 
@@ -45,53 +47,52 @@ export async function fetchBalances() {
   let totalLiabilities = 0;
   const assets = [];
   const liabilities = [];
-  let section = null; // 'assets-header' or 'assets-items' or 'liabilities'
+  let section = null;
 
   for (const row of rows) {
-    const a = (row[0] || '').trim();
-    const b = (row[1] || '').trim();
-    const c = (row[2] || '').trim();
-    const e = (row[4] || '').trim();
-    const f = (row[5] || '').trim();
-    const g = (row[6] || '').trim();
+    // Col B=1, C=2, D=3, F=5, G=6, H=7
+    const colB = (row[1] || '').trim();
+    const colC = (row[2] || '').trim();
+    const colD = (row[3] || '').trim();
+    const colF = (row[5] || '').trim();
+    const colG = (row[6] || '').trim();
+    const colH = (row[7] || '').trim();
 
-    // Net worth row
-    if (a === 'NET WORTH') {
-      netWorth = parseMoney(c);
+    // Net worth row: B="NET WORTH", H="$887,682"
+    if (colB === 'NET WORTH') {
+      netWorth = parseMoney(colH);
       continue;
     }
 
-    // Assets / Liabilities totals row
-    if (a === 'ASSETS') {
-      totalAssets = parseMoney(c);
-      totalLiabilities = parseMoney(g);
+    // Assets / Liabilities totals row: B="ASSETS", D="$898,830", F="LIABILITIES", H="$11,148"
+    if (colB === 'ASSETS') {
+      totalAssets = parseMoney(colD);
+      totalLiabilities = parseMoney(colH);
       continue;
     }
 
-    // Section headers
-    if (a === 'UNGROUPED ASSET') {
+    // Section header: B="UNGROUPED ASSET"
+    if (colB === 'UNGROUPED ASSET') {
       section = 'assets';
       continue;
     }
 
-    // Parse asset rows (left side: cols A, B, C)
-    // Parse liability rows (right side: cols E, F, G)
+    // Asset rows (left): B=name, C=updated, D=balance
+    // Liability rows (right): F=name, G=updated, H=balance
     if (section === 'assets') {
-      // Asset row
-      if (a && b && c) {
-        const balance = parseMoney(c);
+      if (colB && colC && colD) {
+        const balance = parseMoney(colD);
         assets.push({
-          name: a,
-          updated: b,
+          name: colB,
+          updated: colC,
           balance,
         });
       }
-      // Liability row (same rows, right side)
-      if (e && f) {
-        const balance = parseMoney(g);
+      if (colF && colG) {
+        const balance = parseMoney(colH);
         liabilities.push({
-          name: e,
-          updated: f,
+          name: colF,
+          updated: colG,
           balance,
         });
       }
