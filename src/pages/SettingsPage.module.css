@@ -1,0 +1,204 @@
+.page {
+  max-width: 800px;
+}
+
+.pageHeader {
+  margin-bottom: 2rem;
+}
+
+.pageTitle {
+  font-family: 'Manrope', sans-serif;
+  font-size: 1.75rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.25rem;
+}
+
+.pageSubtitle {
+  font-size: 0.875rem;
+  color: #45464d;
+  margin: 0;
+}
+
+.section {
+  margin-bottom: 2rem;
+}
+
+.sectionTitle {
+  font-family: 'Manrope', sans-serif;
+  font-size: 0.875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: #45464d;
+  margin: 0 0 0.75rem;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid rgba(198, 198, 205, 0.15);
+  border-radius: 8px;
+  padding: 1.25rem;
+}
+
+.cardRow {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0;
+}
+
+.cardRowIcon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: #f3f4f3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #45464d;
+  flex-shrink: 0;
+}
+
+.cardRowContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.cardRowLabel {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #1a1c1c;
+}
+
+.cardRowValue {
+  font-size: 0.75rem;
+  color: #45464d;
+  margin-top: 0.125rem;
+}
+
+.statusBadgeGreen {
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #005236;
+  background: #6ffbbe;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.divider {
+  height: 1px;
+  background: rgba(198, 198, 205, 0.15);
+  margin: 0.75rem 0;
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  padding: 0.5rem 0;
+}
+
+.statItem {
+  text-align: center;
+}
+
+.statLabel {
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: #76777d;
+  margin-bottom: 0.25rem;
+}
+
+.statValue {
+  font-family: 'Manrope', sans-serif;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: #1a1c1c;
+}
+
+.cardActions {
+  display: flex;
+  gap: 0.75rem;
+  padding-top: 0.5rem;
+}
+
+.primaryBtn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  background: #0058be;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.primaryBtn:hover {
+  opacity: 0.9;
+}
+
+.primaryBtn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.secondaryBtn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  background: none;
+  color: #1a1c1c;
+  border: 1px solid rgba(198, 198, 205, 0.3);
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+
+.secondaryBtn:hover {
+  background: #f3f4f3;
+}
+
+.errorBox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: #ffdad6;
+  border-radius: 8px;
+  color: #93000a;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.aboutGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.25rem;
+  padding: 0.5rem 0;
+}
+
+@media (max-width: 640px) {
+  .statsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .cardActions {
+    flex-direction: column;
+  }
+}

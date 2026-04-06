@@ -1,0 +1,385 @@
+/* ──────────────────────────────────────────────
+   Assets & Liabilities — Balance Sheet
+   ────────────────────────────────────────────── */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* ── Page Header ── */
+.pageHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.pageTitle {
+  font-family: var(--font-headline);
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.pageSubtitle {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+  margin-top: 4px;
+}
+
+/* ── Net Worth Hero ── */
+.heroCard {
+  background: #0f172a;
+  border-radius: var(--radius-xl);
+  padding: 32px;
+  color: #ffffff;
+  box-shadow: var(--shadow-md);
+}
+
+.heroLabel {
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 8px;
+}
+
+.heroValue {
+  font-family: var(--font-headline);
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1.1;
+  margin-bottom: 24px;
+  color: #ffffff;
+}
+
+.heroColumns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.heroStat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.heroStatLabel {
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.heroStatValue {
+  font-family: var(--font-headline);
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.heroStatAssets {
+  color: #34d399;
+}
+
+.heroStatLiabilities {
+  color: #f87171;
+}
+
+/* ── Bar Visualization ── */
+.barWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.barTrack {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  display: flex;
+}
+
+.barAssets {
+  height: 100%;
+  background: #34d399;
+  border-radius: 4px 0 0 4px;
+  transition: width 0.5s ease;
+}
+
+.barLiabilities {
+  height: 100%;
+  background: #f87171;
+  border-radius: 0 4px 4px 0;
+  transition: width 0.5s ease;
+}
+
+.barLegend {
+  display: flex;
+  gap: 20px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.barLegendDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+/* ── Section ── */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.sectionTitle {
+  font-family: var(--font-headline);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.sectionTotal {
+  font-family: var(--font-headline);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.sectionLabel {
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin-bottom: 12px;
+}
+
+/* ── Table Card ── */
+.tableCard {
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-xs);
+}
+
+.tableHeader {
+  display: grid;
+  grid-template-columns: 1fr 140px 140px;
+  padding: 12px 20px;
+  border-bottom: var(--border-ghost);
+  background: var(--color-surface-alt);
+}
+
+.tableHeaderCell {
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.tableHeaderCell:last-child {
+  text-align: right;
+}
+
+.tableRow {
+  display: grid;
+  grid-template-columns: 1fr 140px 140px;
+  padding: 14px 20px;
+  border-bottom: var(--border-ghost);
+  align-items: center;
+  transition: background var(--transition-fast);
+}
+
+.tableRow:last-child {
+  border-bottom: none;
+}
+
+.tableRow:hover {
+  background: var(--color-surface-hover);
+}
+
+.accountName {
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.accountSub {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+}
+
+.updated {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+}
+
+.balance {
+  font-family: var(--font-headline);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: right;
+  color: var(--color-text-primary);
+}
+
+.balancePositive {
+  color: var(--color-success);
+}
+
+.balanceNegative {
+  color: var(--color-error);
+}
+
+/* ── Summary Footer ── */
+.summaryFooter {
+  display: flex;
+  gap: 32px;
+  padding: 20px 24px;
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xs);
+}
+
+.summaryItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.summaryLabel {
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.summaryValue {
+  font-family: var(--font-headline);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+/* ── Loading State ── */
+.loadingWrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  text-align: center;
+}
+
+.loadingIcon {
+  font-size: 48px;
+  display: block;
+  margin-bottom: 16px;
+  color: var(--color-text-tertiary);
+  animation: spin 1s linear infinite;
+}
+
+.loadingText {
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ── Empty State ── */
+.emptyState {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--color-text-tertiary);
+}
+
+.emptyIcon {
+  font-size: 48px;
+  display: block;
+  margin-bottom: 12px;
+}
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .heroCard {
+    padding: 24px 20px;
+  }
+
+  .heroValue {
+    font-size: 30px;
+  }
+
+  .heroStatValue {
+    font-size: 18px;
+  }
+
+  .heroColumns {
+    gap: 16px;
+  }
+
+  .tableHeader,
+  .tableRow {
+    grid-template-columns: 1fr 100px;
+  }
+
+  .tableHeader .tableHeaderCell:nth-child(2),
+  .tableRow .updated {
+    display: none;
+  }
+
+  .summaryFooter {
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .pageHeader {
+    flex-direction: column;
+    gap: 4px;
+  }
+}
+
+@media (max-width: 480px) {
+  .heroColumns {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .heroValue {
+    font-size: 26px;
+  }
+
+  .barLegend {
+    flex-direction: column;
+    gap: 4px;
+  }
+}

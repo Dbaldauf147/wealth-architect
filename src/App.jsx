@@ -4,6 +4,8 @@ import { OverviewPage } from './pages/OverviewPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 import { BudgetsPage } from './pages/BudgetsPage';
 import { CardsPage } from './pages/CardsPage';
+import { AssetsPage } from './pages/AssetsPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { useData } from './contexts/DataContext';
 
 const NAV_ITEMS = [
@@ -49,9 +51,9 @@ export function App() {
     switch (view) {
       case 'transactions': return <TransactionsPage />;
       case 'budgets': return <BudgetsPage />;
-      case 'assets': return <AssetsPlaceholder />;
+      case 'assets': return <AssetsPage />;
       case 'cards': return <CardsPage />;
-      case 'settings': return <SettingsPlaceholder />;
+      case 'settings': return <SettingsPage />;
       default: return <OverviewPage />;
     }
   }
