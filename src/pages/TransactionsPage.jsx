@@ -51,6 +51,42 @@ function catBg(name) {
   return `rgba(${r},${g},${b},0.08)`;
 }
 
+function PieChart({ entries, total, size = 160 }) {
+  if (!entries.length || total === 0) return null;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = size / 2 - 4;
+  const inner = r * 0.55;
+  let currentAngle = -Math.PI / 2;
+  const slices = entries.map(e => {
+    const pct = e.value / total;
+    const angle = pct * Math.PI * 2;
+    const startAngle = currentAngle;
+    const endAngle = currentAngle + angle;
+    currentAngle = endAngle;
+    const x1 = cx + r * Math.cos(startAngle);
+    const y1 = cy + r * Math.sin(startAngle);
+    const x2 = cx + r * Math.cos(endAngle);
+    const y2 = cy + r * Math.sin(endAngle);
+    const xi1 = cx + inner * Math.cos(startAngle);
+    const yi1 = cy + inner * Math.sin(startAngle);
+    const xi2 = cx + inner * Math.cos(endAngle);
+    const yi2 = cy + inner * Math.sin(endAngle);
+    const largeArc = angle > Math.PI ? 1 : 0;
+    const d = `M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} L ${xi2} ${yi2} A ${inner} ${inner} 0 ${largeArc} 0 ${xi1} ${yi1} Z`;
+    return { d, color: catColor(e.name), name: e.name, pct };
+  });
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      {slices.map((s, i) => (
+        <path key={i} d={s.d} fill={s.color}>
+          <title>{s.name}: {Math.round(s.pct * 100)}%</title>
+        </path>
+      ))}
+    </svg>
+  );
+}
+
 function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -223,6 +259,26 @@ export function TransactionsPage() {
     () => findRecurring(transactions || []),
     [transactions],
   );
+
+  /* Pie chart data — categories, or subcategories if only 1 category filtered */
+  const pieData = useMemo(() => {
+    const source = filtered.filter(t => t.amount < 0);
+    const visibleCats = [...new Set(source.map(t => t.category || 'Uncategorized'))];
+    const drillDown = visibleCats.length === 1;
+    const groups = {};
+    for (const t of source) {
+      const key = drillDown
+        ? (t.subcategory || 'Uncategorized')
+        : (t.category || 'Uncategorized');
+      if (!groups[key]) groups[key] = 0;
+      groups[key] += Math.abs(t.amount);
+    }
+    const entries = Object.entries(groups)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+    const total = entries.reduce((s, e) => s + e.value, 0);
+    return { entries, total, drillDown, parent: drillDown ? visibleCats[0] : null };
+  }, [filtered]);
 
   /* All subcategories available for selected transactions */
   const bulkSubOptions = useMemo(() => {
@@ -1057,6 +1113,31 @@ export function TransactionsPage() {
 
         {/* Side Column */}
         <div className={styles.sideColumn}>
+          {/* Pie Chart */}
+          {pieData.entries.length > 0 && (
+            <div className={styles.pieCard}>
+              <div className={styles.sectionLabel}>
+                {pieData.drillDown ? `${pieData.parent} — Subcategories` : 'Category Breakdown'}
+              </div>
+              <div className={styles.pieChartWrap}>
+                <PieChart entries={pieData.entries} total={pieData.total} size={160} />
+                <div className={styles.pieCenter}>
+                  <div className={styles.pieCenterValue}>{fmt(pieData.total)}</div>
+                  <div className={styles.pieCenterLabel}>total</div>
+                </div>
+              </div>
+              <div className={styles.pieLegend}>
+                {pieData.entries.slice(0, 8).map(e => (
+                  <div key={e.name} className={styles.pieLegendItem}>
+                    <span className={styles.pieLegendDot} style={{ background: catColor(e.name) }} />
+                    <span className={styles.pieLegendName}>{e.name}</span>
+                    <span className={styles.pieLegendPct}>{Math.round((e.value / pieData.total) * 100)}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Recurring Commitments */}
           <div className={styles.recurringCard}>
             <div className={styles.sectionLabel}>Recurring Commitments</div>
