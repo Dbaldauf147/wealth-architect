@@ -51,14 +51,26 @@ function catBg(name) {
   return `rgba(${r},${g},${b},0.08)`;
 }
 
-function PieChart({ entries, total, size = 160 }) {
+/* Well-spaced palette for pie slices — rotates hues widely so adjacent slices always differ */
+const PIE_PALETTE = [
+  '#0058be', '#ea580c', '#16a34a', '#d946ef', '#e8a317',
+  '#0891b2', '#dc2626', '#7c3aed', '#65a30d', '#db2777',
+  '#2563eb', '#f59e0b', '#059669', '#9333ea', '#b91c1c',
+  '#0d9488', '#c026d3', '#84cc16', '#6366f1', '#f97316',
+];
+
+function pieColor(index) {
+  return PIE_PALETTE[index % PIE_PALETTE.length];
+}
+
+function PieChart({ entries, total, size = 160, onSliceClick, highlightedNames }) {
   if (!entries.length || total === 0) return null;
   const cx = size / 2;
   const cy = size / 2;
   const r = size / 2 - 4;
   const inner = r * 0.55;
   let currentAngle = -Math.PI / 2;
-  const slices = entries.map(e => {
+  const slices = entries.map((e, i) => {
     const pct = e.value / total;
     const angle = pct * Math.PI * 2;
     const startAngle = currentAngle;
@@ -74,15 +86,28 @@ function PieChart({ entries, total, size = 160 }) {
     const yi2 = cy + inner * Math.sin(endAngle);
     const largeArc = angle > Math.PI ? 1 : 0;
     const d = `M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} L ${xi2} ${yi2} A ${inner} ${inner} 0 ${largeArc} 0 ${xi1} ${yi1} Z`;
-    return { d, color: catColor(e.name), name: e.name, pct };
+    return { d, color: pieColor(i), name: e.name, pct };
   });
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-      {slices.map((s, i) => (
-        <path key={i} d={s.d} fill={s.color}>
-          <title>{s.name}: {Math.round(s.pct * 100)}%</title>
-        </path>
-      ))}
+      {slices.map((s, i) => {
+        const isHighlighted = highlightedNames && highlightedNames.has(s.name);
+        const dimmed = highlightedNames && highlightedNames.size > 0 && !isHighlighted;
+        return (
+          <path
+            key={i}
+            d={s.d}
+            fill={s.color}
+            stroke="#fff"
+            strokeWidth="1.5"
+            opacity={dimmed ? 0.3 : 1}
+            style={{ cursor: onSliceClick ? 'pointer' : 'default', transition: 'opacity 0.15s' }}
+            onClick={() => onSliceClick && onSliceClick(s.name)}
+          >
+            <title>{s.name}: {Math.round(s.pct * 100)}%</title>
+          </path>
+        );
+      })}
     </svg>
   );
 }
@@ -164,6 +189,7 @@ export function TransactionsPage() {
   const bulkSubRef = useRef(null);
   const [savedToast, setSavedToast] = useState(false);
   const [includedCategories, setIncludedCategories] = useState(new Set());
+  const [includedSubcategories, setIncludedSubcategories] = useState(new Set());
   const [organizedCategories, setOrganizedCategories] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem('organizedCategories') || '[]')); }
     catch { return new Set(); }
@@ -204,6 +230,9 @@ export function TransactionsPage() {
     if (includedCategories.size > 0) {
       list = list.filter(t => includedCategories.has(t.category || 'Uncategorized'));
     }
+    if (includedSubcategories.size > 0) {
+      list = list.filter(t => includedSubcategories.has(t.subcategory || 'Uncategorized'));
+    }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       list = list.filter(
@@ -232,7 +261,7 @@ export function TransactionsPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return sorted;
-  }, [transactions, activeAccount, searchQuery, includedCategories, sortCol, sortDir]);
+  }, [transactions, activeAccount, searchQuery, includedCategories, includedSubcategories, sortCol, sortDir]);
 
   const paginated = useMemo(
     () => filtered.slice(0, (page + 1) * PAGE_SIZE),
@@ -1116,24 +1145,83 @@ export function TransactionsPage() {
           {/* Pie Chart */}
           {pieData.entries.length > 0 && (
             <div className={styles.pieCard}>
-              <div className={styles.sectionLabel}>
-                {pieData.drillDown ? `${pieData.parent} — Subcategories` : 'Category Breakdown'}
+              <div className={styles.sectionLabel} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>{pieData.drillDown ? `${pieData.parent} — Subcategories` : 'Category Breakdown'}</span>
+                {((pieData.drillDown && includedSubcategories.size > 0) || (!pieData.drillDown && includedCategories.size > 0)) && (
+                  <button
+                    className={styles.categoryFilterClear}
+                    style={{ padding: 0, fontSize: 10 }}
+                    onClick={() => {
+                      if (pieData.drillDown) setIncludedSubcategories(new Set());
+                      else setIncludedCategories(new Set());
+                      setPage(0);
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
               <div className={styles.pieChartWrap}>
-                <PieChart entries={pieData.entries} total={pieData.total} size={160} />
+                <PieChart
+                  entries={pieData.entries}
+                  total={pieData.total}
+                  size={160}
+                  highlightedNames={pieData.drillDown ? includedSubcategories : includedCategories}
+                  onSliceClick={name => {
+                    if (pieData.drillDown) {
+                      setIncludedSubcategories(prev => {
+                        const next = new Set(prev);
+                        if (next.has(name)) next.delete(name); else next.add(name);
+                        return next;
+                      });
+                    } else {
+                      setIncludedCategories(prev => {
+                        const next = new Set(prev);
+                        if (next.has(name)) next.delete(name); else next.add(name);
+                        return next;
+                      });
+                    }
+                    setPage(0);
+                  }}
+                />
                 <div className={styles.pieCenter}>
                   <div className={styles.pieCenterValue}>{fmt(pieData.total)}</div>
                   <div className={styles.pieCenterLabel}>total</div>
                 </div>
               </div>
               <div className={styles.pieLegend}>
-                {pieData.entries.slice(0, 8).map(e => (
-                  <div key={e.name} className={styles.pieLegendItem}>
-                    <span className={styles.pieLegendDot} style={{ background: catColor(e.name) }} />
-                    <span className={styles.pieLegendName}>{e.name}</span>
-                    <span className={styles.pieLegendPct}>{Math.round((e.value / pieData.total) * 100)}%</span>
-                  </div>
-                ))}
+                {pieData.entries.slice(0, 8).map((e, i) => {
+                  const highlightSet = pieData.drillDown ? includedSubcategories : includedCategories;
+                  const isActive = highlightSet.has(e.name);
+                  const dimmed = highlightSet.size > 0 && !isActive;
+                  return (
+                    <div
+                      key={e.name}
+                      className={styles.pieLegendItem}
+                      style={{ cursor: 'pointer', opacity: dimmed ? 0.5 : 1, fontWeight: isActive ? 700 : undefined }}
+                      onClick={() => {
+                        if (pieData.drillDown) {
+                          setIncludedSubcategories(prev => {
+                            const next = new Set(prev);
+                            if (next.has(e.name)) next.delete(e.name); else next.add(e.name);
+                            return next;
+                          });
+                        } else {
+                          setIncludedCategories(prev => {
+                            const next = new Set(prev);
+                            if (next.has(e.name)) next.delete(e.name); else next.add(e.name);
+                            return next;
+                          });
+                        }
+                        setPage(0);
+                      }}
+                    >
+                      <span className={styles.pieLegendDot} style={{ background: pieColor(i) }} />
+                      <span className={styles.pieLegendName}>{e.name}</span>
+                      <span className={styles.pieLegendPct}>{Math.round((e.value / pieData.total) * 100)}%</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
