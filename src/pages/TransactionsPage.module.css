@@ -249,6 +249,110 @@
   background: rgba(0, 88, 190, 0.06);
 }
 
+/* Checkbox */
+.checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--color-secondary, #0058be);
+}
+
+/* Selected row */
+.selectedRow td {
+  background: rgba(0, 88, 190, 0.04) !important;
+}
+
+/* Bulk action bar */
+.bulkBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--color-surface);
+  border: 1px solid rgba(0, 88, 190, 0.2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+}
+
+.bulkCount {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-secondary, #0058be);
+  margin-right: 4px;
+}
+
+.bulkBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-alt, #f5f5f5);
+  border: var(--border-ghost);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.bulkBtn:hover {
+  background: var(--color-surface-hover, #eee);
+  color: var(--color-text-primary);
+}
+
+.bulkBtnGhost {
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.bulkBtnGhost:hover {
+  color: var(--color-text-secondary);
+}
+
+/* Bulk category dropdown */
+.bulkCategoryDropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 100;
+  min-width: 280px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--color-surface, #fff);
+  border: var(--border-ghost);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md, 0 4px 16px rgba(0,0,0,0.12));
+  padding: 4px 0;
+  margin-top: 4px;
+}
+
+.ruleSmallBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--color-secondary, #0058be);
+  background: rgba(0, 88, 190, 0.06);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast);
+}
+
+.ruleSmallBtn:hover {
+  background: rgba(0, 88, 190, 0.12);
+}
+
 /* Hide Button */
 .hideBtn {
   display: flex;

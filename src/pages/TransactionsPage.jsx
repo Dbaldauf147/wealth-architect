@@ -89,7 +89,7 @@ const ALL_CATEGORIES = [
 ];
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, updateTransactionCategory, addCategoryRule, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
+  const { transactions, analytics, loading, updateTransactionCategory, bulkUpdateCategoryByIds, addCategoryRule, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
   const [activeAccount, setActiveAccount] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(0);
@@ -98,12 +98,70 @@ export function TransactionsPage() {
   const [showHidden, setShowHidden] = useState(false);
   const [sortCol, setSortCol] = useState('date');
   const [sortDir, setSortDir] = useState('desc');
-  const [pendingRule, setPendingRule] = useState(null); // { transactionId, index, description, amount, newCategory, matchCount }
+  const [pendingRule, setPendingRule] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
+  const [bulkCategorySearch, setBulkCategorySearch] = useState('');
   const dropdownRef = useRef(null);
   const confirmRef = useRef(null);
+  const bulkDropdownRef = useRef(null);
+
+  /* Clear selection when search changes */
+  useEffect(() => { setSelectedIds(new Set()); }, [searchQuery, activeAccount]);
+
+  function toggleSelect(id) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    const filteredIds = filtered.filter(t => t.transactionId).map(t => t.transactionId);
+    if (selectedIds.size === filteredIds.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredIds));
+    }
+  }
+
+  function handleBulkCategory(cat) {
+    bulkUpdateCategoryByIds([...selectedIds], cat);
+    setBulkCategoryOpen(false);
+    setBulkCategorySearch('');
+  }
+
+  function handleBulkCategoryAndRule(cat) {
+    // Group selected transactions by description+amount and create rules
+    const selected = filtered.filter(t => selectedIds.has(t.transactionId));
+    const seen = new Set();
+    for (const t of selected) {
+      const key = `${t.description.toLowerCase().trim()}|${Math.abs(t.amount)}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        addCategoryRule(t.description, t.amount, cat);
+      }
+    }
+    // addCategoryRule already bulk-updates matching transactions
+    setSelectedIds(new Set());
+    setBulkCategoryOpen(false);
+    setBulkCategorySearch('');
+  }
+
+  /* Close bulk dropdown on outside click */
+  useEffect(() => {
+    function handleClick(e) {
+      if (bulkDropdownRef.current && !bulkDropdownRef.current.contains(e.target)) {
+        setBulkCategoryOpen(false);
+        setBulkCategorySearch('');
+      }
+    }
+    if (bulkCategoryOpen) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [bulkCategoryOpen]);
 
   function handleSort(col) {
-    console.log('SORT CLICKED:', col, 'current:', sortCol, sortDir);
     if (sortCol === col) {
       setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     } else {
@@ -300,6 +358,86 @@ export function TransactionsPage() {
         />
       </div>
 
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className={styles.bulkBar} style={{ position: 'relative' }}>
+          <span className={styles.bulkCount}>{selectedIds.size} selected</span>
+          <button
+            className={styles.bulkBtn}
+            onClick={() => setBulkCategoryOpen(!bulkCategoryOpen)}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>category</span>
+            Recategorize
+          </button>
+          <button
+            className={styles.bulkBtn}
+            onClick={() => {
+              selectedIds.forEach(id => toggleHideTransaction(id));
+              setSelectedIds(new Set());
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
+            Hide selected
+          </button>
+          <button
+            className={styles.bulkBtnGhost}
+            onClick={() => setSelectedIds(new Set())}
+          >
+            Clear
+          </button>
+          {bulkCategoryOpen && (
+            <div className={styles.bulkCategoryDropdown} ref={bulkDropdownRef}>
+              <input
+                className={styles.categorySearch}
+                type="text"
+                placeholder="Search or type new..."
+                value={bulkCategorySearch}
+                onChange={e => setBulkCategorySearch(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && bulkCategorySearch.trim()) {
+                    handleBulkCategory(bulkCategorySearch.trim());
+                  }
+                }}
+                autoFocus
+              />
+              {bulkCategorySearch.trim() && !categoryOptions.some(c => c.toLowerCase() === bulkCategorySearch.trim().toLowerCase()) && (
+                <div
+                  className={styles.categoryOption}
+                  style={{ color: '#0058be', fontWeight: 600 }}
+                  onClick={() => handleBulkCategory(bulkCategorySearch.trim())}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>add</span>
+                  Create "{bulkCategorySearch.trim()}"
+                </div>
+              )}
+              {categoryOptions
+                .filter(cat => !bulkCategorySearch || cat.toLowerCase().includes(bulkCategorySearch.toLowerCase()))
+                .map(cat => (
+                <div key={cat} className={styles.categoryOption}>
+                  <span
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}
+                    onClick={() => handleBulkCategory(cat)}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: catColor(cat) }}>
+                      {getCategoryIcon(cat)}
+                    </span>
+                    {cat}
+                  </span>
+                  <button
+                    className={styles.ruleSmallBtn}
+                    title="Apply + create auto-rule"
+                    onClick={() => handleBulkCategoryAndRule(cat)}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 13 }}>auto_fix_high</span>
+                    + Rule
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Hidden transactions toggle */}
       {hiddenCount > 0 && (
         <div>
@@ -349,6 +487,14 @@ export function TransactionsPage() {
           <table className={styles.table}>
             <thead>
               <tr>
+                <th style={{ width: 36 }}>
+                  <input
+                    type="checkbox"
+                    className={styles.checkbox}
+                    checked={filtered.length > 0 && selectedIds.size === filtered.filter(t => t.transactionId).length}
+                    onChange={toggleSelectAll}
+                  />
+                </th>
                 {[
                   { key: 'merchant', label: 'Merchant' },
                   { key: 'category', label: 'Category' },
@@ -383,7 +529,15 @@ export function TransactionsPage() {
                 const color = catColor(t.category || 'Uncategorized');
                 const bg = catBg(t.category || 'Uncategorized');
                 return (
-                  <tr key={t.transactionId || i}>
+                  <tr key={t.transactionId || i} className={selectedIds.has(t.transactionId) ? styles.selectedRow : ''}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        className={styles.checkbox}
+                        checked={selectedIds.has(t.transactionId)}
+                        onChange={() => toggleSelect(t.transactionId)}
+                      />
+                    </td>
                     <td>
                       <div className={styles.merchantCell}>
                         <div

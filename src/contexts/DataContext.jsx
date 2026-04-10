@@ -122,6 +122,13 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  const bulkUpdateCategoryByIds = useCallback((transactionIds, newCategory) => {
+    const idSet = new Set(transactionIds);
+    setAllTransactions(prev => prev.map(t =>
+      idSet.has(t.transactionId) ? { ...t, category: newCategory } : t
+    ));
+  }, []);
+
   const getMatchCount = useCallback((description, amount) => {
     return allTransactions.filter(t => {
       const descMatch = t.description.toLowerCase().trim() === description.toLowerCase().trim();
@@ -156,6 +163,7 @@ export function DataProvider({ children }) {
       lastSync,
       refresh: loadData,
       updateTransactionCategory,
+      bulkUpdateCategoryByIds,
       addCategoryRule,
       removeCategoryRule,
       categoryRules,
