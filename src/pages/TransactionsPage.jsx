@@ -123,6 +123,9 @@ export function TransactionsPage() {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
   const [bulkCategorySearch, setBulkCategorySearch] = useState('');
+  const [bulkSubOpen, setBulkSubOpen] = useState(false);
+  const [bulkSubSearch, setBulkSubSearch] = useState('');
+  const bulkSubRef = useRef(null);
   const [savedToast, setSavedToast] = useState(false);
   const [includedCategories, setIncludedCategories] = useState(new Set());
   const dropdownRef = useRef(null);
@@ -181,6 +184,29 @@ export function TransactionsPage() {
     setBulkCategorySearch('');
   }
 
+  function handleBulkSubcategory(sub) {
+    const ids = [...selectedIds];
+    ids.forEach(id => updateTransactionSubcategory(id, sub));
+    flashSaved();
+    setBulkSubOpen(false);
+    setBulkSubSearch('');
+  }
+
+  /* All subcategories available for selected transactions */
+  const bulkSubOptions = useMemo(() => {
+    const selected = filtered.filter(t => selectedIds.has(t.transactionId));
+    const cats = [...new Set(selected.map(t => t.category).filter(Boolean))];
+    const subs = new Set();
+    for (const cat of cats) {
+      for (const s of (SUBCATEGORIES[cat] || [])) subs.add(s);
+    }
+    // Also include subcategories already used in data
+    for (const t of (transactions || [])) {
+      if (t.subcategory) subs.add(t.subcategory);
+    }
+    return [...subs].sort();
+  }, [selectedIds, filtered, transactions]);
+
   /* Close bulk dropdown on outside click */
   useEffect(() => {
     function handleClick(e) {
@@ -188,10 +214,14 @@ export function TransactionsPage() {
         setBulkCategoryOpen(false);
         setBulkCategorySearch('');
       }
+      if (bulkSubRef.current && !bulkSubRef.current.contains(e.target)) {
+        setBulkSubOpen(false);
+        setBulkSubSearch('');
+      }
     }
-    if (bulkCategoryOpen) document.addEventListener('mousedown', handleClick);
+    if (bulkCategoryOpen || bulkSubOpen) document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [bulkCategoryOpen]);
+  }, [bulkCategoryOpen, bulkSubOpen]);
 
   function handleSort(col) {
     if (sortCol === col) {
@@ -487,6 +517,13 @@ export function TransactionsPage() {
           </button>
           <button
             className={styles.bulkBtn}
+            onClick={() => { setBulkSubOpen(!bulkSubOpen); setBulkCategoryOpen(false); }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>label</span>
+            Set Subcategory
+          </button>
+          <button
+            className={styles.bulkBtn}
             onClick={() => {
               selectedIds.forEach(id => toggleHideTransaction(id));
               setSelectedIds(new Set());
@@ -548,6 +585,52 @@ export function TransactionsPage() {
                     <span className="material-symbols-outlined" style={{ fontSize: 13 }}>auto_fix_high</span>
                     + Rule
                   </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {bulkSubOpen && (
+            <div className={styles.bulkCategoryDropdown} ref={bulkSubRef}>
+              <input
+                className={styles.categorySearch}
+                type="text"
+                placeholder="Search or type new subcategory..."
+                value={bulkSubSearch}
+                onChange={e => setBulkSubSearch(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && bulkSubSearch.trim()) {
+                    handleBulkSubcategory(bulkSubSearch.trim());
+                  }
+                }}
+                autoFocus
+              />
+              <div
+                className={styles.categoryOption}
+                style={{ color: '#ba1a1a' }}
+                onClick={() => handleBulkSubcategory('')}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                Clear subcategory
+              </div>
+              {bulkSubSearch.trim() && !bulkSubOptions.some(s => s.toLowerCase() === bulkSubSearch.trim().toLowerCase()) && (
+                <div
+                  className={styles.categoryOption}
+                  style={{ color: '#0058be', fontWeight: 600 }}
+                  onClick={() => handleBulkSubcategory(bulkSubSearch.trim())}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>add</span>
+                  Create "{bulkSubSearch.trim()}"
+                </div>
+              )}
+              {bulkSubOptions
+                .filter(s => !bulkSubSearch || s.toLowerCase().includes(bulkSubSearch.toLowerCase()))
+                .map(sub => (
+                <div
+                  key={sub}
+                  className={styles.categoryOption}
+                  onClick={() => handleBulkSubcategory(sub)}
+                >
+                  {sub}
                 </div>
               ))}
             </div>

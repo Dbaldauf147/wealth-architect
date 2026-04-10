@@ -86,6 +86,36 @@ export function BudgetCard({ budget, onUpdate, onDelete, onAddSub, onUpdateSub, 
 
   var subs = budget.subBudgets || [];
 
+  /* Compute spending per sub-budget by matching transaction.subcategory */
+  var subSpending = useMemo(function() {
+    if (!transactions || subs.length === 0) return {};
+    var map = {};
+    for (var s = 0; s < subs.length; s++) {
+      map[subs[s].id] = { spent: 0, txns: [] };
+    }
+    var subNameMap = {};
+    for (var si = 0; si < subs.length; si++) {
+      subNameMap[subs[si].name.toLowerCase()] = subs[si].id;
+    }
+    for (var k = 0; k < transactions.length; k++) {
+      var t = transactions[k];
+      if (t.amount >= 0) continue;
+      if ((t.category || '').toLowerCase() !== budget.name.toLowerCase()) continue;
+      var subId = subNameMap[(t.subcategory || '').toLowerCase()];
+      if (!subId) continue;
+      if (selectedMonth) {
+        if (t.month !== selectedMonth) continue;
+      } else {
+        var range = getDateRange(budgetPeriod);
+        var d = new Date(t.date);
+        if (d < range.start || d > range.end) continue;
+      }
+      map[subId].spent += Math.abs(t.amount);
+      map[subId].txns.push(t);
+    }
+    return map;
+  }, [transactions, budget.name, subs, budgetPeriod, selectedMonth]);
+
   function handleSave() {
     onUpdate(budget.id, { name: name, monthlyLimit: Number(limit) || 0, icon: icon, color: color, period: period });
     setEditing(false);
@@ -209,6 +239,10 @@ export function BudgetCard({ budget, onUpdate, onDelete, onAddSub, onUpdateSub, 
       </div>
 
       {subs.map(function(sub) {
+        var subData = subSpending[sub.id] || { spent: 0, txns: [] };
+        var subPct = sub.monthlyLimit > 0 ? Math.round((subData.spent / sub.monthlyLimit) * 100) : 0;
+        var subBarPct = Math.min(100, subPct);
+        var subBarColor = subPct >= 90 ? '#ba1a1a' : subPct >= 70 ? '#e8a317' : (color || '#0058be');
         return (
           <div key={sub.id} className={styles.subBudgetCard}>
             <div className={styles.budgetRow}>
@@ -223,9 +257,21 @@ export function BudgetCard({ budget, onUpdate, onDelete, onAddSub, onUpdateSub, 
                 </div>
               ) : (
                 <React_Fragment>
-                  <div style={{ flex: 1, minWidth: 0 }}><div className={styles.subBudgetName}>{sub.name}</div></div>
-                  <div className={styles.subBudgetLimitValue}>${(sub.monthlyLimit || 0).toLocaleString()}</div>
-                  <div className={styles.budgetLimitLabel}>/ month</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className={styles.subBudgetName}>{sub.name}</div>
+                    {sub.monthlyLimit > 0 && (
+                      <div className={styles.progressRow}>
+                        <div className={styles.progressBar}>
+                          <div className={styles.progressFill} style={{ width: subBarPct + '%', background: subBarColor }} />
+                        </div>
+                        <span className={styles.progressLabel} style={{ color: subBarColor, fontSize: 10 }}>{subPct}%</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className={styles.spentInfo} style={{ fontSize: 12 }}>
+                    <div style={{ fontWeight: 700 }}>${Math.round(subData.spent).toLocaleString()}</div>
+                    {sub.monthlyLimit > 0 && <div className={styles.budgetLimitLabel}>of ${sub.monthlyLimit.toLocaleString()}</div>}
+                  </div>
                   <button className={styles.budgetEditBtn} onClick={function() { setEditingSubId(sub.id); setEditSubName(sub.name); setEditSubLimit(sub.monthlyLimit); }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span></button>
                   <button className={styles.budgetEditBtn} onClick={function() { onDeleteSub(budget.id, sub.id); }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span></button>
                 </React_Fragment>

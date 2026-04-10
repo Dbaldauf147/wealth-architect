@@ -6,32 +6,52 @@ import BudgetChart from '../components/BudgetChart';
 import styles from './BudgetsPage.module.css';
 
 const CATEGORY_ICONS = {
-  'dining out': 'restaurant',
-  'restaurants': 'restaurant',
   'food & drink': 'restaurant',
-  'groceries': 'shopping_cart',
-  'entertainment': 'theaters',
   'shopping': 'shopping_bag',
   'travel': 'flight',
+  'entertainment': 'movie',
+  'bills & utilities': 'receipt',
+  'housing': 'home',
   'transportation': 'directions_car',
-  'auto & transport': 'directions_car',
+  'health & wellness': 'health_and_safety',
+  'income': 'payments',
+  'transfer': 'swap_horiz',
+  'education': 'school',
+  'personal care': 'self_improvement',
+  'gifts & donations': 'redeem',
+  'investments': 'trending_up',
+  'fees & charges': 'receipt_long',
+  'dining out': 'restaurant',
+  'restaurants': 'restaurant',
+  'groceries': 'shopping_cart',
   'gas': 'local_gas_station',
   'utilities': 'bolt',
   'rent': 'home',
   'mortgage': 'home',
   'insurance': 'shield',
-  'health': 'favorite',
   'healthcare': 'favorite',
-  'education': 'school',
   'subscriptions': 'subscriptions',
-  'personal care': 'self_improvement',
-  'gifts': 'redeem',
-  'charity': 'volunteer_activism',
   'clothing': 'checkroom',
   'electronics': 'devices',
-  'home improvement': 'construction',
-  'pets': 'pets',
   'fitness': 'fitness_center',
+};
+
+const SUBCATEGORIES = {
+  'Food & Drink': ['Restaurants', 'Groceries', 'Coffee', 'Fast Food', 'Alcohol & Bars', 'Delivery'],
+  'Shopping': ['Clothing', 'Electronics', 'Home Goods', 'Online Shopping', 'Sporting Goods', 'Books'],
+  'Travel': ['Flights', 'Hotels', 'Car Rental', 'Vacation', 'Luggage & Travel Gear'],
+  'Entertainment': ['Streaming', 'Movies & TV', 'Music', 'Games', 'Events & Concerts', 'Sports'],
+  'Bills & Utilities': ['Electric', 'Gas', 'Water', 'Internet', 'Phone', 'Subscriptions', 'Insurance'],
+  'Housing': ['Rent', 'Mortgage', 'Property Tax', 'HOA', 'Maintenance & Repairs', 'Furniture'],
+  'Transportation': ['Gas & Fuel', 'Parking', 'Tolls', 'Public Transit', 'Ride Share', 'Car Payment', 'Car Insurance', 'Auto Maintenance'],
+  'Health & Wellness': ['Doctor', 'Pharmacy', 'Gym & Fitness', 'Mental Health', 'Dental', 'Vision'],
+  'Income': ['Salary', 'Freelance', 'Interest', 'Dividends', 'Refund', 'Bonus', 'Other Income'],
+  'Transfer': ['Account Transfer', 'Credit Card Payment', 'Loan Payment', 'Investment Transfer'],
+  'Education': ['Tuition', 'Books & Supplies', 'Courses', 'Student Loans'],
+  'Personal Care': ['Haircut', 'Skincare', 'Spa', 'Cosmetics'],
+  'Gifts & Donations': ['Gifts', 'Charity', 'Religious'],
+  'Investments': ['Stocks', 'Crypto', 'Real Estate', 'Retirement'],
+  'Fees & Charges': ['Bank Fees', 'ATM Fees', 'Late Fees', 'Service Charges', 'Interest Charges'],
 };
 
 const CATEGORY_COLORS = [
@@ -87,7 +107,8 @@ export function BudgetsPage() {
     const iconKey = s.name.toLowerCase();
     const icon = CATEGORY_ICONS[iconKey] || 'savings';
     const colorIdx = budgets.length % CATEGORY_COLORS.length;
-    addBudget({ name: s.name, monthlyLimit: s.suggested, icon, color: CATEGORY_COLORS[colorIdx] });
+    const subs = (SUBCATEGORIES[s.name] || []).map(name => ({ name, monthlyLimit: 0 }));
+    addBudget({ name: s.name, monthlyLimit: s.suggested, icon, color: CATEGORY_COLORS[colorIdx], subBudgets: subs });
   }
 
   function handleAddAllSuggestions() {
@@ -95,7 +116,8 @@ export function BudgetsPage() {
       const iconKey = s.name.toLowerCase();
       const icon = CATEGORY_ICONS[iconKey] || 'savings';
       const colorIdx = (budgets.length + i) % CATEGORY_COLORS.length;
-      addBudget({ name: s.name, monthlyLimit: s.suggested, icon, color: CATEGORY_COLORS[colorIdx] });
+      const subs = (SUBCATEGORIES[s.name] || []).map(name => ({ name, monthlyLimit: 0 }));
+      addBudget({ name: s.name, monthlyLimit: s.suggested, icon, color: CATEGORY_COLORS[colorIdx], subBudgets: subs });
     });
     setShowSuggestions(false);
   }

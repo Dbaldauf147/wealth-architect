@@ -71,13 +71,14 @@ export function useBudgets() {
     return () => clearInterval(interval);
   }, [fetchBudgets]);
 
-  async function addBudget({ name, monthlyLimit, icon, color, period }) {
+  async function addBudget({ name, monthlyLimit, icon, color, period, subBudgets }) {
+    const subs = (subBudgets || []).map(s => ({ id: crypto.randomUUID(), name: s.name, monthlyLimit: Number(s.monthlyLimit) || 0 }));
     const fields = toFirestoreFields({
       name, monthlyLimit: Number(monthlyLimit) || 0, icon: icon || 'savings',
       color: color || '#0058be', period: period || 'monthly',
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      subBudgets: subs,
     });
-    fields.subBudgets = { arrayValue: { values: [] } };
     await fetch(`${BASE}/budgets?key=${API_KEY}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fields }),
