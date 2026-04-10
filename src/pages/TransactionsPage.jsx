@@ -88,8 +88,29 @@ const ALL_CATEGORIES = [
   'Education', 'Personal Care', 'Gifts & Donations', 'Investments', 'Fees & Charges',
 ];
 
+const SUBCATEGORIES = {
+  'Food & Drink': ['Restaurants', 'Groceries', 'Coffee', 'Fast Food', 'Alcohol & Bars', 'Delivery'],
+  'Shopping': ['Clothing', 'Electronics', 'Home Goods', 'Online Shopping', 'Sporting Goods', 'Books'],
+  'Travel': ['Flights', 'Hotels', 'Car Rental', 'Vacation', 'Luggage & Travel Gear'],
+  'Entertainment': ['Streaming', 'Movies & TV', 'Music', 'Games', 'Events & Concerts', 'Sports'],
+  'Bills & Utilities': ['Electric', 'Gas', 'Water', 'Internet', 'Phone', 'Subscriptions', 'Insurance'],
+  'Housing': ['Rent', 'Mortgage', 'Property Tax', 'HOA', 'Maintenance & Repairs', 'Furniture'],
+  'Transportation': ['Gas & Fuel', 'Parking', 'Tolls', 'Public Transit', 'Ride Share', 'Car Payment', 'Car Insurance', 'Auto Maintenance'],
+  'Health & Wellness': ['Doctor', 'Pharmacy', 'Gym & Fitness', 'Mental Health', 'Dental', 'Vision'],
+  'Income': ['Salary', 'Freelance', 'Interest', 'Dividends', 'Refund', 'Bonus', 'Other Income'],
+  'Transfer': ['Account Transfer', 'Credit Card Payment', 'Loan Payment', 'Investment Transfer'],
+  'Education': ['Tuition', 'Books & Supplies', 'Courses', 'Student Loans'],
+  'Personal Care': ['Haircut', 'Skincare', 'Spa', 'Cosmetics'],
+  'Gifts & Donations': ['Gifts', 'Charity', 'Religious'],
+  'Investments': ['Stocks', 'Crypto', 'Real Estate', 'Retirement'],
+  'Fees & Charges': ['Bank Fees', 'ATM Fees', 'Late Fees', 'Service Charges', 'Interest Charges'],
+};
+
 export function TransactionsPage() {
-  const { transactions, analytics, loading, updateTransactionCategory, bulkUpdateCategoryByIds, addCategoryRule, customCategories, addCustomCategory, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
+  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, bulkUpdateCategoryByIds, addCategoryRule, customCategories, addCustomCategory, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
+  const [editingSubId, setEditingSubId] = useState(null);
+  const [subSearchText, setSubSearchText] = useState('');
+  const subDropdownRef = useRef(null);
   const [activeAccount, setActiveAccount] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(0);
@@ -181,6 +202,18 @@ export function TransactionsPage() {
     }
     setPage(0);
   }
+
+  /* Close subcategory dropdown on outside click */
+  useEffect(() => {
+    function handleClick(e) {
+      if (subDropdownRef.current && !subDropdownRef.current.contains(e.target)) {
+        setEditingSubId(null);
+        setSubSearchText('');
+      }
+    }
+    if (editingSubId !== null) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [editingSubId]);
 
   /* Close dropdown / confirm on outside click */
   useEffect(() => {
@@ -293,6 +326,7 @@ export function TransactionsPage() {
         case 'amount': cmp = a.amount - b.amount; break;
         case 'date': cmp = new Date(a.date || 0) - new Date(b.date || 0); break;
         case 'account': cmp = (a.account || '').localeCompare(b.account || ''); break;
+        case 'subcategory': cmp = (a.subcategory || '').localeCompare(b.subcategory || ''); break;
         case 'institution': cmp = (a.institution || '').localeCompare(b.institution || ''); break;
         default: cmp = 0;
       }
@@ -564,6 +598,7 @@ export function TransactionsPage() {
                 {[
                   { key: 'merchant', label: 'Merchant' },
                   { key: 'category', label: 'Category' },
+                  { key: 'subcategory', label: 'Subcategory' },
                   { key: 'amount', label: 'Amount' },
                   { key: 'date', label: 'Date' },
                   { key: 'account', label: 'Account' },
@@ -647,6 +682,21 @@ export function TransactionsPage() {
                             }}
                             autoFocus
                           />
+                          {t.category && (
+                            <div
+                              className={styles.categoryOption}
+                              style={{ color: '#ba1a1a' }}
+                              onClick={() => {
+                                updateTransactionCategory(t.transactionId, i, '');
+                                flashSaved();
+                                setEditingId(null);
+                                setNewCategoryText('');
+                              }}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                              Clear category
+                            </div>
+                          )}
                           {newCategoryText.trim() && !categoryOptions.some(c => c.toLowerCase() === newCategoryText.trim().toLowerCase()) && (
                             <div
                               className={styles.categoryOption}
@@ -673,6 +723,91 @@ export function TransactionsPage() {
                           ))}
                         </div>
                       )}
+                    </td>
+                    <td style={{ position: 'relative' }}>
+                      {(() => {
+                        const subKey = t.transactionId || i;
+                        const subs = SUBCATEGORIES[t.category] || [];
+                        const allSubs = [...new Set([...subs, ...(transactions || []).filter(tx => tx.category === t.category && tx.subcategory).map(tx => tx.subcategory)])].sort();
+                        return (
+                          <>
+                            <span
+                              className={styles.subcategoryBadge}
+                              onClick={() => { setEditingSubId(editingSubId === subKey ? null : subKey); setSubSearchText(''); }}
+                              title="Click to set subcategory"
+                            >
+                              {t.subcategory || '—'}
+                              <span className="material-symbols-outlined" style={{ fontSize: 11, marginLeft: 2 }}>edit</span>
+                            </span>
+                            {editingSubId === subKey && (
+                              <div className={styles.categoryDropdown} ref={subDropdownRef}>
+                                <input
+                                  className={styles.categorySearch}
+                                  type="text"
+                                  placeholder="Search or type new..."
+                                  value={subSearchText}
+                                  onChange={e => setSubSearchText(e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter' && subSearchText.trim()) {
+                                      updateTransactionSubcategory(t.transactionId, subSearchText.trim());
+                                      flashSaved();
+                                      setEditingSubId(null);
+                                      setSubSearchText('');
+                                    }
+                                  }}
+                                  autoFocus
+                                />
+                                {t.subcategory && (
+                                  <div
+                                    className={styles.categoryOption}
+                                    style={{ color: '#ba1a1a' }}
+                                    onClick={() => {
+                                      updateTransactionSubcategory(t.transactionId, '');
+                                      flashSaved();
+                                      setEditingSubId(null);
+                                      setSubSearchText('');
+                                    }}
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                                    Clear subcategory
+                                  </div>
+                                )}
+                                {subSearchText.trim() && !allSubs.some(s => s.toLowerCase() === subSearchText.trim().toLowerCase()) && (
+                                  <div
+                                    className={styles.categoryOption}
+                                    style={{ color: '#0058be', fontWeight: 600 }}
+                                    onClick={() => {
+                                      updateTransactionSubcategory(t.transactionId, subSearchText.trim());
+                                      flashSaved();
+                                      setEditingSubId(null);
+                                      setSubSearchText('');
+                                    }}
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>add</span>
+                                    Create "{subSearchText.trim()}"
+                                  </div>
+                                )}
+                                {allSubs
+                                  .filter(s => !subSearchText || s.toLowerCase().includes(subSearchText.toLowerCase()))
+                                  .map(sub => (
+                                  <div
+                                    key={sub}
+                                    className={`${styles.categoryOption} ${sub === t.subcategory ? styles.categoryOptionActive : ''}`}
+                                    onClick={() => {
+                                      updateTransactionSubcategory(t.transactionId, sub);
+                                      flashSaved();
+                                      setEditingSubId(null);
+                                      setSubSearchText('');
+                                    }}
+                                  >
+                                    {sub}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </td>
                     <td>
                       <span className={t.amount >= 0 ? styles.amountCredit : styles.amountDebit}>
