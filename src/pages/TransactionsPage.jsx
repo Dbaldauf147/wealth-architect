@@ -411,6 +411,23 @@ export function TransactionsPage() {
       {/* Category Filters */}
       <div className={styles.categoryFilterBar}>
         <span className={styles.categoryFilterLabel}>Categories:</span>
+        <button
+          className={`${styles.categoryFilterBox} ${includedCategories.size === activeCategories.length ? styles.categoryFilterSelectAll : ''}`}
+          onClick={() => {
+            if (includedCategories.size === activeCategories.length) {
+              setIncludedCategories(new Set());
+            } else {
+              setIncludedCategories(new Set(activeCategories));
+            }
+            setPage(0);
+          }}
+          type="button"
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+            {includedCategories.size === activeCategories.length ? 'check_box' : includedCategories.size > 0 ? 'indeterminate_check_box' : 'check_box_outline_blank'}
+          </span>
+          Select All
+        </button>
         {activeCategories.map(cat => {
           const included = includedCategories.has(cat);
           const color = catColor(cat);
