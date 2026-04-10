@@ -38,6 +38,16 @@ function applyOverrides(txns, overrides) {
   return txns.map(t => overrides[t.transactionId] ? { ...t, category: overrides[t.transactionId] } : t);
 }
 
+function loadCustomCategories() {
+  try {
+    return JSON.parse(localStorage.getItem('customCategories') || '[]');
+  } catch { return []; }
+}
+
+function saveCustomCategories(cats) {
+  localStorage.setItem('customCategories', JSON.stringify(cats));
+}
+
 function ruleMatches(rule, t) {
   const descMatch = t.description.toLowerCase().trim() === rule.description.toLowerCase().trim();
   if (!descMatch) return false;
@@ -60,6 +70,7 @@ export function DataProvider({ children }) {
   const [hiddenIds, setHiddenIds] = useState(loadHiddenIds);
   const [categoryRules, setCategoryRules] = useState(loadCategoryRules);
   const [categoryOverrides, setCategoryOverrides] = useState(loadCategoryOverrides);
+  const [customCategories, setCustomCategories] = useState(loadCustomCategories);
   const [balances, setBalances] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -162,6 +173,15 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  const addCustomCategory = useCallback((category) => {
+    setCustomCategories(prev => {
+      if (prev.includes(category)) return prev;
+      const next = [...prev, category];
+      saveCustomCategories(next);
+      return next;
+    });
+  }, []);
+
   const getMatchCount = useCallback((description, amount) => {
     return allTransactions.filter(t => {
       const descMatch = t.description.toLowerCase().trim() === description.toLowerCase().trim();
@@ -200,6 +220,8 @@ export function DataProvider({ children }) {
       addCategoryRule,
       removeCategoryRule,
       categoryRules,
+      customCategories,
+      addCustomCategory,
       getMatchCount,
       toggleHideTransaction,
       hiddenTransactions,

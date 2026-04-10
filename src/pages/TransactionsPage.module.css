@@ -735,6 +735,33 @@
   color: var(--color-text-tertiary);
 }
 
+/* Saved toast */
+.savedToast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 300;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--color-success, #16a34a);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.savedToastVisible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 /* ── Responsive ── */
 @media (max-width: 1024px) {
   .mainGrid {

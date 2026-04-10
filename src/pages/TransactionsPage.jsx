@@ -89,7 +89,7 @@ const ALL_CATEGORIES = [
 ];
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, updateTransactionCategory, bulkUpdateCategoryByIds, addCategoryRule, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
+  const { transactions, analytics, loading, updateTransactionCategory, bulkUpdateCategoryByIds, addCategoryRule, customCategories, addCustomCategory, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
   const [activeAccount, setActiveAccount] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(0);
@@ -102,9 +102,17 @@ export function TransactionsPage() {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
   const [bulkCategorySearch, setBulkCategorySearch] = useState('');
+  const [savedToast, setSavedToast] = useState(false);
   const dropdownRef = useRef(null);
   const confirmRef = useRef(null);
   const bulkDropdownRef = useRef(null);
+  const savedTimer = useRef(null);
+
+  function flashSaved() {
+    setSavedToast(true);
+    clearTimeout(savedTimer.current);
+    savedTimer.current = setTimeout(() => setSavedToast(false), 1500);
+  }
 
   /* Clear selection when search changes */
   useEffect(() => { setSelectedIds(new Set()); }, [searchQuery, activeAccount]);
@@ -127,13 +135,15 @@ export function TransactionsPage() {
   }
 
   function handleBulkCategory(cat) {
+    if (!ALL_CATEGORIES.includes(cat)) addCustomCategory(cat);
     bulkUpdateCategoryByIds([...selectedIds], cat);
+    flashSaved();
     setBulkCategoryOpen(false);
     setBulkCategorySearch('');
   }
 
   function handleBulkCategoryAndRule(cat) {
-    // Group selected transactions by description+amount and create rules
+    if (!ALL_CATEGORIES.includes(cat)) addCustomCategory(cat);
     const selected = filtered.filter(t => selectedIds.has(t.transactionId));
     const seen = new Set();
     for (const t of selected) {
@@ -143,7 +153,7 @@ export function TransactionsPage() {
         addCategoryRule(t.description, t.amount, cat);
       }
     }
-    // addCategoryRule already bulk-updates matching transactions
+    flashSaved();
     setSelectedIds(new Set());
     setBulkCategoryOpen(false);
     setBulkCategorySearch('');
@@ -199,6 +209,7 @@ export function TransactionsPage() {
       setNewCategoryText('');
       return;
     }
+    if (!ALL_CATEGORIES.includes(newCategory)) addCustomCategory(newCategory);
     const matchCount = getMatchCount(t.description, t.amount);
     if (matchCount > 1) {
       setPendingRule({
@@ -213,16 +224,17 @@ export function TransactionsPage() {
       setNewCategoryText('');
     } else {
       updateTransactionCategory(t.transactionId, i, newCategory);
+      flashSaved();
       setEditingId(null);
       setNewCategoryText('');
     }
   }
 
-  /* All categories from data + defaults */
+  /* All categories from data + defaults + custom */
   const categoryOptions = useMemo(() => {
     const fromData = (transactions || []).map(t => t.category).filter(Boolean);
-    return [...new Set([...ALL_CATEGORIES, ...fromData])].sort();
-  }, [transactions]);
+    return [...new Set([...ALL_CATEGORIES, ...fromData, ...customCategories])].sort();
+  }, [transactions, customCategories]);
 
   /* Account pill list */
   const accountNames = useMemo(
@@ -374,6 +386,7 @@ export function TransactionsPage() {
             onClick={() => {
               selectedIds.forEach(id => toggleHideTransaction(id));
               setSelectedIds(new Set());
+              flashSaved();
             }}
           >
             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
@@ -468,7 +481,7 @@ export function TransactionsPage() {
                   </div>
                   <button
                     className={styles.unhideBtn}
-                    onClick={() => toggleHideTransaction(t.transactionId)}
+                    onClick={() => { toggleHideTransaction(t.transactionId); flashSaved(); }}
                   >
                     <span className="material-symbols-outlined" style={{ fontSize: 14 }}>visibility</span>
                     Unhide
@@ -625,7 +638,7 @@ export function TransactionsPage() {
                       <button
                         className={styles.hideBtn}
                         title="Hide from reporting"
-                        onClick={() => toggleHideTransaction(t.transactionId)}
+                        onClick={() => { toggleHideTransaction(t.transactionId); flashSaved(); }}
                       >
                         <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
                       </button>
@@ -735,6 +748,7 @@ export function TransactionsPage() {
                 className={styles.ruleBtn}
                 onClick={() => {
                   updateTransactionCategory(pendingRule.transactionId, pendingRule.index, pendingRule.newCategory);
+                  flashSaved();
                   setPendingRule(null);
                 }}
               >
@@ -744,6 +758,7 @@ export function TransactionsPage() {
                 className={styles.ruleBtnPrimary}
                 onClick={() => {
                   addCategoryRule(pendingRule.description, pendingRule.amount, pendingRule.newCategory);
+                  flashSaved();
                   setPendingRule(null);
                 }}
               >
@@ -757,6 +772,12 @@ export function TransactionsPage() {
           </div>
         </div>
       )}
+
+      {/* Saved toast */}
+      <div className={`${styles.savedToast} ${savedToast ? styles.savedToastVisible : ''}`}>
+        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check_circle</span>
+        Saved!
+      </div>
     </div>
   );
 }
