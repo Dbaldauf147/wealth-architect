@@ -133,166 +133,7 @@ export function TransactionsPage() {
   const bulkDropdownRef = useRef(null);
   const savedTimer = useRef(null);
 
-  function flashSaved() {
-    setSavedToast(true);
-    clearTimeout(savedTimer.current);
-    savedTimer.current = setTimeout(() => setSavedToast(false), 1500);
-  }
-
-  /* Clear selection when search changes */
-  useEffect(() => { setSelectedIds(new Set()); }, [searchQuery, activeAccount]);
-
-  function toggleSelect(id) {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }
-
-  function toggleSelectAll() {
-    const filteredIds = filtered.filter(t => t.transactionId).map(t => t.transactionId);
-    if (selectedIds.size === filteredIds.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(filteredIds));
-    }
-  }
-
-  function handleBulkCategory(cat) {
-    if (!ALL_CATEGORIES.includes(cat)) addCustomCategory(cat);
-    bulkUpdateCategoryByIds([...selectedIds], cat);
-    flashSaved();
-    setBulkCategoryOpen(false);
-    setBulkCategorySearch('');
-  }
-
-  function handleBulkCategoryAndRule(cat) {
-    if (!ALL_CATEGORIES.includes(cat)) addCustomCategory(cat);
-    const selected = filtered.filter(t => selectedIds.has(t.transactionId));
-    const seen = new Set();
-    for (const t of selected) {
-      const key = `${t.description.toLowerCase().trim()}|${Math.abs(t.amount)}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        addCategoryRule(t.description, t.amount, cat);
-      }
-    }
-    flashSaved();
-    setSelectedIds(new Set());
-    setBulkCategoryOpen(false);
-    setBulkCategorySearch('');
-  }
-
-  function handleBulkSubcategory(sub) {
-    const ids = [...selectedIds];
-    ids.forEach(id => updateTransactionSubcategory(id, sub));
-    flashSaved();
-    setBulkSubOpen(false);
-    setBulkSubSearch('');
-  }
-
-  /* All subcategories available for selected transactions */
-  const bulkSubOptions = useMemo(() => {
-    const selected = filtered.filter(t => selectedIds.has(t.transactionId));
-    const cats = [...new Set(selected.map(t => t.category).filter(Boolean))];
-    const subs = new Set();
-    for (const cat of cats) {
-      for (const s of (SUBCATEGORIES[cat] || [])) subs.add(s);
-    }
-    // Also include subcategories already used in data
-    for (const t of (transactions || [])) {
-      if (t.subcategory) subs.add(t.subcategory);
-    }
-    return [...subs].sort();
-  }, [selectedIds, filtered, transactions]);
-
-  /* Close bulk dropdown on outside click */
-  useEffect(() => {
-    function handleClick(e) {
-      if (bulkDropdownRef.current && !bulkDropdownRef.current.contains(e.target)) {
-        setBulkCategoryOpen(false);
-        setBulkCategorySearch('');
-      }
-      if (bulkSubRef.current && !bulkSubRef.current.contains(e.target)) {
-        setBulkSubOpen(false);
-        setBulkSubSearch('');
-      }
-    }
-    if (bulkCategoryOpen || bulkSubOpen) document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [bulkCategoryOpen, bulkSubOpen]);
-
-  function handleSort(col) {
-    if (sortCol === col) {
-      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortCol(col);
-      setSortDir(col === 'date' ? 'desc' : 'asc');
-    }
-    setPage(0);
-  }
-
-  /* Close subcategory dropdown on outside click */
-  useEffect(() => {
-    function handleClick(e) {
-      if (subDropdownRef.current && !subDropdownRef.current.contains(e.target)) {
-        setEditingSubId(null);
-        setSubSearchText('');
-      }
-    }
-    if (editingSubId !== null) document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [editingSubId]);
-
-  /* Close dropdown / confirm on outside click */
-  useEffect(() => {
-    function handleClick(e) {
-      if (confirmRef.current && confirmRef.current.contains(e.target)) return;
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
-        setEditingId(null);
-      }
-    }
-    if (editingId !== null) document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [editingId]);
-
-  useEffect(() => {
-    function handleClick(e) {
-      if (confirmRef.current && !confirmRef.current.contains(e.target)) {
-        setPendingRule(null);
-      }
-    }
-    if (pendingRule) document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [pendingRule]);
-
-  function handleCategorySelect(t, i, newCategory) {
-    if (newCategory === t.category) {
-      setEditingId(null);
-      setNewCategoryText('');
-      return;
-    }
-    if (!ALL_CATEGORIES.includes(newCategory)) addCustomCategory(newCategory);
-    const matchCount = getMatchCount(t.description, t.amount);
-    if (matchCount > 1) {
-      setPendingRule({
-        transactionId: t.transactionId,
-        index: i,
-        description: t.description,
-        amount: t.amount,
-        newCategory,
-        matchCount,
-      });
-      setEditingId(null);
-      setNewCategoryText('');
-    } else {
-      updateTransactionCategory(t.transactionId, i, newCategory);
-      flashSaved();
-      setEditingId(null);
-      setNewCategoryText('');
-    }
-  }
+  /* ── Memos (ordered by dependency) ── */
 
   /* All categories from data + defaults + custom */
   const categoryOptions = useMemo(() => {
@@ -311,20 +152,6 @@ export function TransactionsPage() {
     const cats = (transactions || []).map(t => t.category || 'Uncategorized');
     return [...new Set(cats)].sort();
   }, [transactions]);
-
-  function toggleCategoryFilter(cat) {
-    setIncludedCategories(prev => {
-      const next = new Set(prev);
-      if (next.has(cat)) next.delete(cat); else next.add(cat);
-      return next;
-    });
-    setPage(0);
-  }
-
-  function clearCategoryFilters() {
-    setIncludedCategories(new Set());
-    setPage(0);
-  }
 
   /* Filtered + sorted transactions */
   const filtered = useMemo(() => {
@@ -390,6 +217,184 @@ export function TransactionsPage() {
     () => findRecurring(transactions || []),
     [transactions],
   );
+
+  /* All subcategories available for selected transactions */
+  const bulkSubOptions = useMemo(() => {
+    const selected = filtered.filter(t => selectedIds.has(t.transactionId));
+    const cats = [...new Set(selected.map(t => t.category).filter(Boolean))];
+    const subs = new Set();
+    for (const cat of cats) {
+      for (const s of (SUBCATEGORIES[cat] || [])) subs.add(s);
+    }
+    for (const t of (transactions || [])) {
+      if (t.subcategory) subs.add(t.subcategory);
+    }
+    return [...subs].sort();
+  }, [selectedIds, filtered, transactions]);
+
+  /* ── Effects ── */
+
+  /* Clear selection when search changes */
+  useEffect(() => { setSelectedIds(new Set()); }, [searchQuery, activeAccount]);
+
+  /* Close subcategory dropdown on outside click */
+  useEffect(() => {
+    function handleClick(e) {
+      if (subDropdownRef.current && !subDropdownRef.current.contains(e.target)) {
+        setEditingSubId(null);
+        setSubSearchText('');
+      }
+    }
+    if (editingSubId !== null) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [editingSubId]);
+
+  /* Close dropdown / confirm on outside click */
+  useEffect(() => {
+    function handleClick(e) {
+      if (confirmRef.current && confirmRef.current.contains(e.target)) return;
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setEditingId(null);
+      }
+    }
+    if (editingId !== null) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [editingId]);
+
+  useEffect(() => {
+    function handleClick(e) {
+      if (confirmRef.current && !confirmRef.current.contains(e.target)) {
+        setPendingRule(null);
+      }
+    }
+    if (pendingRule) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [pendingRule]);
+
+  /* Close bulk dropdowns on outside click */
+  useEffect(() => {
+    function handleClick(e) {
+      if (bulkDropdownRef.current && !bulkDropdownRef.current.contains(e.target)) {
+        setBulkCategoryOpen(false);
+        setBulkCategorySearch('');
+      }
+      if (bulkSubRef.current && !bulkSubRef.current.contains(e.target)) {
+        setBulkSubOpen(false);
+        setBulkSubSearch('');
+      }
+    }
+    if (bulkCategoryOpen || bulkSubOpen) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [bulkCategoryOpen, bulkSubOpen]);
+
+  /* ── Handler functions ── */
+
+  function flashSaved() {
+    setSavedToast(true);
+    clearTimeout(savedTimer.current);
+    savedTimer.current = setTimeout(() => setSavedToast(false), 1500);
+  }
+
+  function handleSort(col) {
+    if (sortCol === col) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortCol(col);
+      setSortDir(col === 'date' ? 'desc' : 'asc');
+    }
+    setPage(0);
+  }
+
+  function toggleSelect(id) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    const filteredIds = filtered.filter(t => t.transactionId).map(t => t.transactionId);
+    if (selectedIds.size === filteredIds.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredIds));
+    }
+  }
+
+  function toggleCategoryFilter(cat) {
+    setIncludedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat); else next.add(cat);
+      return next;
+    });
+    setPage(0);
+  }
+
+  function clearCategoryFilters() {
+    setIncludedCategories(new Set());
+    setPage(0);
+  }
+
+  function handleCategorySelect(t, i, newCategory) {
+    if (newCategory === t.category) {
+      setEditingId(null);
+      setNewCategoryText('');
+      return;
+    }
+    if (!ALL_CATEGORIES.includes(newCategory)) addCustomCategory(newCategory);
+    const matchCount = getMatchCount(t.description, t.amount);
+    if (matchCount > 1) {
+      setPendingRule({
+        transactionId: t.transactionId,
+        index: i,
+        description: t.description,
+        amount: t.amount,
+        newCategory,
+        matchCount,
+      });
+      setEditingId(null);
+      setNewCategoryText('');
+    } else {
+      updateTransactionCategory(t.transactionId, i, newCategory);
+      flashSaved();
+      setEditingId(null);
+      setNewCategoryText('');
+    }
+  }
+
+  function handleBulkCategory(cat) {
+    if (!ALL_CATEGORIES.includes(cat)) addCustomCategory(cat);
+    bulkUpdateCategoryByIds([...selectedIds], cat);
+    flashSaved();
+    setBulkCategoryOpen(false);
+    setBulkCategorySearch('');
+  }
+
+  function handleBulkCategoryAndRule(cat) {
+    if (!ALL_CATEGORIES.includes(cat)) addCustomCategory(cat);
+    const selected = filtered.filter(t => selectedIds.has(t.transactionId));
+    const seen = new Set();
+    for (const t of selected) {
+      const key = `${t.description.toLowerCase().trim()}|${Math.abs(t.amount)}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        addCategoryRule(t.description, t.amount, cat);
+      }
+    }
+    flashSaved();
+    setSelectedIds(new Set());
+    setBulkCategoryOpen(false);
+    setBulkCategorySearch('');
+  }
+
+  function handleBulkSubcategory(sub) {
+    const ids = [...selectedIds];
+    ids.forEach(id => updateTransactionSubcategory(id, sub));
+    flashSaved();
+    setBulkSubOpen(false);
+    setBulkSubSearch('');
+  }
 
   /* Loading state */
   if (loading) {
