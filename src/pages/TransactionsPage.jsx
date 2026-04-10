@@ -1175,6 +1175,8 @@ export function TransactionsPage() {
                         return next;
                       });
                     } else {
+                      // Clear subcategory filter when toggling categories — avoids stale filter mismatches
+                      setIncludedSubcategories(new Set());
                       setIncludedCategories(prev => {
                         const next = new Set(prev);
                         if (next.has(name)) next.delete(name); else next.add(name);
@@ -1207,6 +1209,7 @@ export function TransactionsPage() {
                             return next;
                           });
                         } else {
+                          setIncludedSubcategories(new Set());
                           setIncludedCategories(prev => {
                             const next = new Set(prev);
                             if (next.has(e.name)) next.delete(e.name); else next.add(e.name);
