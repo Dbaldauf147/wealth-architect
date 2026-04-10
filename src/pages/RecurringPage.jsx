@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useData } from '../contexts/DataContext';
 import styles from './RecurringPage.module.css';
 
@@ -180,7 +180,7 @@ export function RecurringPage() {
                 for (var fi = 0; fi < items.length; fi++) freqTotal += items[fi].avgAmount;
                 var freqAnnual = freq === 'annual' ? freqTotal : freq === 'quarterly' ? freqTotal * 4 : freqTotal * 12;
                 return (
-                  <React_Fragment key={freq}>
+                  <Fragment key={freq}>
                     <tr className={styles.sectionHeaderRow}>
                       <td colSpan="5">
                         <span className={styles.sectionHeaderLabel}>{freqLabel}</span>
@@ -195,7 +195,7 @@ export function RecurringPage() {
                 var i = recurring.indexOf(r);
                 var isOpen = expanded === i;
                 return (
-                  <React_Fragment key={i}>
+                  <Fragment key={i}>
                     <tr style={{ cursor: 'pointer' }} onClick={function() { setExpanded(isOpen ? null : i); }}>
                       <td>
                         <div className={styles.paymentName}>
@@ -243,10 +243,10 @@ export function RecurringPage() {
                         </tr>
                       );
                     })}
-                  </React_Fragment>
+                  </Fragment>
                 );
               })}
-                  </React_Fragment>
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -265,4 +265,3 @@ export function RecurringPage() {
   );
 }
 
-function React_Fragment(props) { return props.children; }
