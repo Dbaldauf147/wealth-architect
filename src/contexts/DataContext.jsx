@@ -23,6 +23,21 @@ function saveCategoryRules(rules) {
   localStorage.setItem('categoryRules', JSON.stringify(rules));
 }
 
+function loadCategoryOverrides() {
+  try {
+    return JSON.parse(localStorage.getItem('categoryOverrides') || '{}');
+  } catch { return {}; }
+}
+
+function saveCategoryOverrides(overrides) {
+  localStorage.setItem('categoryOverrides', JSON.stringify(overrides));
+}
+
+function applyOverrides(txns, overrides) {
+  if (!Object.keys(overrides).length) return txns;
+  return txns.map(t => overrides[t.transactionId] ? { ...t, category: overrides[t.transactionId] } : t);
+}
+
 function ruleMatches(rule, t) {
   const descMatch = t.description.toLowerCase().trim() === rule.description.toLowerCase().trim();
   if (!descMatch) return false;
@@ -44,6 +59,7 @@ export function DataProvider({ children }) {
   const [allTransactions, setAllTransactions] = useState([]);
   const [hiddenIds, setHiddenIds] = useState(loadHiddenIds);
   const [categoryRules, setCategoryRules] = useState(loadCategoryRules);
+  const [categoryOverrides, setCategoryOverrides] = useState(loadCategoryOverrides);
   const [balances, setBalances] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -68,7 +84,9 @@ export function DataProvider({ children }) {
         fetchBalances(),
       ]);
       const rules = loadCategoryRules();
-      setAllTransactions(applyRulesToTransactions(txns, rules));
+      const overrides = loadCategoryOverrides();
+      const withRules = applyRulesToTransactions(txns, rules);
+      setAllTransactions(applyOverrides(withRules, overrides));
       setBalances(bal);
       setLastSync(new Date());
     } catch (err) {
@@ -89,6 +107,13 @@ export function DataProvider({ children }) {
       if (!transactionId && i === index) return { ...t, category: newCategory };
       return t;
     }));
+    if (transactionId) {
+      setCategoryOverrides(prev => {
+        const next = { ...prev, [transactionId]: newCategory };
+        saveCategoryOverrides(next);
+        return next;
+      });
+    }
   }, []);
 
   const bulkUpdateCategory = useCallback((description, amount, newCategory) => {
@@ -127,6 +152,14 @@ export function DataProvider({ children }) {
     setAllTransactions(prev => prev.map(t =>
       idSet.has(t.transactionId) ? { ...t, category: newCategory } : t
     ));
+    setCategoryOverrides(prev => {
+      const next = { ...prev };
+      for (const id of transactionIds) {
+        if (id) next[id] = newCategory;
+      }
+      saveCategoryOverrides(next);
+      return next;
+    });
   }, []);
 
   const getMatchCount = useCallback((description, amount) => {
