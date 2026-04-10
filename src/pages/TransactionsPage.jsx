@@ -128,6 +128,12 @@ export function TransactionsPage() {
   const bulkSubRef = useRef(null);
   const [savedToast, setSavedToast] = useState(false);
   const [includedCategories, setIncludedCategories] = useState(new Set());
+  const [organizedCategories, setOrganizedCategories] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('organizedCategories') || '[]')); }
+    catch { return new Set(); }
+  });
+  const [draggedCategory, setDraggedCategory] = useState(null);
+  const [dragOverBucket, setDragOverBucket] = useState(null);
   const dropdownRef = useRef(null);
   const confirmRef = useRef(null);
   const bulkDropdownRef = useRef(null);
@@ -336,6 +342,20 @@ export function TransactionsPage() {
     setPage(0);
   }
 
+  function handleDropCategory(bucket) {
+    if (!draggedCategory) return;
+    setOrganizedCategories(prev => {
+      const next = new Set(prev);
+      if (bucket === 'organized') next.add(draggedCategory);
+      else next.delete(draggedCategory);
+      localStorage.setItem('organizedCategories', JSON.stringify([...next]));
+      return next;
+    });
+    setDraggedCategory(null);
+    setDragOverBucket(null);
+    flashSaved();
+  }
+
   function handleCategorySelect(t, i, newCategory) {
     if (newCategory === t.category) {
       setEditingId(null);
@@ -441,6 +461,78 @@ export function TransactionsPage() {
             {acc}
           </div>
         ))}
+      </div>
+
+      {/* Category Review Buckets */}
+      <div className={styles.bucketGrid}>
+        <div
+          className={`${styles.bucket} ${dragOverBucket === 'review' ? styles.bucketActive : ''}`}
+          onDragOver={e => { e.preventDefault(); setDragOverBucket('review'); }}
+          onDragLeave={() => setDragOverBucket(null)}
+          onDrop={() => handleDropCategory('review')}
+        >
+          <div className={styles.bucketHeader}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#e8a317' }}>pending</span>
+            <span className={styles.bucketTitle}>Needs Review</span>
+            <span className={styles.bucketCount}>{activeCategories.filter(c => !organizedCategories.has(c)).length}</span>
+          </div>
+          <div className={styles.bucketItems}>
+            {activeCategories.filter(c => !organizedCategories.has(c)).map(cat => {
+              const color = catColor(cat);
+              const bg = catBg(cat);
+              return (
+                <div
+                  key={cat}
+                  className={styles.bucketChip}
+                  draggable
+                  onDragStart={() => setDraggedCategory(cat)}
+                  onDragEnd={() => setDraggedCategory(null)}
+                  style={{ background: bg, color, borderColor: color + '30' }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{getCategoryIcon(cat)}</span>
+                  {cat}
+                </div>
+              );
+            })}
+            {activeCategories.filter(c => !organizedCategories.has(c)).length === 0 && (
+              <span className={styles.bucketEmpty}>All categories organized! Drop here to move back.</span>
+            )}
+          </div>
+        </div>
+        <div
+          className={`${styles.bucket} ${dragOverBucket === 'organized' ? styles.bucketActive : ''}`}
+          onDragOver={e => { e.preventDefault(); setDragOverBucket('organized'); }}
+          onDragLeave={() => setDragOverBucket(null)}
+          onDrop={() => handleDropCategory('organized')}
+        >
+          <div className={styles.bucketHeader}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#16a34a' }}>check_circle</span>
+            <span className={styles.bucketTitle}>Organized</span>
+            <span className={styles.bucketCount}>{activeCategories.filter(c => organizedCategories.has(c)).length}</span>
+          </div>
+          <div className={styles.bucketItems}>
+            {activeCategories.filter(c => organizedCategories.has(c)).map(cat => {
+              const color = catColor(cat);
+              const bg = catBg(cat);
+              return (
+                <div
+                  key={cat}
+                  className={styles.bucketChip}
+                  draggable
+                  onDragStart={() => setDraggedCategory(cat)}
+                  onDragEnd={() => setDraggedCategory(null)}
+                  style={{ background: bg, color, borderColor: color + '30' }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{getCategoryIcon(cat)}</span>
+                  {cat}
+                </div>
+              );
+            })}
+            {activeCategories.filter(c => organizedCategories.has(c)).length === 0 && (
+              <span className={styles.bucketEmpty}>Drag categories here when they're organized</span>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Category Filters */}
