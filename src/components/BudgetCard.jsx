@@ -171,7 +171,7 @@ export function BudgetCard({ budget, onUpdate, onDelete, onAddSub, onUpdateSub, 
               </button>
             </div>
           ) : (
-            <React_Fragment>
+            <>
               <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={function() { setShowTxns(!showTxns); }}>
                 <div className={styles.budgetName}>
                   {budget.name}
@@ -203,7 +203,7 @@ export function BudgetCard({ budget, onUpdate, onDelete, onAddSub, onUpdateSub, 
               <button className={styles.budgetEditBtn} onClick={function() { setAddingSub(true); }} title="Add Sub-Budget">
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
               </button>
-            </React_Fragment>
+            </>
           )}
         </div>
 
@@ -256,7 +256,7 @@ export function BudgetCard({ budget, onUpdate, onDelete, onAddSub, onUpdateSub, 
                   <button className={styles.subIconBtn} onClick={function() { setEditingSubId(null); }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span></button>
                 </div>
               ) : (
-                <React_Fragment>
+                <>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className={styles.subBudgetName}>{sub.name}</div>
                     {sub.monthlyLimit > 0 && (
@@ -274,7 +274,7 @@ export function BudgetCard({ budget, onUpdate, onDelete, onAddSub, onUpdateSub, 
                   </div>
                   <button className={styles.budgetEditBtn} onClick={function() { setEditingSubId(sub.id); setEditSubName(sub.name); setEditSubLimit(sub.monthlyLimit); }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span></button>
                   <button className={styles.budgetEditBtn} onClick={function() { onDeleteSub(budget.id, sub.id); }}><span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span></button>
-                </React_Fragment>
+                </>
               )}
             </div>
           </div>
@@ -299,5 +299,3 @@ export function BudgetCard({ budget, onUpdate, onDelete, onAddSub, onUpdateSub, 
   );
 }
 
-// Avoid JSX fragment syntax that may cause bundler issues
-function React_Fragment(props) { return props.children; }
