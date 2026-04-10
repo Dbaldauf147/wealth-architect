@@ -184,7 +184,11 @@ export function TransactionsPage() {
         t =>
           (t.description || '').toLowerCase().includes(q) ||
           (t.category || '').toLowerCase().includes(q) ||
-          (t.account || '').toLowerCase().includes(q),
+          (t.account || '').toLowerCase().includes(q) ||
+          (t.institution || '').toLowerCase().includes(q) ||
+          (t.fullDescription || '').toLowerCase().includes(q) ||
+          String(t.amount).includes(q) ||
+          formatDate(t.date).toLowerCase().includes(q),
       );
     }
     const sorted = [...list].sort((a, b) => {
@@ -195,6 +199,7 @@ export function TransactionsPage() {
         case 'amount': cmp = a.amount - b.amount; break;
         case 'date': cmp = new Date(a.date || 0) - new Date(b.date || 0); break;
         case 'account': cmp = (a.account || '').localeCompare(b.account || ''); break;
+        case 'institution': cmp = (a.institution || '').localeCompare(b.institution || ''); break;
         default: cmp = 0;
       }
       return sortDir === 'asc' ? cmp : -cmp;
@@ -350,6 +355,7 @@ export function TransactionsPage() {
                   { key: 'amount', label: 'Amount' },
                   { key: 'date', label: 'Date' },
                   { key: 'account', label: 'Account' },
+                  { key: 'institution', label: 'Institution' },
                 ].map(col => (
                   <th key={col.key}>
                     <button
@@ -460,6 +466,7 @@ export function TransactionsPage() {
                         {t.account}
                       </div>
                     </td>
+                    <td className={styles.institutionCell}>{t.institution}</td>
                     <td>
                       <button
                         className={styles.hideBtn}
