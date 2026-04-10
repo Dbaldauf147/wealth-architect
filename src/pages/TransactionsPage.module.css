@@ -116,6 +116,26 @@
   border-bottom: var(--border-ghost);
 }
 
+.sortableHeader {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+}
+
+.sortableHeader:hover {
+  color: var(--color-text-primary);
+}
+
 .table td {
   padding: 12px 16px;
   border-bottom: var(--border-ghost);
@@ -171,6 +191,150 @@
   font-weight: 600;
   border-radius: var(--radius-sm);
   white-space: nowrap;
+}
+
+/* Category Dropdown */
+.categoryDropdown {
+  position: absolute;
+  top: 100%;
+  left: 16px;
+  z-index: 100;
+  min-width: 200px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--color-surface, #fff);
+  border: var(--border-ghost);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md, 0 4px 16px rgba(0,0,0,0.12));
+  padding: 4px 0;
+}
+
+.categorySearch {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  font-family: var(--font-body);
+  border: none;
+  border-bottom: var(--border-ghost);
+  outline: none;
+  background: transparent;
+  color: var(--color-text-primary);
+}
+
+.categorySearch::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.categoryOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.categoryOption:hover {
+  background: var(--color-surface-alt, #f5f5f5);
+  color: var(--color-text-primary);
+}
+
+.categoryOptionActive {
+  color: var(--color-secondary, #0058be);
+  font-weight: 700;
+  background: rgba(0, 88, 190, 0.06);
+}
+
+/* Hide Button */
+.hideBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: all var(--transition-fast);
+}
+
+.table tr:hover .hideBtn {
+  opacity: 1;
+}
+
+.hideBtn:hover {
+  background: rgba(186, 26, 26, 0.08);
+  color: #ba1a1a;
+}
+
+/* Hidden transactions toggle + panel */
+.hiddenToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.hiddenToggle:hover {
+  color: var(--color-text-secondary);
+  background: var(--color-surface-alt);
+}
+
+.hiddenPanel {
+  margin-top: 8px;
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.hiddenRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  font-size: 13px;
+  border-bottom: var(--border-ghost);
+  opacity: 0.6;
+}
+
+.hiddenRow:last-child {
+  border-bottom: none;
+}
+
+.unhideBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-secondary, #0058be);
+  background: rgba(0, 88, 190, 0.06);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast);
+}
+
+.unhideBtn:hover {
+  background: rgba(0, 88, 190, 0.12);
 }
 
 /* Amount */
@@ -362,6 +526,103 @@
   font-size: 12.5px;
   color: rgba(255, 255, 255, 0.7);
   line-height: 1.5;
+}
+
+/* Category Rule Confirmation Dialog */
+.ruleOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.ruleDialog {
+  background: var(--color-surface, #fff);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  padding: 28px 32px;
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+}
+
+.ruleDialogIcon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(0, 88, 190, 0.08);
+  color: var(--color-secondary, #0058be);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 14px;
+}
+
+.ruleDialogTitle {
+  font-family: var(--font-headline);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: 8px;
+}
+
+.ruleDialogDesc {
+  font-size: 13.5px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin-bottom: 20px;
+}
+
+.ruleDialogActions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.ruleBtn {
+  padding: 9px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  border: var(--border-medium);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface, #fff);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.ruleBtn:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text-primary);
+}
+
+.ruleBtnPrimary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: var(--color-secondary, #0058be);
+  color: #fff;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.ruleBtnPrimary:hover {
+  filter: brightness(1.1);
+}
+
+.ruleDialogHint {
+  margin-top: 14px;
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
 }
 
 /* ── Responsive ── */

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { useData } from '../contexts/DataContext';
 import styles from './TransactionsPage.module.css';
 
@@ -82,11 +82,89 @@ function findRecurring(transactions) {
     }));
 }
 
+const ALL_CATEGORIES = [
+  'Food & Drink', 'Shopping', 'Travel', 'Entertainment', 'Bills & Utilities',
+  'Housing', 'Transportation', 'Health & Wellness', 'Income', 'Transfer',
+  'Education', 'Personal Care', 'Gifts & Donations', 'Investments', 'Fees & Charges',
+];
+
 export function TransactionsPage() {
-  const { transactions, analytics, loading } = useData();
+  const { transactions, analytics, loading, updateTransactionCategory, addCategoryRule, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
   const [activeAccount, setActiveAccount] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(0);
+  const [editingId, setEditingId] = useState(null);
+  const [newCategoryText, setNewCategoryText] = useState('');
+  const [showHidden, setShowHidden] = useState(false);
+  const [sortCol, setSortCol] = useState('date');
+  const [sortDir, setSortDir] = useState('desc');
+  const [pendingRule, setPendingRule] = useState(null); // { transactionId, index, description, amount, newCategory, matchCount }
+  const dropdownRef = useRef(null);
+  const confirmRef = useRef(null);
+
+  function handleSort(col) {
+    console.log('SORT CLICKED:', col, 'current:', sortCol, sortDir);
+    if (sortCol === col) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortCol(col);
+      setSortDir(col === 'date' ? 'desc' : 'asc');
+    }
+    setPage(0);
+  }
+
+  /* Close dropdown / confirm on outside click */
+  useEffect(() => {
+    function handleClick(e) {
+      if (confirmRef.current && confirmRef.current.contains(e.target)) return;
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setEditingId(null);
+      }
+    }
+    if (editingId !== null) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [editingId]);
+
+  useEffect(() => {
+    function handleClick(e) {
+      if (confirmRef.current && !confirmRef.current.contains(e.target)) {
+        setPendingRule(null);
+      }
+    }
+    if (pendingRule) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [pendingRule]);
+
+  function handleCategorySelect(t, i, newCategory) {
+    if (newCategory === t.category) {
+      setEditingId(null);
+      setNewCategoryText('');
+      return;
+    }
+    const matchCount = getMatchCount(t.description, t.amount);
+    if (matchCount > 1) {
+      setPendingRule({
+        transactionId: t.transactionId,
+        index: i,
+        description: t.description,
+        amount: t.amount,
+        newCategory,
+        matchCount,
+      });
+      setEditingId(null);
+      setNewCategoryText('');
+    } else {
+      updateTransactionCategory(t.transactionId, i, newCategory);
+      setEditingId(null);
+      setNewCategoryText('');
+    }
+  }
+
+  /* All categories from data + defaults */
+  const categoryOptions = useMemo(() => {
+    const fromData = (transactions || []).map(t => t.category).filter(Boolean);
+    return [...new Set([...ALL_CATEGORIES, ...fromData])].sort();
+  }, [transactions]);
 
   /* Account pill list */
   const accountNames = useMemo(
@@ -94,7 +172,7 @@ export function TransactionsPage() {
     [analytics],
   );
 
-  /* Filtered + paginated transactions */
+  /* Filtered + sorted transactions */
   const filtered = useMemo(() => {
     let list = transactions || [];
     if (activeAccount !== 'all') {
@@ -109,8 +187,20 @@ export function TransactionsPage() {
           (t.account || '').toLowerCase().includes(q),
       );
     }
-    return list;
-  }, [transactions, activeAccount, searchQuery]);
+    const sorted = [...list].sort((a, b) => {
+      let cmp = 0;
+      switch (sortCol) {
+        case 'merchant': cmp = (a.description || '').localeCompare(b.description || ''); break;
+        case 'category': cmp = (a.category || '').localeCompare(b.category || ''); break;
+        case 'amount': cmp = a.amount - b.amount; break;
+        case 'date': cmp = new Date(a.date || 0) - new Date(b.date || 0); break;
+        case 'account': cmp = (a.account || '').localeCompare(b.account || ''); break;
+        default: cmp = 0;
+      }
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return sorted;
+  }, [transactions, activeAccount, searchQuery, sortCol, sortDir]);
 
   const paginated = useMemo(
     () => filtered.slice(0, (page + 1) * PAGE_SIZE),
@@ -205,6 +295,48 @@ export function TransactionsPage() {
         />
       </div>
 
+      {/* Hidden transactions toggle */}
+      {hiddenCount > 0 && (
+        <div>
+          <button
+            className={styles.hiddenToggle}
+            onClick={() => setShowHidden(!showHidden)}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+              {showHidden ? 'visibility' : 'visibility_off'}
+            </span>
+            {hiddenCount} hidden transaction{hiddenCount !== 1 ? 's' : ''}
+            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+              {showHidden ? 'expand_less' : 'expand_more'}
+            </span>
+          </button>
+          {showHidden && (
+            <div className={styles.hiddenPanel}>
+              {hiddenTransactions.map((t, i) => (
+                <div key={t.transactionId || i} className={styles.hiddenRow}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <span className={styles.merchantName}>{t.description}</span>
+                    <span style={{ margin: '0 8px', color: 'var(--color-text-tertiary)' }}>&middot;</span>
+                    <span className={styles.dateCell}>{formatDate(t.date)}</span>
+                    <span style={{ margin: '0 8px', color: 'var(--color-text-tertiary)' }}>&middot;</span>
+                    <span className={t.amount >= 0 ? styles.amountCredit : styles.amountDebit}>
+                      {t.amount >= 0 ? '+' : ''}{fmt(t.amount)}
+                    </span>
+                  </div>
+                  <button
+                    className={styles.unhideBtn}
+                    onClick={() => toggleHideTransaction(t.transactionId)}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>visibility</span>
+                    Unhide
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Main Grid */}
       <div className={styles.mainGrid}>
         {/* Table */}
@@ -212,11 +344,31 @@ export function TransactionsPage() {
           <table className={styles.table}>
             <thead>
               <tr>
-                <th>Merchant</th>
-                <th>Category</th>
-                <th>Amount</th>
-                <th>Date</th>
-                <th>Account</th>
+                {[
+                  { key: 'merchant', label: 'Merchant' },
+                  { key: 'category', label: 'Category' },
+                  { key: 'amount', label: 'Amount' },
+                  { key: 'date', label: 'Date' },
+                  { key: 'account', label: 'Account' },
+                ].map(col => (
+                  <th key={col.key}>
+                    <button
+                      className={styles.sortableHeader}
+                      onClick={() => handleSort(col.key)}
+                      type="button"
+                    >
+                      {col.label}
+                      <span className="material-symbols-outlined" style={{
+                        fontSize: 14,
+                        opacity: sortCol === col.key ? 1 : 0,
+                        transition: 'opacity 0.15s',
+                      }}>
+                        {sortDir === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+                      </span>
+                    </button>
+                  </th>
+                ))}
+                <th style={{ width: 40 }}></th>
               </tr>
             </thead>
             <tbody>
@@ -244,13 +396,57 @@ export function TransactionsPage() {
                         </div>
                       </div>
                     </td>
-                    <td>
+                    <td style={{ position: 'relative' }}>
                       <span
                         className={styles.categoryBadge}
-                        style={{ background: bg, color }}
+                        style={{ background: bg, color, cursor: 'pointer' }}
+                        title="Click to change category"
+                        onClick={() => setEditingId(editingId === (t.transactionId || i) ? null : (t.transactionId || i))}
                       >
                         {t.category || 'Uncategorized'}
+                        <span className="material-symbols-outlined" style={{ fontSize: 12, marginLeft: 2 }}>edit</span>
                       </span>
+                      {editingId === (t.transactionId || i) && (
+                        <div className={styles.categoryDropdown} ref={dropdownRef}>
+                          <input
+                            className={styles.categorySearch}
+                            type="text"
+                            placeholder="Search or type new..."
+                            value={newCategoryText}
+                            onChange={e => setNewCategoryText(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' && newCategoryText.trim()) {
+                                handleCategorySelect(t, i, newCategoryText.trim());
+                              }
+                            }}
+                            autoFocus
+                          />
+                          {newCategoryText.trim() && !categoryOptions.some(c => c.toLowerCase() === newCategoryText.trim().toLowerCase()) && (
+                            <div
+                              className={styles.categoryOption}
+                              style={{ color: '#0058be', fontWeight: 600 }}
+                              onClick={() => handleCategorySelect(t, i, newCategoryText.trim())}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>add</span>
+                              Create "{newCategoryText.trim()}"
+                            </div>
+                          )}
+                          {categoryOptions
+                            .filter(cat => !newCategoryText || cat.toLowerCase().includes(newCategoryText.toLowerCase()))
+                            .map(cat => (
+                            <div
+                              key={cat}
+                              className={`${styles.categoryOption} ${cat === t.category ? styles.categoryOptionActive : ''}`}
+                              onClick={() => handleCategorySelect(t, i, cat)}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 14, color: catColor(cat) }}>
+                                {getCategoryIcon(cat)}
+                              </span>
+                              {cat}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td>
                       <span className={t.amount >= 0 ? styles.amountCredit : styles.amountDebit}>
@@ -263,6 +459,15 @@ export function TransactionsPage() {
                         <div className={styles.accountDot} style={{ background: catColor(t.account || 'Unknown') }} />
                         {t.account}
                       </div>
+                    </td>
+                    <td>
+                      <button
+                        className={styles.hideBtn}
+                        title="Hide from reporting"
+                        onClick={() => toggleHideTransaction(t.transactionId)}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
+                      </button>
                     </td>
                   </tr>
                 );
@@ -350,6 +555,47 @@ export function TransactionsPage() {
           </div>
         </div>
       </div>
+
+      {/* Bulk category rule confirmation */}
+      {pendingRule && (
+        <div className={styles.ruleOverlay}>
+          <div className={styles.ruleDialog} ref={confirmRef}>
+            <div className={styles.ruleDialogIcon}>
+              <span className="material-symbols-outlined" style={{ fontSize: 24 }}>category</span>
+            </div>
+            <div className={styles.ruleDialogTitle}>
+              Recategorize as "{pendingRule.newCategory}"
+            </div>
+            <div className={styles.ruleDialogDesc}>
+              There {pendingRule.matchCount === 1 ? 'is' : 'are'} <strong>{pendingRule.matchCount}</strong> transaction{pendingRule.matchCount !== 1 ? 's' : ''} from <strong>{pendingRule.description}</strong> at <strong>{fmt(Math.abs(pendingRule.amount))}</strong>.
+            </div>
+            <div className={styles.ruleDialogActions}>
+              <button
+                className={styles.ruleBtn}
+                onClick={() => {
+                  updateTransactionCategory(pendingRule.transactionId, pendingRule.index, pendingRule.newCategory);
+                  setPendingRule(null);
+                }}
+              >
+                Just this one
+              </button>
+              <button
+                className={styles.ruleBtnPrimary}
+                onClick={() => {
+                  addCategoryRule(pendingRule.description, pendingRule.amount, pendingRule.newCategory);
+                  setPendingRule(null);
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>auto_fix_high</span>
+                Apply to all {pendingRule.matchCount} + create rule
+              </button>
+            </div>
+            <div className={styles.ruleDialogHint}>
+              Rules auto-categorize matching charges on future syncs
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

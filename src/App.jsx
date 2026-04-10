@@ -2,16 +2,19 @@ import { useState, useEffect } from 'react';
 import styles from './App.module.css';
 import { OverviewPage } from './pages/OverviewPage';
 import { TransactionsPage } from './pages/TransactionsPage';
-import { BudgetsPage } from './pages/BudgetsPage';
 import { CardsPage } from './pages/CardsPage';
 import { AssetsPage } from './pages/AssetsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { useData } from './contexts/DataContext';
 
+import { BudgetsPage } from './pages/BudgetsPage';
+import { RecurringPage } from './pages/RecurringPage';
+
 const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: 'dashboard' },
   { id: 'transactions', label: 'Transactions', icon: 'receipt_long' },
   { id: 'budgets', label: 'Budgets', icon: 'savings' },
+  { id: 'recurring', label: 'Recurring', icon: 'autorenew' },
   { id: 'assets', label: 'Assets & Liabilities', icon: 'account_balance' },
   { id: 'cards', label: 'Cards Optimizer', icon: 'credit_card' },
 ];
@@ -51,6 +54,7 @@ export function App() {
     switch (view) {
       case 'transactions': return <TransactionsPage />;
       case 'budgets': return <BudgetsPage />;
+      case 'recurring': return <RecurringPage />;
       case 'assets': return <AssetsPage />;
       case 'cards': return <CardsPage />;
       case 'settings': return <SettingsPage />;

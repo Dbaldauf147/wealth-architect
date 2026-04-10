@@ -1,120 +1,205 @@
+import { useState, useMemo } from 'react';
 import { useData } from '../contexts/DataContext';
+import { useBudgets } from '../hooks/useBudgets';
+import { BudgetCard } from '../components/BudgetCard';
+import BudgetChart from '../components/BudgetChart';
 import styles from './BudgetsPage.module.css';
+
+const CATEGORY_ICONS = {
+  'dining out': 'restaurant',
+  'restaurants': 'restaurant',
+  'food & drink': 'restaurant',
+  'groceries': 'shopping_cart',
+  'entertainment': 'theaters',
+  'shopping': 'shopping_bag',
+  'travel': 'flight',
+  'transportation': 'directions_car',
+  'auto & transport': 'directions_car',
+  'gas': 'local_gas_station',
+  'utilities': 'bolt',
+  'rent': 'home',
+  'mortgage': 'home',
+  'insurance': 'shield',
+  'health': 'favorite',
+  'healthcare': 'favorite',
+  'education': 'school',
+  'subscriptions': 'subscriptions',
+  'personal care': 'self_improvement',
+  'gifts': 'redeem',
+  'charity': 'volunteer_activism',
+  'clothing': 'checkroom',
+  'electronics': 'devices',
+  'home improvement': 'construction',
+  'pets': 'pets',
+  'fitness': 'fitness_center',
+};
+
+const CATEGORY_COLORS = [
+  '#0058be', '#009668', '#7c3aed', '#ba1a1a', '#e8a317',
+  '#0891b2', '#dc2626', '#16a34a', '#9333ea', '#ea580c',
+  '#2563eb', '#65a30d', '#c026d3', '#0d9488', '#d97706',
+];
 
 function fmt(n) {
   if (n == null) return '—';
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
 }
 
-const GOALS = [
-  { name: 'Emergency Fund', target: '$25,000', saved: '$20,000', pct: 80, color: '#0058be' },
-  { name: 'Down Payment', target: '$80,000', saved: '$48,000', pct: 60, color: '#009668' },
-  { name: 'Luxury Travel', target: '$12,000', saved: '$3,000', pct: 25, color: '#7c3aed' },
-];
-
-const LIMITS = [
-  {
-    name: 'Dining Out',
-    icon: 'restaurant',
-    iconBg: 'rgba(186,26,26,0.08)',
-    iconColor: '#ba1a1a',
-    spent: '$1,240',
-    budget: '$1,500',
-    pct: 83,
-    barColor: '#e8a317',
-    status: 'warning',
-  },
-  {
-    name: 'Groceries',
-    icon: 'shopping_cart',
-    iconBg: 'rgba(0,88,190,0.08)',
-    iconColor: '#0058be',
-    spent: '$680',
-    budget: '$1,200',
-    pct: 57,
-    barColor: '#0058be',
-    status: 'stable',
-  },
-  {
-    name: 'Entertainment',
-    icon: 'theaters',
-    iconBg: 'rgba(0,150,104,0.08)',
-    iconColor: '#009668',
-    spent: '$220',
-    budget: '$800',
-    pct: 28,
-    barColor: '#009668',
-    status: 'healthy',
-  },
-];
-
-const VARIANCE = [
-  { category: 'Dining Out', budget: '$1,500', actual: '$1,240', variance: '-$260', pctVar: '-17%', direction: 'down' },
-  { category: 'Groceries', budget: '$1,200', actual: '$680', variance: '-$520', pctVar: '-43%', direction: 'down' },
-  { category: 'Travel', budget: '$800', actual: '$648', variance: '-$152', pctVar: '-19%', direction: 'down' },
-  { category: 'Subscriptions', budget: '$300', actual: '$320', variance: '+$20', pctVar: '+7%', direction: 'up' },
-  { category: 'Auto & Transport', budget: '$400', actual: '$210', variance: '-$190', pctVar: '-48%', direction: 'down' },
-  { category: 'Shopping', budget: '$500', actual: '$512', variance: '+$12', pctVar: '+2%', direction: 'up' },
-];
-
-function ProgressRing({ pct, color, size = 110, stroke = 8 }) {
-  const radius = (size - stroke) / 2;
-  const circ = 2 * Math.PI * radius;
-  const offset = circ - (pct / 100) * circ;
-
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        fill="none"
-        stroke="var(--color-surface-alt)"
-        strokeWidth={stroke}
-      />
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        fill="none"
-        stroke={color}
-        strokeWidth={stroke}
-        strokeDasharray={circ}
-        strokeDashoffset={offset}
-        strokeLinecap="round"
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        style={{ transition: 'stroke-dashoffset 0.6s ease' }}
-      />
-      <text
-        x={size / 2}
-        y={size / 2 - 4}
-        textAnchor="middle"
-        fontFamily="var(--font-headline)"
-        fontSize="22"
-        fontWeight="800"
-        fill="var(--color-text-primary)"
-      >
-        {pct}%
-      </text>
-      <text
-        x={size / 2}
-        y={size / 2 + 14}
-        textAnchor="middle"
-        fontFamily="var(--font-body)"
-        fontSize="9"
-        fill="var(--color-text-tertiary)"
-      >
-        COMPLETE
-      </text>
-    </svg>
-  );
-}
-
 export function BudgetsPage() {
-  const { analytics, balances, loading } = useData();
+  const { analytics, transactions } = useData();
+  const { budgets, loading, addBudget, updateBudget, deleteBudget, addSubBudget, updateSubBudget, deleteSubBudget } = useBudgets();
   const totalExpenses = analytics?.totalExpenses || 0;
   const totalIncome = analytics?.totalIncome || 0;
   const cashFlow = analytics?.cashFlow || 0;
+
+  // Suggest budgets based on spending
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestions = useMemo(() => {
+    if (!transactions || transactions.length === 0) return [];
+    // Group expenses by category and month
+    const categoryMonths = {};
+    for (const t of transactions) {
+      if (t.amount >= 0) continue; // skip income
+      const cat = t.category || 'Uncategorized';
+      if (cat === 'Transfer' || cat === 'Credit Card Payment') continue;
+      const month = t.month || 'Unknown';
+      if (!categoryMonths[cat]) categoryMonths[cat] = {};
+      if (!categoryMonths[cat][month]) categoryMonths[cat][month] = 0;
+      categoryMonths[cat][month] += Math.abs(t.amount);
+    }
+    // Calculate average monthly spend per category
+    const existingNames = new Set(budgets.map(b => b.name.toLowerCase()));
+    return Object.entries(categoryMonths)
+      .map(([name, months]) => {
+        const monthValues = Object.values(months);
+        const avg = monthValues.reduce((s, v) => s + v, 0) / monthValues.length;
+        const max = Math.max(...monthValues);
+        // Suggest 10% above average, rounded to nearest $50
+        const suggested = Math.ceil((avg * 1.1) / 50) * 50;
+        return { name, avgSpend: Math.round(avg), maxSpend: Math.round(max), suggested, months: monthValues.length };
+      })
+      .filter(s => s.avgSpend >= 20) // skip tiny categories
+      .filter(s => !existingNames.has(s.name.toLowerCase())) // skip already-created budgets
+      .sort((a, b) => b.avgSpend - a.avgSpend);
+  }, [transactions, budgets]);
+
+  function handleAddSuggestion(s) {
+    const iconKey = s.name.toLowerCase();
+    const icon = CATEGORY_ICONS[iconKey] || 'savings';
+    const colorIdx = budgets.length % CATEGORY_COLORS.length;
+    addBudget({ name: s.name, monthlyLimit: s.suggested, icon, color: CATEGORY_COLORS[colorIdx] });
+  }
+
+  function handleAddAllSuggestions() {
+    suggestions.forEach((s, i) => {
+      const iconKey = s.name.toLowerCase();
+      const icon = CATEGORY_ICONS[iconKey] || 'savings';
+      const colorIdx = (budgets.length + i) % CATEGORY_COLORS.length;
+      addBudget({ name: s.name, monthlyLimit: s.suggested, icon, color: CATEGORY_COLORS[colorIdx] });
+    });
+    setShowSuggestions(false);
+  }
+
+  // Chart state
+  const [chartCategory, setChartCategory] = useState('all');
+  const [chartMonths, setChartMonths] = useState(6);
+  const [chartMode, setChartMode] = useState('bar'); // 'bar' or 'pct'
+  const [selectedMonth, setSelectedMonth] = useState(null); // null = current period, or a month key like "4/1/26"
+
+  const chartData = useMemo(() => {
+    if (!transactions || transactions.length === 0 || budgets.length === 0) return [];
+    const budgetNames = budgets.map(b => b.name.toLowerCase());
+    const budgetLimitMap = {};
+    for (const b of budgets) budgetLimitMap[b.name.toLowerCase()] = b.monthlyLimit || 0;
+
+    // Group spending by month
+    const monthMap = {};
+    for (const t of transactions) {
+      if (t.amount >= 0) continue;
+      const cat = (t.category || '').toLowerCase();
+      if (chartCategory !== 'all' && cat !== chartCategory.toLowerCase()) continue;
+      if (chartCategory === 'all' && !budgetNames.includes(cat)) continue;
+      const month = t.month || 'Unknown';
+      if (!monthMap[month]) monthMap[month] = 0;
+      monthMap[month] += Math.abs(t.amount);
+    }
+
+    // Get budget limit for selected view
+    const budgetLine = chartCategory === 'all'
+      ? budgets.reduce((s, b) => s + (b.monthlyLimit || 0), 0)
+      : budgetLimitMap[chartCategory.toLowerCase()] || 0;
+
+    // Sort months and take last N
+    const sorted = Object.entries(monthMap)
+      .map(([month, spent]) => {
+        // Parse month key like "4/1/26" to a sortable date
+        const parts = month.split('/');
+        const sortKey = parts.length === 3 ? `20${parts[2]}-${parts[0].padStart(2, '0')}` : month;
+        const label = parts.length === 3
+          ? new Date(2000 + parseInt(parts[2]), parseInt(parts[0]) - 1).toLocaleString('en-US', { month: 'short', year: '2-digit' })
+          : month;
+        return { month, label, sortKey, spent: Math.round(spent), budget: budgetLine };
+      })
+      .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+      .slice(-chartMonths);
+
+    return sorted;
+  }, [transactions, budgets, chartCategory, chartMonths]);
+
+  // Line chart: % of budget per category per month
+  const pctChartData = useMemo(() => {
+    if (!transactions || transactions.length === 0 || budgets.length === 0) return [];
+    const budgetMap = {};
+    for (const b of budgets) budgetMap[b.name.toLowerCase()] = b;
+
+    // Group spending by month+category
+    const monthCatMap = {};
+    for (const t of transactions) {
+      if (t.amount >= 0) continue;
+      const cat = (t.category || '').toLowerCase();
+      if (!budgetMap[cat]) continue;
+      const month = t.month || 'Unknown';
+      if (!monthCatMap[month]) monthCatMap[month] = {};
+      if (!monthCatMap[month][cat]) monthCatMap[month][cat] = 0;
+      monthCatMap[month][cat] += Math.abs(t.amount);
+    }
+
+    // Build chart rows
+    const months = Object.keys(monthCatMap).map(month => {
+      const parts = month.split('/');
+      const sortKey = parts.length === 3 ? `20${parts[2]}-${parts[0].padStart(2, '0')}` : month;
+      const label = parts.length === 3
+        ? new Date(2000 + parseInt(parts[2]), parseInt(parts[0]) - 1).toLocaleString('en-US', { month: 'short', year: '2-digit' })
+        : month;
+      const row = { month, label, sortKey };
+      for (const b of budgets) {
+        const spent = monthCatMap[month][b.name.toLowerCase()] || 0;
+        row[b.name] = b.monthlyLimit > 0 ? Math.round((spent / b.monthlyLimit) * 100) : 0;
+      }
+      return row;
+    }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).slice(-chartMonths);
+
+    return months;
+  }, [transactions, budgets, chartMonths]);
+
+  // New budget form
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newLimit, setNewLimit] = useState('');
+  const [newIcon, setNewIcon] = useState('savings');
+  const [newColor, setNewColor] = useState('#0058be');
+  const [newPeriod, setNewPeriod] = useState('monthly');
+
+  function handleAdd() {
+    if (!newName.trim()) return;
+    addBudget({ name: newName.trim(), monthlyLimit: Number(newLimit) || 0, icon: newIcon, color: newColor, period: newPeriod });
+    setNewName('');
+    setNewLimit('');
+    setNewIcon('savings');
+    setNewColor('#0058be');
+    setNewPeriod('monthly');
+    setAdding(false);
+  }
 
   return (
     <div className={styles.page}>
@@ -139,98 +224,216 @@ export function BudgetsPage() {
             <div className={styles.heroStatLabel}>Spent to Date</div>
           </div>
           <div className={styles.heroStat}>
-            <div className={styles.heroStatValue}>{analytics?.transactionCount || 0}</div>
-            <div className={styles.heroStatLabel}>Days Left</div>
+            <div className={styles.heroStatValue}>{budgets.length}</div>
+            <div className={styles.heroStatLabel}>Budgets</div>
           </div>
         </div>
       </div>
 
-      {/* Savings Goals */}
+      {/* Suggest Budgets */}
       <div>
-        <div className={styles.sectionLabel}>Savings Goals</div>
-        <div className={styles.goalsGrid}>
-          {GOALS.map((g) => (
-            <div key={g.name} className={styles.goalCard}>
-              <div className={styles.goalRingWrapper}>
-                <ProgressRing pct={g.pct} color={g.color} />
-              </div>
-              <div className={styles.goalName}>{g.name}</div>
-              <div className={styles.goalTarget}>Target: {g.target}</div>
-              <div className={styles.goalSaved}>Saved: {g.saved}</div>
-            </div>
-          ))}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div className={styles.sectionLabel} style={{ marginBottom: 0 }}>
+            {showSuggestions ? 'Suggested Budgets' : ''}
+          </div>
+          <button className={styles.suggestBtn} onClick={() => setShowSuggestions(p => !p)}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>auto_awesome</span>
+            {showSuggestions ? 'Hide Suggestions' : `Suggest Budgets${suggestions.length > 0 ? ` (${suggestions.length})` : ''}`}
+          </button>
         </div>
-      </div>
-
-      {/* Spending Limits */}
-      <div>
-        <div className={styles.sectionLabel}>Spending Limits</div>
-        <div className={styles.limitsGrid}>
-          {LIMITS.map((l) => (
-            <div key={l.name} className={styles.limitCard}>
-              <div className={styles.limitHeader}>
-                <div className={styles.limitIcon} style={{ background: l.iconBg, color: l.iconColor }}>
-                  <span className="material-symbols-outlined">{l.icon}</span>
+        {showSuggestions && (
+          <>
+            {suggestions.length > 0 ? (
+              <>
+                <div className={styles.suggestInfo}>Based on your spending history across {suggestions[0]?.months || 0}+ months</div>
+                <div className={styles.suggestGrid}>
+                  {suggestions.map(s => (
+                    <div key={s.name} className={styles.suggestCard}>
+                      <div className={styles.suggestCardHeader}>
+                        <div className={styles.budgetIconWrap} style={{ background: 'rgba(0,88,190,0.08)', color: '#0058be' }}>
+                          <span className="material-symbols-outlined">{CATEGORY_ICONS[s.name.toLowerCase()] || 'savings'}</span>
+                        </div>
+                        <button className={styles.suggestAddBtn} onClick={() => handleAddSuggestion(s)} title="Add this budget">
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
+                        </button>
+                      </div>
+                      <div className={styles.budgetName}>{s.name}</div>
+                      <div className={styles.suggestStats}>
+                        <div><span className={styles.suggestStatLabel}>Avg/mo:</span> ${s.avgSpend.toLocaleString()}</div>
+                        <div><span className={styles.suggestStatLabel}>Peak:</span> ${s.maxSpend.toLocaleString()}</div>
+                        <div><span className={styles.suggestStatLabel}>Suggested:</span> <strong>${s.suggested.toLocaleString()}</strong></div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <span
-                  className={`${styles.limitBadge} ${
-                    l.status === 'warning'
-                      ? styles.badgeWarning
-                      : l.status === 'stable'
-                      ? styles.badgeStable
-                      : styles.badgeHealthy
-                  }`}
-                >
-                  {l.status}
-                </span>
+                <button className={styles.suggestAllBtn} onClick={handleAddAllSuggestions}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>playlist_add</span>
+                  Add All {suggestions.length} Budgets
+                </button>
+              </>
+            ) : (
+              <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', padding: '12px 0' }}>
+                {!transactions || transactions.length === 0
+                  ? 'No transaction data loaded. Check that your spreadsheet is connected.'
+                  : budgets.length > 0
+                    ? 'All spending categories already have budgets.'
+                    : 'No categorized expenses found in your transactions. Categorize your transactions to get budget suggestions.'}
               </div>
-              <div className={styles.limitName}>{l.name}</div>
-              <div className={styles.limitSpent}>
-                <span className={styles.limitSpentValue}>{l.spent}</span>
-                <span className={styles.limitSpentOf}>of {l.budget}</span>
-              </div>
-              <div className={styles.limitBar}>
-                <div
-                  className={styles.limitFill}
-                  style={{ width: `${l.pct}%`, background: l.barColor }}
-                />
-              </div>
-              <div className={styles.limitPct}>{l.pct}% used</div>
-            </div>
-          ))}
-        </div>
+            )}
+          </>
+        )}
       </div>
 
-      {/* Historical Variance */}
-      <div className={styles.varianceCard}>
-        <div className={styles.varianceTitle}>Historical Variance</div>
-        <table className={styles.varianceTable}>
-          <thead>
-            <tr>
-              <th>Category</th>
-              <th>Budget</th>
-              <th>Actual</th>
-              <th>Variance</th>
-              <th>% Var</th>
-            </tr>
-          </thead>
-          <tbody>
-            {VARIANCE.map((v, i) => (
-              <tr key={i}>
-                <td style={{ fontWeight: 600 }}>{v.category}</td>
-                <td>{v.budget}</td>
-                <td>{v.actual}</td>
-                <td className={v.direction === 'up' ? styles.varianceUp : styles.varianceDown}>
-                  {v.variance}
-                </td>
-                <td className={v.direction === 'up' ? styles.varianceUp : styles.varianceDown}>
-                  {v.pctVar}
-                </td>
-              </tr>
+      {/* Unbudgeted / Uncategorized Summary */}
+      {analytics?.byCategory && budgets.length > 0 && (() => {
+        const budgetNames = new Set(budgets.map(b => b.name.toLowerCase()));
+        let uncategorized = 0;
+        let unbudgeted = 0;
+        const unbudgetedCats = [];
+        for (const cat of analytics.byCategory) {
+          if (cat.total >= 0) continue; // skip income
+          const spent = Math.abs(cat.total);
+          if (!cat.name || cat.name === 'Uncategorized') {
+            uncategorized += spent;
+          } else if (!budgetNames.has(cat.name.toLowerCase())) {
+            unbudgeted += spent;
+            unbudgetedCats.push({ name: cat.name, spent });
+          }
+        }
+        if (uncategorized === 0 && unbudgeted === 0) return null;
+        return (
+          <div className={styles.unbudgetedBar}>
+            {uncategorized > 0 && (
+              <div className={styles.unbudgetedItem}>
+                <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--color-warning)' }}>warning</span>
+                <span><strong>${Math.round(uncategorized).toLocaleString()}</strong> uncategorized spending</span>
+              </div>
+            )}
+            {unbudgeted > 0 && (
+              <div className={styles.unbudgetedItem}>
+                <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--color-error)' }}>account_balance_wallet</span>
+                <span><strong>${Math.round(unbudgeted).toLocaleString()}</strong> in {unbudgetedCats.length} categories without budgets</span>
+                <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>({unbudgetedCats.map(c => c.name).join(', ')})</span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Historical Chart */}
+      {budgets.length > 0 && (
+        <div className={styles.chartCard}>
+          <div className={styles.chartHeader}>
+            <div className={styles.chartTitle}>Budget vs Actual</div>
+            <div className={styles.chartControls}>
+              <div className={styles.chartToggle}>
+                <button className={`${styles.chartToggleBtn} ${chartMode === 'bar' ? styles.chartToggleBtnActive : ''}`} onClick={() => setChartMode('bar')}>$ Amount</button>
+                <button className={`${styles.chartToggleBtn} ${chartMode === 'pct' ? styles.chartToggleBtnActive : ''}`} onClick={() => setChartMode('pct')}>% of Budget</button>
+              </div>
+              {chartMode === 'bar' && (
+                <select className={styles.chartSelect} value={chartCategory} onChange={e => setChartCategory(e.target.value)}>
+                  <option value="all">All Budgets</option>
+                  {budgets.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+                </select>
+              )}
+              <select className={styles.chartSelect} value={chartMonths} onChange={e => setChartMonths(Number(e.target.value))}>
+                <option value={3}>3 months</option>
+                <option value={6}>6 months</option>
+                <option value={12}>12 months</option>
+              </select>
+            </div>
+          </div>
+
+          <BudgetChart
+            chartMode={chartMode}
+            chartData={chartData}
+            pctChartData={pctChartData}
+            budgets={budgets}
+            categoryColors={CATEGORY_COLORS}
+            onBarClick={(month) => setSelectedMonth(prev => prev === month ? null : month)}
+          />
+          {/* Month pills */}
+          {chartData.length > 0 && (
+            <div className={styles.monthPills}>
+              <button
+                className={`${styles.monthPill} ${!selectedMonth ? styles.monthPillActive : ''}`}
+                onClick={() => setSelectedMonth(null)}
+              >
+                Current
+              </button>
+              {chartData.map(d => (
+                <button
+                  key={d.month}
+                  className={`${styles.monthPill} ${selectedMonth === d.month ? styles.monthPillActive : ''}`}
+                  onClick={() => setSelectedMonth(prev => prev === d.month ? null : d.month)}
+                >
+                  {d.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Budgets */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div className={styles.sectionLabel} style={{ marginBottom: 0 }}>
+            Budgets
+            {selectedMonth && (() => {
+              const parts = selectedMonth.split('/');
+              const label = parts.length === 3
+                ? new Date(2000 + parseInt(parts[2]), parseInt(parts[0]) - 1).toLocaleString('en-US', { month: 'long', year: 'numeric' })
+                : selectedMonth;
+              return <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, marginLeft: 8, fontSize: 11, color: 'var(--color-secondary)' }}>— {label}</span>;
+            })()}
+          </div>
+          {adding ? (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input className={styles.budgetInput} value={newName} onChange={e => setNewName(e.target.value)} placeholder="Name" autoFocus style={{ width: 140 }} />
+              <span style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>$</span>
+              <input className={styles.budgetInput} type="number" value={newLimit} onChange={e => setNewLimit(e.target.value)} placeholder="Limit" style={{ width: 80 }} />
+              <select className={styles.budgetInput} value={newPeriod} onChange={e => setNewPeriod(e.target.value)} style={{ width: 90 }}>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="annual">Annual</option>
+              </select>
+              <input className={styles.budgetInput} value={newIcon} onChange={e => setNewIcon(e.target.value)} placeholder="Icon" style={{ width: 80 }} />
+              <input type="color" value={newColor} onChange={e => setNewColor(e.target.value)} style={{ width: 28, height: 28, border: 'none', padding: 0, cursor: 'pointer' }} />
+              <button className={styles.budgetSaveBtn} onClick={handleAdd}>Create</button>
+              <button className={styles.budgetCancelBtn} onClick={() => setAdding(false)}>Cancel</button>
+            </div>
+          ) : (
+            <button className={styles.suggestBtn} onClick={() => setAdding(true)}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
+              Add Budget
+            </button>
+          )}
+        </div>
+        {loading ? (
+          <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13 }}>Loading budgets...</div>
+        ) : budgets.length === 0 ? (
+          <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13, padding: '20px 0' }}>No budgets yet. Add one or use Suggest Budgets above.</div>
+        ) : (
+          <div className={styles.budgetsList}>
+            {[...budgets].sort((a, b) => (b.monthlyLimit || 0) - (a.monthlyLimit || 0)).map(b => (
+              <BudgetCard
+                key={b.id}
+                budget={b}
+                onUpdate={updateBudget}
+                onDelete={deleteBudget}
+                onAddSub={addSubBudget}
+                onUpdateSub={updateSubBudget}
+                onDeleteSub={deleteSubBudget}
+                transactions={transactions}
+                selectedMonth={selectedMonth}
+                styles={styles}
+              />
             ))}
-          </tbody>
-        </table>
+          </div>
+        )}
       </div>
+
     </div>
   );
 }
