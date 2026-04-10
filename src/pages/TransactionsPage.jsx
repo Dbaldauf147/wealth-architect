@@ -103,6 +103,7 @@ export function TransactionsPage() {
   const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
   const [bulkCategorySearch, setBulkCategorySearch] = useState('');
   const [savedToast, setSavedToast] = useState(false);
+  const [excludedCategories, setExcludedCategories] = useState(new Set());
   const dropdownRef = useRef(null);
   const confirmRef = useRef(null);
   const bulkDropdownRef = useRef(null);
@@ -242,11 +243,34 @@ export function TransactionsPage() {
     [analytics],
   );
 
+  /* Unique categories in current data for filter boxes */
+  const activeCategories = useMemo(() => {
+    const cats = (transactions || []).map(t => t.category || 'Uncategorized');
+    return [...new Set(cats)].sort();
+  }, [transactions]);
+
+  function toggleCategoryFilter(cat) {
+    setExcludedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat); else next.add(cat);
+      return next;
+    });
+    setPage(0);
+  }
+
+  function clearCategoryFilters() {
+    setExcludedCategories(new Set());
+    setPage(0);
+  }
+
   /* Filtered + sorted transactions */
   const filtered = useMemo(() => {
     let list = transactions || [];
     if (activeAccount !== 'all') {
       list = list.filter(t => t.account === activeAccount);
+    }
+    if (excludedCategories.size > 0) {
+      list = list.filter(t => !excludedCategories.has(t.category || 'Uncategorized'));
     }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -275,7 +299,7 @@ export function TransactionsPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return sorted;
-  }, [transactions, activeAccount, searchQuery, sortCol, sortDir]);
+  }, [transactions, activeAccount, searchQuery, excludedCategories, sortCol, sortDir]);
 
   const paginated = useMemo(
     () => filtered.slice(0, (page + 1) * PAGE_SIZE),
@@ -348,6 +372,35 @@ export function TransactionsPage() {
             {acc}
           </div>
         ))}
+      </div>
+
+      {/* Category Filters */}
+      <div className={styles.categoryFilterBar}>
+        <span className={styles.categoryFilterLabel}>Categories:</span>
+        {activeCategories.map(cat => {
+          const excluded = excludedCategories.has(cat);
+          const color = catColor(cat);
+          const bg = catBg(cat);
+          return (
+            <button
+              key={cat}
+              className={`${styles.categoryFilterBox} ${excluded ? styles.categoryFilterExcluded : ''}`}
+              style={excluded ? {} : { background: bg, color, borderColor: color + '30' }}
+              onClick={() => toggleCategoryFilter(cat)}
+              type="button"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                {excluded ? 'check_box_outline_blank' : 'check_box'}
+              </span>
+              {cat}
+            </button>
+          );
+        })}
+        {excludedCategories.size > 0 && (
+          <button className={styles.categoryFilterClear} onClick={clearCategoryFilters} type="button">
+            Show all
+          </button>
+        )}
       </div>
 
       {/* Search */}
