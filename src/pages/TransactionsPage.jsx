@@ -72,7 +72,7 @@ const CHART_MODES = [
 
 function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 280, mode = 'stacked' }) {
   if (!months.length) return null;
-  const pad = { top: 4, right: 8, bottom: 24, left: 48 };
+  const pad = { top: 4, right: 8, bottom: 36, left: 48 };
   const chartW = width - pad.left - pad.right;
   const chartH = height - pad.top - pad.bottom;
 
@@ -116,12 +116,22 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
     );
   });
 
-  /* X-axis labels (shared) */
-  const xLabels = months.map((m, mi) => (
-    <text key={mi} x={xCenter(mi)} y={height - 6} textAnchor="middle" fontSize={10} fill="var(--color-text-tertiary)">
-      {m.label}
-    </text>
-  ));
+  /* X-axis labels (shared) — show year below month when it changes */
+  const xLabels = months.map((m, mi) => {
+    const showYear = mi === 0 || m.year !== months[mi - 1].year;
+    return (
+      <g key={mi}>
+        <text x={xCenter(mi)} y={height - (showYear ? 16 : 8)} textAnchor="middle" fontSize={10} fill="var(--color-text-tertiary)">
+          {m.label}
+        </text>
+        {showYear && (
+          <text x={xCenter(mi)} y={height - 3} textAnchor="middle" fontSize={9} fontWeight={600} fill="var(--color-text-tertiary)">
+            {m.year}
+          </text>
+        )}
+      </g>
+    );
+  });
 
   /* ── Stacked bars ── */
   if (mode === 'stacked') {
@@ -529,7 +539,7 @@ export function TransactionsPage() {
         monthTotal += val;
       }
       if (monthTotal > maxTotal) maxTotal = monthTotal;
-      return { label: `${MONTH_SHORT[parseInt(m, 10) - 1]} '${y.slice(2)}`, byCategory };
+      return { label: MONTH_SHORT[parseInt(m, 10) - 1], year: y, byCategory };
     });
 
     return { months, topCategories, maxTotal, drillDown, parent: drillDown ? visibleCats[0] : null, totalMonths: allKeys.length };
