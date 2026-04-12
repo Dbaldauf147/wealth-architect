@@ -366,6 +366,7 @@ export function TransactionsPage() {
   const [includedCategories, setIncludedCategories] = useState(new Set());
   const [includedSubcategories, setIncludedSubcategories] = useState(new Set());
   const [chartMode, setChartMode] = useState('stacked');
+  const [chartMonthCount, setChartMonthCount] = useState(6);
   const [showAccounts, setShowAccounts] = useState(() => {
     try { return JSON.parse(localStorage.getItem('showAccounts') ?? 'true'); }
     catch { return true; }
@@ -501,7 +502,7 @@ export function TransactionsPage() {
 
     // Build sorted month array (last 6 months max)
     const sortedKeys = Object.keys(buckets).sort();
-    const recentKeys = sortedKeys.slice(-6);
+    const recentKeys = sortedKeys.slice(-chartMonthCount);
     const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     let maxTotal = 0;
     const months = recentKeys.map(key => {
@@ -517,8 +518,8 @@ export function TransactionsPage() {
       return { label: MONTH_SHORT[parseInt(m, 10) - 1], byCategory };
     });
 
-    return { months, topCategories, maxTotal, drillDown, parent: drillDown ? visibleCats[0] : null };
-  }, [filtered]);
+    return { months, topCategories, maxTotal, drillDown, parent: drillDown ? visibleCats[0] : null, totalMonths: sortedKeys.length };
+  }, [filtered, chartMonthCount]);
 
   /* Pie chart data — categories, or subcategories if only 1 category filtered */
   const pieData = useMemo(() => {
@@ -1092,6 +1093,23 @@ export function TransactionsPage() {
               {barChartData.drillDown ? `${barChartData.parent} — Subcategories Over Time` : 'Spending Over Time'}
             </div>
             <div className={styles.barCardHeaderRight}>
+              <div className={styles.monthControl}>
+                <button
+                  className={styles.monthBtn}
+                  onClick={() => setChartMonthCount(c => Math.max(1, c - 1))}
+                  disabled={chartMonthCount <= 1}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>remove</span>
+                </button>
+                <span className={styles.monthLabel}>{chartMonthCount}mo</span>
+                <button
+                  className={styles.monthBtn}
+                  onClick={() => setChartMonthCount(c => Math.min(barChartData.totalMonths || 24, c + 1))}
+                  disabled={chartMonthCount >= (barChartData.totalMonths || 24)}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
+                </button>
+              </div>
               <div className={styles.barLegend}>
                 {barChartData.topCategories.map((cat, i) => {
                   const active = includedCategories.size === 0 || includedCategories.has(cat);
