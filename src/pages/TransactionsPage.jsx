@@ -70,9 +70,28 @@ const CHART_MODES = [
   { key: 'area', label: 'Area', icon: 'area_chart' },
 ];
 
+/* Smooth curve helper — monotone cubic spline for natural-looking lines */
+function smoothPath(points) {
+  if (points.length < 2) return '';
+  if (points.length === 2) return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[Math.max(i - 1, 0)];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[Math.min(i + 2, points.length - 1)];
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+  }
+  return d;
+}
+
 function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 280, mode = 'stacked' }) {
   if (!months.length) return null;
-  const pad = { top: 4, right: 8, bottom: 36, left: 48 };
+  const pad = { top: 16, right: 12, bottom: 40, left: 50 };
   const chartW = width - pad.left - pad.right;
   const chartH = height - pad.top - pad.bottom;
 
@@ -88,8 +107,8 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
     yMax = catMax;
   }
 
-  /* Auto-zoom: snap to nearest "nice" ceiling just above the data */
-  const raw = yMax * 1.02; // 2% headroom
+  /* Auto-zoom: snap to nearest "nice" ceiling with 5% headroom */
+  const raw = yMax * 1.05;
   const mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
   const steps = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
   let niceMax = mag * 10;
@@ -101,31 +120,59 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
 
   /* Shared helpers */
   const yPos = v => pad.top + chartH - (v / niceMax) * chartH;
-  const xCenter = mi => pad.left + (mi + 0.5) * (chartW / months.length);
+  const slotW = chartW / months.length;
+  const xCenter = mi => pad.left + (mi + 0.5) * slotW;
 
-  /* Gridlines + Y-axis (shared across all modes) */
+  /* Format y-axis values */
+  const fmtAxis = t => {
+    if (t === 0) return '$0';
+    if (t >= 1000) return `$${(t / 1000).toFixed(t % 1000 === 0 ? 0 : 1)}k`;
+    return `$${t}`;
+  };
+
+  /* Alternating column bands for visual rhythm */
+  const bands = months.map((_, mi) => {
+    if (mi % 2 === 0) return null;
+    const x = pad.left + mi * slotW;
+    return <rect key={`band-${mi}`} x={x} y={pad.top} width={slotW} height={chartH} fill="var(--color-text-tertiary)" opacity={0.03} />;
+  });
+
+  /* Gridlines + Y-axis */
   const grid = ticks.map((t, i) => {
     const y = yPos(t);
     return (
       <g key={i}>
-        <line x1={pad.left} y1={y} x2={width - pad.right} y2={y} stroke="var(--color-text-tertiary)" strokeOpacity={0.15} strokeWidth={0.5} />
-        <text x={pad.left - 6} y={y + 3.5} textAnchor="end" fontSize={9} fill="var(--color-text-tertiary)">
-          {t >= 1000 ? `$${(t / 1000).toFixed(t % 1000 === 0 ? 0 : 1)}k` : `$${t}`}
+        {t > 0 && (
+          <line x1={pad.left} y1={y} x2={width - pad.right} y2={y}
+            stroke="var(--color-text-tertiary)" strokeOpacity={0.12}
+            strokeWidth={0.5} strokeDasharray={t === niceMax ? 'none' : '3 3'} />
+        )}
+        <text x={pad.left - 8} y={y + 4} textAnchor="end" fontSize={10}
+          fontWeight={t === 0 ? 600 : 400} fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">
+          {fmtAxis(t)}
         </text>
       </g>
     );
   });
 
-  /* X-axis labels (shared) — show year below month when it changes */
+  /* Baseline axis */
+  const baseline = (
+    <line x1={pad.left} y1={yPos(0)} x2={width - pad.right} y2={yPos(0)}
+      stroke="var(--color-text-tertiary)" strokeOpacity={0.3} strokeWidth={1} />
+  );
+
+  /* X-axis labels — show year below month when it changes */
   const xLabels = months.map((m, mi) => {
     const showYear = mi === 0 || m.year !== months[mi - 1].year;
     return (
       <g key={mi}>
-        <text x={xCenter(mi)} y={height - (showYear ? 16 : 8)} textAnchor="middle" fontSize={10} fill="var(--color-text-tertiary)">
+        <text x={xCenter(mi)} y={height - (showYear ? 18 : 8)} textAnchor="middle"
+          fontSize={11} fill="var(--color-text-secondary)" fontFamily="var(--font-headline)">
           {m.label}
         </text>
         {showYear && (
-          <text x={xCenter(mi)} y={height - 3} textAnchor="middle" fontSize={9} fontWeight={600} fill="var(--color-text-tertiary)">
+          <text x={xCenter(mi)} y={height - 4} textAnchor="middle"
+            fontSize={10} fontWeight={700} fill="var(--color-text-tertiary)">
             {m.year}
           </text>
         )}
@@ -133,31 +180,46 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
     );
   });
 
+  const svgProps = {
+    width: '100%',
+    height,
+    viewBox: `0 0 ${width} ${height}`,
+    preserveAspectRatio: 'xMidYMid meet',
+    style: { display: 'block' },
+  };
+
   /* ── Stacked bars ── */
   if (mode === 'stacked') {
-    const slotW = chartW / months.length;
-    const barW = Math.min(40, slotW * 0.6);
+    const barW = Math.min(44, slotW * 0.65);
     return (
-      <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
-        {grid}
+      <svg {...svgProps}>
+        {bands}{grid}{baseline}
         {months.map((m, mi) => {
           const cx = xCenter(mi);
           let yOffset = 0;
+          const totalVal = topCategories.reduce((s, cat) => s + (m.byCategory[cat] || 0), 0);
           return (
-            <g key={mi}>
+            <g key={mi} className="chart-bar-group" style={{ transition: 'opacity 0.15s' }}>
               {topCategories.map((cat, ci) => {
                 const val = m.byCategory[cat] || 0;
                 const barH = (val / niceMax) * chartH;
                 const y = pad.top + chartH - yOffset - barH;
                 yOffset += barH;
+                const isTop = ci === topCategories.length - 1 || topCategories.slice(ci + 1).every(c => (m.byCategory[c] || 0) === 0);
                 return (
                   <rect key={ci} x={cx - barW / 2} y={y} width={barW} height={Math.max(barH, 0)}
-                    rx={ci === topCategories.length - 1 || (m.byCategory[topCategories[ci + 1]] || 0) === 0 ? 3 : 0}
-                    fill={pieColor(ci)}>
+                    rx={isTop ? 4 : 0} fill={pieColor(ci)} opacity={0.9}>
                     <title>{cat}: {fmt(val)}</title>
                   </rect>
                 );
               })}
+              {/* Total label above bar */}
+              {totalVal > 0 && (
+                <text x={cx} y={pad.top + chartH - yOffset - 6} textAnchor="middle"
+                  fontSize={8} fontWeight={600} fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">
+                  {totalVal >= 1000 ? `$${(totalVal / 1000).toFixed(1)}k` : `$${Math.round(totalVal)}`}
+                </text>
+              )}
             </g>
           );
         })}
@@ -169,12 +231,11 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
   /* ── Grouped bars ── */
   if (mode === 'grouped') {
     const n = topCategories.length;
-    const slotW = chartW / months.length;
-    const groupW = slotW * 0.75;
+    const groupW = slotW * 0.8;
     const singleW = groupW / n;
     return (
-      <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
-        {grid}
+      <svg {...svgProps}>
+        {bands}{grid}{baseline}
         {months.map((m, mi) => {
           const cx = xCenter(mi);
           const groupStart = cx - groupW / 2;
@@ -184,8 +245,9 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                 const val = m.byCategory[cat] || 0;
                 const barH = (val / niceMax) * chartH;
                 return (
-                  <rect key={ci} x={groupStart + ci * singleW + 1} y={yPos(val)} width={Math.max(singleW - 2, 1)} height={Math.max(barH, 0)}
-                    rx={2} fill={pieColor(ci)}>
+                  <rect key={ci} x={groupStart + ci * singleW + 0.5} y={yPos(val)}
+                    width={Math.max(singleW - 1, 2)} height={Math.max(barH, 0)}
+                    rx={3} fill={pieColor(ci)} opacity={0.9}>
                     <title>{cat}: {fmt(val)}</title>
                   </rect>
                 );
@@ -201,18 +263,22 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
   /* ── Line chart ── */
   if (mode === 'line') {
     return (
-      <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
-        {grid}
+      <svg {...svgProps}>
+        {bands}{grid}{baseline}
         {topCategories.map((cat, ci) => {
           const points = months.map((m, mi) => ({ x: xCenter(mi), y: yPos(m.byCategory[cat] || 0) }));
-          const d = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+          const d = smoothPath(points);
           return (
             <g key={ci}>
-              <path d={d} fill="none" stroke={pieColor(ci)} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+              <path d={d} fill="none" stroke={pieColor(ci)} strokeWidth={2.5}
+                strokeLinecap="round" strokeLinejoin="round" opacity={0.85} />
               {points.map((p, pi) => (
-                <circle key={pi} cx={p.x} cy={p.y} r={3.5} fill={pieColor(ci)} stroke="#fff" strokeWidth={1.5}>
-                  <title>{cat}: {fmt(months[pi].byCategory[cat] || 0)}</title>
-                </circle>
+                <g key={pi}>
+                  <circle cx={p.x} cy={p.y} r={5} fill={pieColor(ci)} opacity={0} style={{ cursor: 'pointer' }}>
+                    <title>{cat}: {fmt(months[pi].byCategory[cat] || 0)}</title>
+                  </circle>
+                  <circle cx={p.x} cy={p.y} r={4} fill="#fff" stroke={pieColor(ci)} strokeWidth={2} />
+                </g>
               ))}
             </g>
           );
@@ -224,19 +290,26 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
 
   /* ── Area chart ── */
   if (mode === 'area') {
-    const baseline = pad.top + chartH;
+    const base = pad.top + chartH;
     return (
-      <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
-        {grid}
+      <svg {...svgProps}>
+        {bands}{grid}{baseline}
         {[...topCategories].reverse().map((cat, ri) => {
           const ci = topCategories.length - 1 - ri;
           const points = months.map((m, mi) => ({ x: xCenter(mi), y: yPos(m.byCategory[cat] || 0) }));
-          const lineD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
-          const areaD = `${lineD} L ${points[points.length - 1].x} ${baseline} L ${points[0].x} ${baseline} Z`;
+          const lineD = smoothPath(points);
+          const areaD = `${lineD} L ${points[points.length - 1].x} ${base} L ${points[0].x} ${base} Z`;
           return (
             <g key={ci}>
-              <path d={areaD} fill={pieColor(ci)} opacity={0.18} />
-              <path d={lineD} fill="none" stroke={pieColor(ci)} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+              <defs>
+                <linearGradient id={`area-grad-${ci}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={pieColor(ci)} stopOpacity={0.35} />
+                  <stop offset="100%" stopColor={pieColor(ci)} stopOpacity={0.05} />
+                </linearGradient>
+              </defs>
+              <path d={areaD} fill={`url(#area-grad-${ci})`} />
+              <path d={lineD} fill="none" stroke={pieColor(ci)} strokeWidth={2.5}
+                strokeLinecap="round" strokeLinejoin="round" opacity={0.85} />
             </g>
           );
         })}
@@ -480,10 +553,10 @@ export function TransactionsPage() {
     [transactions],
   );
 
-  /* Bar chart data — spending by category (or subcategory when single category filtered) over time */
+  /* Bar chart data — by category (or subcategory when single category filtered) over time */
   const barChartData = useMemo(() => {
-    const source = filtered.filter(t => t.amount < 0 && t.date);
-    if (!source.length) return { months: [], topCategories: [], maxTotal: 0, drillDown: false, parent: null };
+    const source = filtered.filter(t => t.date && t.amount !== 0);
+    if (!source.length) return { months: [], topCategories: [], maxTotal: 0, drillDown: false, parent: null, visibleKeys: new Set() };
 
     // Detect single-category drill-down (same logic as pie chart)
     const visibleCats = [...new Set(source.map(t => t.category || 'Uncategorized'))];
@@ -542,12 +615,20 @@ export function TransactionsPage() {
       return { label: MONTH_SHORT[parseInt(m, 10) - 1], year: y, byCategory };
     });
 
-    return { months, topCategories, maxTotal, drillDown, parent: drillDown ? visibleCats[0] : null, totalMonths: allKeys.length };
+    return { months, topCategories, maxTotal, drillDown, parent: drillDown ? visibleCats[0] : null, totalMonths: allKeys.length, visibleKeys: new Set(recentKeys) };
   }, [filtered, chartMonthCount]);
 
-  /* Pie chart data — categories, or subcategories if only 1 category filtered */
+  /* Pie chart data — scoped to the same months visible in the spending chart */
   const pieData = useMemo(() => {
-    const source = filtered.filter(t => t.amount < 0);
+    const chartKeys = barChartData.visibleKeys;
+    const source = filtered.filter(t => {
+      if (t.amount === 0 || !t.date) return false;
+      if (!chartKeys || chartKeys.size === 0) return true;
+      const d = new Date(t.date);
+      if (isNaN(d)) return false;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      return chartKeys.has(key);
+    });
     const visibleCats = [...new Set(source.map(t => t.category || 'Uncategorized'))];
     const drillDown = visibleCats.length === 1;
     const groups = {};
@@ -563,7 +644,7 @@ export function TransactionsPage() {
       .sort((a, b) => b.value - a.value);
     const total = entries.reduce((s, e) => s + e.value, 0);
     return { entries, total, drillDown, parent: drillDown ? visibleCats[0] : null };
-  }, [filtered]);
+  }, [filtered, barChartData.visibleKeys]);
 
   /* All subcategories available for selected transactions */
   const bulkSubOptions = useMemo(() => {
