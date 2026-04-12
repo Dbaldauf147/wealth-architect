@@ -144,8 +144,8 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
       <g key={i}>
         {t > 0 && (
           <line x1={pad.left} y1={y} x2={width - pad.right} y2={y}
-            stroke="var(--color-text-tertiary)" strokeOpacity={0.12}
-            strokeWidth={0.5} strokeDasharray={t === niceMax ? 'none' : '3 3'} />
+            stroke="var(--color-text-tertiary)" strokeOpacity={0.25}
+            strokeWidth={1} />
         )}
         <text x={pad.left - 8} y={y + 4} textAnchor="end" fontSize={10}
           fontWeight={t === 0 ? 600 : 400} fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">
