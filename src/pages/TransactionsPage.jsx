@@ -797,13 +797,6 @@ export function TransactionsPage() {
       )}
 
       {/* Category Review Buckets */}
-      {includedCategories.size > 0 && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: -8 }}>
-          <button className={styles.categoryFilterClear} onClick={clearCategoryFilters} type="button">
-            Clear category filters ({includedCategories.size})
-          </button>
-        </div>
-      )}
       <div className={styles.bucketGrid}>
         <div
           className={`${styles.bucket} ${dragOverBucket === 'review' ? styles.bucketActive : ''}`}
@@ -815,12 +808,37 @@ export function TransactionsPage() {
             <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#e8a317' }}>pending</span>
             <span className={styles.bucketTitle}>Needs Review</span>
             <span className={styles.bucketCount}>{activeCategories.filter(c => !organizedCategories.has(c)).length}</span>
+            {(() => {
+              const bucketCats = activeCategories.filter(c => !organizedCategories.has(c));
+              const allSelected = bucketCats.length > 0 && bucketCats.every(c => includedCategories.has(c));
+              return (
+                <button
+                  className={styles.categoryFilterClear}
+                  style={{ marginLeft: 'auto', padding: 0, fontSize: 9 }}
+                  onClick={() => {
+                    setIncludedCategories(prev => {
+                      const next = new Set(prev);
+                      if (allSelected) {
+                        for (const c of bucketCats) next.delete(c);
+                      } else {
+                        for (const c of bucketCats) next.add(c);
+                      }
+                      return next;
+                    });
+                    setPage(0);
+                  }}
+                  type="button"
+                >
+                  {allSelected ? 'Deselect All' : 'Select All'}
+                </button>
+              );
+            })()}
           </div>
           <div className={styles.bucketItems}>
             {activeCategories.filter(c => !organizedCategories.has(c)).map(cat => {
               const color = catColor(cat);
               const bg = catBg(cat);
-              const active = includedCategories.size === 0 || includedCategories.has(cat);
+              const selected = includedCategories.has(cat);
               return (
                 <div
                   key={cat}
@@ -830,10 +848,11 @@ export function TransactionsPage() {
                   onDragEnd={() => setDraggedCategory(null)}
                   onClick={() => { toggleCategoryFilter(cat); setPage(0); }}
                   style={{
-                    background: active ? bg : 'var(--color-surface-alt)',
-                    color: active ? color : 'var(--color-text-tertiary)',
-                    borderColor: active ? color + '30' : 'transparent',
-                    opacity: active ? 1 : 0.5,
+                    background: selected ? bg : 'var(--color-surface-alt)',
+                    color: selected ? color : 'var(--color-text-tertiary)',
+                    borderColor: selected ? color + '30' : 'transparent',
+                    opacity: selected ? 1 : 0.5,
+                    cursor: 'pointer',
                   }}
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{getCategoryIcon(cat)}</span>
@@ -856,12 +875,37 @@ export function TransactionsPage() {
             <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#16a34a' }}>check_circle</span>
             <span className={styles.bucketTitle}>Organized</span>
             <span className={styles.bucketCount}>{activeCategories.filter(c => organizedCategories.has(c)).length}</span>
+            {(() => {
+              const bucketCats = activeCategories.filter(c => organizedCategories.has(c));
+              const allSelected = bucketCats.length > 0 && bucketCats.every(c => includedCategories.has(c));
+              return (
+                <button
+                  className={styles.categoryFilterClear}
+                  style={{ marginLeft: 'auto', padding: 0, fontSize: 9 }}
+                  onClick={() => {
+                    setIncludedCategories(prev => {
+                      const next = new Set(prev);
+                      if (allSelected) {
+                        for (const c of bucketCats) next.delete(c);
+                      } else {
+                        for (const c of bucketCats) next.add(c);
+                      }
+                      return next;
+                    });
+                    setPage(0);
+                  }}
+                  type="button"
+                >
+                  {allSelected ? 'Deselect All' : 'Select All'}
+                </button>
+              );
+            })()}
           </div>
           <div className={styles.bucketItems}>
             {activeCategories.filter(c => organizedCategories.has(c)).map(cat => {
               const color = catColor(cat);
               const bg = catBg(cat);
-              const active = includedCategories.size === 0 || includedCategories.has(cat);
+              const selected = includedCategories.has(cat);
               return (
                 <div
                   key={cat}
@@ -871,10 +915,11 @@ export function TransactionsPage() {
                   onDragEnd={() => setDraggedCategory(null)}
                   onClick={() => { toggleCategoryFilter(cat); setPage(0); }}
                   style={{
-                    background: active ? bg : 'var(--color-surface-alt)',
-                    color: active ? color : 'var(--color-text-tertiary)',
-                    borderColor: active ? color + '30' : 'transparent',
-                    opacity: active ? 1 : 0.5,
+                    background: selected ? bg : 'var(--color-surface-alt)',
+                    color: selected ? color : 'var(--color-text-tertiary)',
+                    borderColor: selected ? color + '30' : 'transparent',
+                    opacity: selected ? 1 : 0.5,
+                    cursor: 'pointer',
                   }}
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{getCategoryIcon(cat)}</span>
