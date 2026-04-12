@@ -27,6 +27,7 @@ const DONUT_COLORS = ['#0058be', '#009668', '#e8a317', '#94a3b8', '#7c3aed', '#e
 export function OverviewPage() {
   const { balances, analytics, transactions, loading, error, lastSync } = useData();
   const [chartPeriod, setChartPeriod] = useState('6M');
+  const [chartMode, setChartMode] = useState('bar');
 
   // Loading state
   if (loading) {
@@ -152,41 +153,150 @@ export function OverviewPage() {
         <div className={styles.chartCard}>
           <div className={styles.chartHeader}>
             <span className={styles.chartTitle}>Spending Snapshot</span>
-            <div className={styles.chartPeriodPills}>
-              {['1M', '3M', '6M', '1Y'].map((p) => (
-                <div
-                  key={p}
-                  className={`${styles.chartPill} ${chartPeriod === p ? styles.chartPillActive : ''}`}
-                  onClick={() => setChartPeriod(p)}
-                >
-                  {p}
-                </div>
-              ))}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className={styles.chartPeriodPills}>
+                {['bar', 'line'].map((m) => (
+                  <div
+                    key={m}
+                    className={`${styles.chartPill} ${chartMode === m ? styles.chartPillActive : ''}`}
+                    onClick={() => setChartMode(m)}
+                    title={m === 'bar' ? 'Bar Chart' : 'Line Chart'}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{m === 'bar' ? 'bar_chart' : 'show_chart'}</span>
+                  </div>
+                ))}
+              </div>
+              <div className={styles.chartPeriodPills}>
+                {['1M', '3M', '6M', '1Y'].map((p) => (
+                  <div
+                    key={p}
+                    className={`${styles.chartPill} ${chartPeriod === p ? styles.chartPillActive : ''}`}
+                    onClick={() => setChartPeriod(p)}
+                  >
+                    {p}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
           <div className={styles.chartArea}>
             {SPENDING_DATA.length > 0 ? (
-              SPENDING_DATA.map((d, i) => (
-                <div key={i} style={{ flex: 1, display: 'flex', gap: 2, alignItems: 'flex-end', height: '100%' }}>
-                  <div
-                    className={styles.chartBar}
-                    style={{
-                      height: `${(d.income / maxVal) * 100}%`,
-                      background: 'var(--color-secondary)',
-                      opacity: 0.85,
-                    }}
-                    title={`${d.month} Income: $${d.income.toLocaleString()}`}
-                  />
-                  <div
-                    className={styles.chartBar}
-                    style={{
-                      height: `${(d.expenses / maxVal) * 100}%`,
-                      background: '#cbd5e1',
-                    }}
-                    title={`${d.month} Expenses: $${d.expenses.toLocaleString()}`}
-                  />
-                </div>
-              ))
+              chartMode === 'line' ? (
+                /* ── Line Chart ── */
+                (() => {
+                  const svgW = 400;
+                  const svgH = 160;
+                  const pad = { top: 8, right: 8, bottom: 24, left: 6 };
+                  const cW = svgW - pad.left - pad.right;
+                  const cH = svgH - pad.top - pad.bottom;
+                  const yPos = v => pad.top + cH - (v / maxVal) * cH;
+                  const xPos = i => pad.left + (i + 0.5) * (cW / SPENDING_DATA.length);
+
+                  const smoothPath = (points) => {
+                    if (points.length < 2) return '';
+                    if (points.length === 2) return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+                    let d = `M ${points[0].x} ${points[0].y}`;
+                    for (let i = 0; i < points.length - 1; i++) {
+                      const p0 = points[Math.max(i - 1, 0)];
+                      const p1 = points[i];
+                      const p2 = points[i + 1];
+                      const p3 = points[Math.min(i + 2, points.length - 1)];
+                      const cp1x = p1.x + (p2.x - p0.x) / 6;
+                      const cp1y = p1.y + (p2.y - p0.y) / 6;
+                      const cp2x = p2.x - (p3.x - p1.x) / 6;
+                      const cp2y = p2.y - (p3.y - p1.y) / 6;
+                      d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+                    }
+                    return d;
+                  };
+
+                  const incomePoints = SPENDING_DATA.map((d, i) => ({ x: xPos(i), y: yPos(d.income) }));
+                  const expensePoints = SPENDING_DATA.map((d, i) => ({ x: xPos(i), y: yPos(d.expenses) }));
+                  const incomeD = smoothPath(incomePoints);
+                  const expenseD = smoothPath(expensePoints);
+                  const baseLine = pad.top + cH;
+
+                  /* Gridlines */
+                  const ticks = [0, 0.25, 0.5, 0.75, 1];
+
+                  return (
+                    <svg width="100%" height="100%" viewBox={`0 0 ${svgW} ${svgH}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
+                      {ticks.map((t, i) => {
+                        const y = pad.top + cH - t * cH;
+                        return t > 0 ? (
+                          <line key={i} x1={pad.left} y1={y} x2={svgW - pad.right} y2={y}
+                            stroke="var(--color-text-tertiary)" strokeOpacity={0.15} strokeWidth={0.5} />
+                        ) : null;
+                      })}
+                      <line x1={pad.left} y1={baseLine} x2={svgW - pad.right} y2={baseLine}
+                        stroke="var(--color-text-tertiary)" strokeOpacity={0.25} strokeWidth={1} />
+
+                      {/* Income area + line */}
+                      <defs>
+                        <linearGradient id="ov-income-grad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="var(--color-secondary)" stopOpacity={0.25} />
+                          <stop offset="100%" stopColor="var(--color-secondary)" stopOpacity={0.03} />
+                        </linearGradient>
+                        <linearGradient id="ov-expense-grad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#94a3b8" stopOpacity={0.2} />
+                          <stop offset="100%" stopColor="#94a3b8" stopOpacity={0.03} />
+                        </linearGradient>
+                      </defs>
+                      <path d={`${incomeD} L ${incomePoints[incomePoints.length - 1].x} ${baseLine} L ${incomePoints[0].x} ${baseLine} Z`}
+                        fill="url(#ov-income-grad)" />
+                      <path d={incomeD} fill="none" stroke="var(--color-secondary)" strokeWidth={2.5}
+                        strokeLinecap="round" strokeLinejoin="round" />
+                      {incomePoints.map((p, i) => (
+                        <circle key={`inc-${i}`} cx={p.x} cy={p.y} r={3.5} fill="#fff" stroke="var(--color-secondary)" strokeWidth={2}>
+                          <title>{SPENDING_DATA[i].month} Income: ${SPENDING_DATA[i].income.toLocaleString()}</title>
+                        </circle>
+                      ))}
+
+                      {/* Expense area + line */}
+                      <path d={`${expenseD} L ${expensePoints[expensePoints.length - 1].x} ${baseLine} L ${expensePoints[0].x} ${baseLine} Z`}
+                        fill="url(#ov-expense-grad)" />
+                      <path d={expenseD} fill="none" stroke="#94a3b8" strokeWidth={2.5}
+                        strokeLinecap="round" strokeLinejoin="round" />
+                      {expensePoints.map((p, i) => (
+                        <circle key={`exp-${i}`} cx={p.x} cy={p.y} r={3.5} fill="#fff" stroke="#94a3b8" strokeWidth={2}>
+                          <title>{SPENDING_DATA[i].month} Expenses: ${SPENDING_DATA[i].expenses.toLocaleString()}</title>
+                        </circle>
+                      ))}
+
+                      {/* X-axis labels */}
+                      {SPENDING_DATA.map((d, i) => (
+                        <text key={i} x={xPos(i)} y={svgH - 4} textAnchor="middle" fontSize={10}
+                          fill="var(--color-text-tertiary)">
+                          {d.month}
+                        </text>
+                      ))}
+                    </svg>
+                  );
+                })()
+              ) : (
+                /* ── Bar Chart (original) ── */
+                SPENDING_DATA.map((d, i) => (
+                  <div key={i} style={{ flex: 1, display: 'flex', gap: 2, alignItems: 'flex-end', height: '100%' }}>
+                    <div
+                      className={styles.chartBar}
+                      style={{
+                        height: `${(d.income / maxVal) * 100}%`,
+                        background: 'var(--color-secondary)',
+                        opacity: 0.85,
+                      }}
+                      title={`${d.month} Income: $${d.income.toLocaleString()}`}
+                    />
+                    <div
+                      className={styles.chartBar}
+                      style={{
+                        height: `${(d.expenses / maxVal) * 100}%`,
+                        background: '#cbd5e1',
+                      }}
+                      title={`${d.month} Expenses: $${d.expenses.toLocaleString()}`}
+                    />
+                  </div>
+                ))
+              )
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', color: 'var(--color-text-tertiary)', fontSize: 13 }}>No monthly data available</div>
             )}
