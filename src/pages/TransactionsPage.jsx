@@ -500,17 +500,31 @@ export function TransactionsPage() {
       .slice(0, 6)
       .map(([name]) => name);
 
-    // Build sorted month array (last 6 months max)
+    // Build continuous month range (fill gaps where no data exists)
     const sortedKeys = Object.keys(buckets).sort();
-    const recentKeys = sortedKeys.slice(-chartMonthCount);
     const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    // Generate all months between first and last data point
+    const allKeys = [];
+    if (sortedKeys.length > 0) {
+      const [startY, startM] = sortedKeys[0].split('-').map(Number);
+      const [endY, endM] = sortedKeys[sortedKeys.length - 1].split('-').map(Number);
+      let cy = startY, cm = startM;
+      while (cy < endY || (cy === endY && cm <= endM)) {
+        allKeys.push(`${cy}-${String(cm).padStart(2, '0')}`);
+        cm++;
+        if (cm > 12) { cm = 1; cy++; }
+      }
+    }
+
+    const recentKeys = allKeys.slice(-chartMonthCount);
     let maxTotal = 0;
     const months = recentKeys.map(key => {
       const [y, m] = key.split('-');
       const byCategory = {};
       let monthTotal = 0;
       for (const cat of topCategories) {
-        const val = buckets[key][cat] || 0;
+        const val = (buckets[key] && buckets[key][cat]) || 0;
         byCategory[cat] = val;
         monthTotal += val;
       }
@@ -518,7 +532,7 @@ export function TransactionsPage() {
       return { label: `${MONTH_SHORT[parseInt(m, 10) - 1]} '${y.slice(2)}`, byCategory };
     });
 
-    return { months, topCategories, maxTotal, drillDown, parent: drillDown ? visibleCats[0] : null, totalMonths: sortedKeys.length };
+    return { months, topCategories, maxTotal, drillDown, parent: drillDown ? visibleCats[0] : null, totalMonths: allKeys.length };
   }, [filtered, chartMonthCount]);
 
   /* Pie chart data — categories, or subcategories if only 1 category filtered */
