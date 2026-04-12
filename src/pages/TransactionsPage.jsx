@@ -72,7 +72,7 @@ const CHART_MODES = [
 
 function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 280, mode = 'stacked' }) {
   if (!months.length) return null;
-  const pad = { top: 12, right: 16, bottom: 32, left: 52 };
+  const pad = { top: 12, right: 16, bottom: 32, left: 6 };
   const chartW = width - pad.left - pad.right;
   const chartH = height - pad.top - pad.bottom;
 
@@ -87,7 +87,16 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
     }
     yMax = catMax;
   }
-  const niceMax = Math.ceil(yMax / 1000) * 1000 || 1000;
+
+  /* Auto-zoom: round up to nearest "nice" step just above the data max */
+  const raw = yMax * 1.08; // 8% headroom
+  const mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+  const steps = [1, 2, 2.5, 5, 10];
+  let niceMax = mag * 10;
+  for (const s of steps) {
+    if (mag * s >= raw) { niceMax = mag * s; break; }
+  }
+  if (niceMax === 0) niceMax = 1000;
   const ticks = [0, niceMax * 0.25, niceMax * 0.5, niceMax * 0.75, niceMax];
 
   /* Shared helpers */
@@ -100,7 +109,7 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
     return (
       <g key={i}>
         <line x1={pad.left} y1={y} x2={width - pad.right} y2={y} stroke="var(--color-text-tertiary)" strokeOpacity={0.15} strokeWidth={0.5} />
-        <text x={pad.left - 8} y={y + 3.5} textAnchor="end" fontSize={9} fill="var(--color-text-tertiary)">
+        <text x={2} y={y - 4} textAnchor="start" fontSize={9} fill="var(--color-text-tertiary)">
           {t >= 1000 ? `$${(t / 1000).toFixed(t % 1000 === 0 ? 0 : 1)}k` : `$${t}`}
         </text>
       </g>
@@ -787,6 +796,13 @@ export function TransactionsPage() {
       )}
 
       {/* Category Review Buckets */}
+      {includedCategories.size > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: -8 }}>
+          <button className={styles.categoryFilterClear} onClick={clearCategoryFilters} type="button">
+            Clear category filters ({includedCategories.size})
+          </button>
+        </div>
+      )}
       <div className={styles.bucketGrid}>
         <div
           className={`${styles.bucket} ${dragOverBucket === 'review' ? styles.bucketActive : ''}`}
@@ -803,6 +819,7 @@ export function TransactionsPage() {
             {activeCategories.filter(c => !organizedCategories.has(c)).map(cat => {
               const color = catColor(cat);
               const bg = catBg(cat);
+              const active = includedCategories.size === 0 || includedCategories.has(cat);
               return (
                 <div
                   key={cat}
@@ -810,7 +827,13 @@ export function TransactionsPage() {
                   draggable
                   onDragStart={() => setDraggedCategory(cat)}
                   onDragEnd={() => setDraggedCategory(null)}
-                  style={{ background: bg, color, borderColor: color + '30' }}
+                  onClick={() => { toggleCategoryFilter(cat); setPage(0); }}
+                  style={{
+                    background: active ? bg : 'var(--color-surface-alt)',
+                    color: active ? color : 'var(--color-text-tertiary)',
+                    borderColor: active ? color + '30' : 'transparent',
+                    opacity: active ? 1 : 0.5,
+                  }}
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{getCategoryIcon(cat)}</span>
                   {cat}
@@ -837,6 +860,7 @@ export function TransactionsPage() {
             {activeCategories.filter(c => organizedCategories.has(c)).map(cat => {
               const color = catColor(cat);
               const bg = catBg(cat);
+              const active = includedCategories.size === 0 || includedCategories.has(cat);
               return (
                 <div
                   key={cat}
@@ -844,7 +868,13 @@ export function TransactionsPage() {
                   draggable
                   onDragStart={() => setDraggedCategory(cat)}
                   onDragEnd={() => setDraggedCategory(null)}
-                  style={{ background: bg, color, borderColor: color + '30' }}
+                  onClick={() => { toggleCategoryFilter(cat); setPage(0); }}
+                  style={{
+                    background: active ? bg : 'var(--color-surface-alt)',
+                    color: active ? color : 'var(--color-text-tertiary)',
+                    borderColor: active ? color + '30' : 'transparent',
+                    opacity: active ? 1 : 0.5,
+                  }}
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{getCategoryIcon(cat)}</span>
                   {cat}
@@ -856,52 +886,6 @@ export function TransactionsPage() {
             )}
           </div>
         </div>
-      </div>
-
-      {/* Category Filters */}
-      <div className={styles.categoryFilterBar}>
-        <span className={styles.categoryFilterLabel}>Categories:</span>
-        <button
-          className={`${styles.categoryFilterBox} ${includedCategories.size === activeCategories.length ? styles.categoryFilterSelectAll : ''}`}
-          onClick={() => {
-            if (includedCategories.size === activeCategories.length) {
-              setIncludedCategories(new Set());
-            } else {
-              setIncludedCategories(new Set(activeCategories));
-            }
-            setPage(0);
-          }}
-          type="button"
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
-            {includedCategories.size === activeCategories.length ? 'check_box' : includedCategories.size > 0 ? 'indeterminate_check_box' : 'check_box_outline_blank'}
-          </span>
-          Select All
-        </button>
-        {activeCategories.map(cat => {
-          const included = includedCategories.has(cat);
-          const color = catColor(cat);
-          const bg = catBg(cat);
-          return (
-            <button
-              key={cat}
-              className={`${styles.categoryFilterBox} ${!included ? styles.categoryFilterExcluded : ''}`}
-              style={included ? { background: bg, color, borderColor: color + '30' } : {}}
-              onClick={() => toggleCategoryFilter(cat)}
-              type="button"
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
-                {included ? 'check_box' : 'check_box_outline_blank'}
-              </span>
-              {cat}
-            </button>
-          );
-        })}
-        {includedCategories.size > 0 && (
-          <button className={styles.categoryFilterClear} onClick={clearCategoryFilters} type="button">
-            Clear filters
-          </button>
-        )}
       </div>
 
       {/* Search */}
@@ -1107,17 +1091,45 @@ export function TransactionsPage() {
             <div className={styles.sectionLabel} style={{ marginBottom: 0 }}>
               {barChartData.drillDown ? `${barChartData.parent} — Subcategories Over Time` : 'Spending Over Time'}
             </div>
-            <div className={styles.chartModeGroup}>
-              {CHART_MODES.map(m => (
-                <button
-                  key={m.key}
-                  className={`${styles.chartModeBtn} ${chartMode === m.key ? styles.chartModeBtnActive : ''}`}
-                  onClick={() => setChartMode(m.key)}
-                  title={m.label}
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{m.icon}</span>
-                </button>
-              ))}
+            <div className={styles.barCardHeaderRight}>
+              <div className={styles.barLegend}>
+                {barChartData.topCategories.map((cat, i) => {
+                  const active = includedCategories.size === 0 || includedCategories.has(cat);
+                  return (
+                    <div
+                      key={cat}
+                      className={styles.barLegendItem}
+                      onClick={() => { toggleCategoryFilter(cat); setPage(0); }}
+                      style={{ cursor: 'pointer', opacity: active ? 1 : 0.4 }}
+                    >
+                      <span className={styles.barLegendDot} style={{ background: pieColor(i) }} />
+                      <span className={styles.barLegendName}>{cat}</span>
+                    </div>
+                  );
+                })}
+                {includedCategories.size > 0 && (
+                  <button
+                    className={styles.categoryFilterClear}
+                    style={{ padding: 0, fontSize: 10, marginLeft: 4 }}
+                    onClick={() => { clearCategoryFilters(); setPage(0); }}
+                    type="button"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <div className={styles.chartModeGroup}>
+                {CHART_MODES.map(m => (
+                  <button
+                    key={m.key}
+                    className={`${styles.chartModeBtn} ${chartMode === m.key ? styles.chartModeBtnActive : ''}`}
+                    onClick={() => setChartMode(m.key)}
+                    title={m.label}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{m.icon}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
           <SpendingChart
@@ -1128,14 +1140,6 @@ export function TransactionsPage() {
             height={300}
             mode={chartMode}
           />
-          <div className={styles.barLegend}>
-            {barChartData.topCategories.map((cat, i) => (
-              <div key={cat} className={styles.barLegendItem}>
-                <span className={styles.barLegendDot} style={{ background: pieColor(i) }} />
-                <span className={styles.barLegendName}>{cat}</span>
-              </div>
-            ))}
-          </div>
         </div>
       )}
 

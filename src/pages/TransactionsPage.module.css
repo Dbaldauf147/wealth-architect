@@ -762,6 +762,12 @@
   margin-bottom: 12px;
 }
 
+.barCardHeaderRight {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .chartModeGroup {
   display: flex;
   gap: 2px;
