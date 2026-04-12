@@ -65,11 +65,16 @@ function saveCustomCategories(cats) {
   localStorage.setItem('customCategories', JSON.stringify(cats));
 }
 
+function normalizeDesc(s) {
+  return (s || '').toLowerCase().trim().replace(/[\s\-–—]+/g, ' ');
+}
+
 function ruleMatches(rule, t) {
-  const descMatch = t.description.toLowerCase().trim() === rule.description.toLowerCase().trim();
-  if (!descMatch) return false;
-  if (rule.amount != null) return Math.abs(t.amount) === Math.abs(rule.amount);
-  return true;
+  const ruleDesc = normalizeDesc(rule.description);
+  const txnDesc = normalizeDesc(t.description);
+  if (!ruleDesc || !txnDesc) return false;
+  // Match if either contains the other (handles truncation, slight variations)
+  return txnDesc.includes(ruleDesc) || ruleDesc.includes(txnDesc);
 }
 
 function applyRulesToTransactions(txns, rules) {
@@ -160,10 +165,12 @@ export function DataProvider({ children }) {
   }, []);
 
   const bulkUpdateCategory = useCallback((description, amount, newCategory) => {
+    const ruleDesc = normalizeDesc(description);
     setAllTransactions(prev => prev.map(t => {
-      const descMatch = t.description.toLowerCase().trim() === description.toLowerCase().trim();
-      const amtMatch = amount != null ? Math.abs(t.amount) === Math.abs(amount) : true;
-      if (descMatch && amtMatch) return { ...t, category: newCategory };
+      const txnDesc = normalizeDesc(t.description);
+      if (txnDesc.includes(ruleDesc) || ruleDesc.includes(txnDesc)) {
+        return { ...t, category: newCategory };
+      }
       return t;
     }));
   }, []);
@@ -214,11 +221,11 @@ export function DataProvider({ children }) {
     });
   }, []);
 
-  const getMatchCount = useCallback((description, amount) => {
+  const getMatchCount = useCallback((description) => {
+    const ruleDesc = normalizeDesc(description);
     return allTransactions.filter(t => {
-      const descMatch = t.description.toLowerCase().trim() === description.toLowerCase().trim();
-      const amtMatch = amount != null ? Math.abs(t.amount) === Math.abs(amount) : true;
-      return descMatch && amtMatch;
+      const txnDesc = normalizeDesc(t.description);
+      return txnDesc.includes(ruleDesc) || ruleDesc.includes(txnDesc);
     }).length;
   }, [allTransactions]);
 
