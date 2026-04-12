@@ -506,7 +506,7 @@ export function TransactionsPage() {
     const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     let maxTotal = 0;
     const months = recentKeys.map(key => {
-      const [, m] = key.split('-');
+      const [y, m] = key.split('-');
       const byCategory = {};
       let monthTotal = 0;
       for (const cat of topCategories) {
@@ -515,7 +515,7 @@ export function TransactionsPage() {
         monthTotal += val;
       }
       if (monthTotal > maxTotal) maxTotal = monthTotal;
-      return { label: MONTH_SHORT[parseInt(m, 10) - 1], byCategory };
+      return { label: `${MONTH_SHORT[parseInt(m, 10) - 1]} '${y.slice(2)}`, byCategory };
     });
 
     return { months, topCategories, maxTotal, drillDown, parent: drillDown ? visibleCats[0] : null, totalMonths: sortedKeys.length };
