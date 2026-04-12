@@ -72,7 +72,7 @@ const CHART_MODES = [
 
 function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 280, mode = 'stacked' }) {
   if (!months.length) return null;
-  const pad = { top: 12, right: 16, bottom: 32, left: 6 };
+  const pad = { top: 4, right: 8, bottom: 24, left: 6 };
   const chartW = width - pad.left - pad.right;
   const chartH = height - pad.top - pad.bottom;
 
@@ -88,10 +88,10 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
     yMax = catMax;
   }
 
-  /* Auto-zoom: round up to nearest "nice" step just above the data max */
-  const raw = yMax * 1.08; // 8% headroom
+  /* Auto-zoom: snap to nearest "nice" ceiling just above the data */
+  const raw = yMax * 1.02; // 2% headroom
   const mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
-  const steps = [1, 2, 2.5, 5, 10];
+  const steps = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
   let niceMax = mag * 10;
   for (const s of steps) {
     if (mag * s >= raw) { niceMax = mag * s; break; }
