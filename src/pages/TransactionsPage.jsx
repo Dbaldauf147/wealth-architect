@@ -89,7 +89,8 @@ function smoothPath(points) {
   return d;
 }
 
-function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 280, mode = 'stacked' }) {
+function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 280, mode = 'stacked', onMonthClick, selectedMonth }) {
+  const [hoverIdx, setHoverIdx] = useState(null);
   if (!months.length) return null;
   const pad = { top: 16, right: 12, bottom: 40, left: 50 };
   const chartW = width - pad.left - pad.right;
@@ -161,13 +162,46 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
       stroke="var(--color-text-tertiary)" strokeOpacity={0.3} strokeWidth={1} />
   );
 
-  /* X-axis labels — show year below month when it changes */
+  /* X-axis labels + interactive hover/click zones */
   const xLabels = months.map((m, mi) => {
     const showYear = mi === 0 || m.year !== months[mi - 1].year;
+    const isHovered = hoverIdx === mi;
+    const isSelected = selectedMonth === m.key;
+    const monthTotal = topCategories.reduce((s, cat) => s + (m.byCategory[cat] || 0), 0);
     return (
       <g key={mi}>
+        {/* Invisible click/hover zone covering the full column */}
+        <rect
+          x={pad.left + mi * slotW} y={pad.top} width={slotW} height={chartH}
+          fill={isSelected ? 'var(--color-secondary)' : isHovered ? 'var(--color-text-primary)' : 'transparent'}
+          opacity={isSelected ? 0.08 : isHovered ? 0.04 : 0}
+          style={{ cursor: 'pointer' }}
+          onMouseEnter={() => setHoverIdx(mi)}
+          onMouseLeave={() => setHoverIdx(null)}
+          onClick={() => onMonthClick && onMonthClick(m.key)}
+        />
+        {/* Hover tooltip */}
+        {isHovered && (
+          <g>
+            <line x1={xCenter(mi)} y1={pad.top} x2={xCenter(mi)} y2={pad.top + chartH}
+              stroke="var(--color-text-tertiary)" strokeOpacity={0.3} strokeWidth={1} strokeDasharray="4 3" />
+            <rect x={xCenter(mi) - 52} y={pad.top - 2} width={104} height={20} rx={4}
+              fill="var(--color-text-primary)" opacity={0.85} />
+            <text x={xCenter(mi)} y={pad.top + 12} textAnchor="middle"
+              fontSize={10} fontWeight={700} fill="#fff" fontFamily="var(--font-headline)">
+              {monthTotal >= 1000 ? `$${(monthTotal / 1000).toFixed(1)}k` : `$${Math.round(monthTotal)}`} — {m.label} {m.year}
+            </text>
+          </g>
+        )}
+        {/* Month label */}
         <text x={xCenter(mi)} y={height - (showYear ? 18 : 8)} textAnchor="middle"
-          fontSize={11} fill="var(--color-text-secondary)" fontFamily="var(--font-headline)">
+          fontSize={11} fontWeight={isSelected ? 700 : 400}
+          fill={isSelected ? 'var(--color-secondary)' : 'var(--color-text-secondary)'}
+          fontFamily="var(--font-headline)"
+          style={{ cursor: 'pointer' }}
+          onMouseEnter={() => setHoverIdx(mi)}
+          onMouseLeave={() => setHoverIdx(null)}
+          onClick={() => onMonthClick && onMonthClick(m.key)}>
           {m.label}
         </text>
         {showYear && (
@@ -450,6 +484,7 @@ export function TransactionsPage() {
   const [includedSubcategories, setIncludedSubcategories] = useState(new Set());
   const [chartMode, setChartMode] = useState('stacked');
   const [chartMonthCount, setChartMonthCount] = useState(13);
+  const [selectedMonth, setSelectedMonth] = useState(null);
   const [showAccounts, setShowAccounts] = useState(() => {
     try { return JSON.parse(localStorage.getItem('showAccounts') ?? 'true'); }
     catch { return true; }
@@ -497,6 +532,15 @@ export function TransactionsPage() {
     if (includedSubcategories.size > 0) {
       list = list.filter(t => includedSubcategories.has(t.subcategory || 'Uncategorized'));
     }
+    if (selectedMonth) {
+      list = list.filter(t => {
+        if (!t.date) return false;
+        const d = new Date(t.date);
+        if (isNaN(d)) return false;
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        return key === selectedMonth;
+      });
+    }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       list = list.filter(
@@ -525,7 +569,7 @@ export function TransactionsPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return sorted;
-  }, [transactions, activeAccount, searchQuery, includedCategories, includedSubcategories, sortCol, sortDir]);
+  }, [transactions, activeAccount, searchQuery, includedCategories, includedSubcategories, selectedMonth, sortCol, sortDir]);
 
   const paginated = useMemo(
     () => filtered.slice(0, (page + 1) * PAGE_SIZE),
@@ -612,7 +656,7 @@ export function TransactionsPage() {
         monthTotal += val;
       }
       if (monthTotal > maxTotal) maxTotal = monthTotal;
-      return { label: MONTH_SHORT[parseInt(m, 10) - 1], year: y, byCategory };
+      return { key, label: MONTH_SHORT[parseInt(m, 10) - 1], year: y, byCategory };
     });
 
     return { months, topCategories, maxTotal, drillDown, parent: drillDown ? visibleCats[0] : null, totalMonths: allKeys.length, visibleKeys: new Set(recentKeys) };
@@ -1239,8 +1283,22 @@ export function TransactionsPage() {
       {barChartData.months.length > 0 && (
         <div className={styles.barCard}>
           <div className={styles.barCardHeader}>
-            <div className={styles.sectionLabel} style={{ marginBottom: 0 }}>
-              {barChartData.drillDown ? `${barChartData.parent} — Subcategories Over Time` : 'Spending Over Time'}
+            <div className={styles.sectionLabel} style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span>{barChartData.drillDown ? `${barChartData.parent} — Subcategories Over Time` : 'Spending Over Time'}</span>
+              {selectedMonth && (
+                <button
+                  className={styles.categoryFilterClear}
+                  style={{ padding: '2px 8px', fontSize: 10 }}
+                  onClick={() => { setSelectedMonth(null); setPage(0); }}
+                  type="button"
+                >
+                  {(() => {
+                    const [y, m] = selectedMonth.split('-');
+                    const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                    return `${MONTH_SHORT[parseInt(m, 10) - 1]} ${y}`;
+                  })()} ✕
+                </button>
+              )}
             </div>
             <div className={styles.barCardHeaderRight}>
               <div className={styles.monthControl}>
@@ -1307,6 +1365,11 @@ export function TransactionsPage() {
             width={960}
             height={300}
             mode={chartMode}
+            selectedMonth={selectedMonth}
+            onMonthClick={key => {
+              setSelectedMonth(prev => prev === key ? null : key);
+              setPage(0);
+            }}
           />
         </div>
       )}
