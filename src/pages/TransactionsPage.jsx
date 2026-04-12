@@ -366,7 +366,7 @@ export function TransactionsPage() {
   const [includedCategories, setIncludedCategories] = useState(new Set());
   const [includedSubcategories, setIncludedSubcategories] = useState(new Set());
   const [chartMode, setChartMode] = useState('stacked');
-  const [chartMonthCount, setChartMonthCount] = useState(6);
+  const [chartMonthCount, setChartMonthCount] = useState(13);
   const [showAccounts, setShowAccounts] = useState(() => {
     try { return JSON.parse(localStorage.getItem('showAccounts') ?? 'true'); }
     catch { return true; }
