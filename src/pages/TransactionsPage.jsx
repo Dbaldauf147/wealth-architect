@@ -63,6 +63,172 @@ function pieColor(index) {
   return PIE_PALETTE[index % PIE_PALETTE.length];
 }
 
+const CHART_MODES = [
+  { key: 'stacked', label: 'Stacked', icon: 'stacked_bar_chart' },
+  { key: 'grouped', label: 'Grouped', icon: 'bar_chart' },
+  { key: 'line', label: 'Line', icon: 'show_chart' },
+  { key: 'area', label: 'Area', icon: 'area_chart' },
+];
+
+function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 280, mode = 'stacked' }) {
+  if (!months.length) return null;
+  const pad = { top: 12, right: 16, bottom: 32, left: 52 };
+  const chartW = width - pad.left - pad.right;
+  const chartH = height - pad.top - pad.bottom;
+
+  /* Compute per-category max for grouped mode */
+  let yMax = maxTotal;
+  if (mode === 'grouped') {
+    let catMax = 0;
+    for (const m of months) {
+      for (const cat of topCategories) {
+        if ((m.byCategory[cat] || 0) > catMax) catMax = m.byCategory[cat];
+      }
+    }
+    yMax = catMax;
+  }
+  const niceMax = Math.ceil(yMax / 1000) * 1000 || 1000;
+  const ticks = [0, niceMax * 0.25, niceMax * 0.5, niceMax * 0.75, niceMax];
+
+  /* Shared helpers */
+  const yPos = v => pad.top + chartH - (v / niceMax) * chartH;
+  const xCenter = mi => pad.left + (mi + 0.5) * (chartW / months.length);
+
+  /* Gridlines + Y-axis (shared across all modes) */
+  const grid = ticks.map((t, i) => {
+    const y = yPos(t);
+    return (
+      <g key={i}>
+        <line x1={pad.left} y1={y} x2={width - pad.right} y2={y} stroke="var(--color-text-tertiary)" strokeOpacity={0.15} strokeWidth={0.5} />
+        <text x={pad.left - 8} y={y + 3.5} textAnchor="end" fontSize={9} fill="var(--color-text-tertiary)">
+          {t >= 1000 ? `$${(t / 1000).toFixed(t % 1000 === 0 ? 0 : 1)}k` : `$${t}`}
+        </text>
+      </g>
+    );
+  });
+
+  /* X-axis labels (shared) */
+  const xLabels = months.map((m, mi) => (
+    <text key={mi} x={xCenter(mi)} y={height - 6} textAnchor="middle" fontSize={10} fill="var(--color-text-tertiary)">
+      {m.label}
+    </text>
+  ));
+
+  /* ── Stacked bars ── */
+  if (mode === 'stacked') {
+    const slotW = chartW / months.length;
+    const barW = Math.min(40, slotW * 0.6);
+    return (
+      <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
+        {grid}
+        {months.map((m, mi) => {
+          const cx = xCenter(mi);
+          let yOffset = 0;
+          return (
+            <g key={mi}>
+              {topCategories.map((cat, ci) => {
+                const val = m.byCategory[cat] || 0;
+                const barH = (val / niceMax) * chartH;
+                const y = pad.top + chartH - yOffset - barH;
+                yOffset += barH;
+                return (
+                  <rect key={ci} x={cx - barW / 2} y={y} width={barW} height={Math.max(barH, 0)}
+                    rx={ci === topCategories.length - 1 || (m.byCategory[topCategories[ci + 1]] || 0) === 0 ? 3 : 0}
+                    fill={pieColor(ci)}>
+                    <title>{cat}: {fmt(val)}</title>
+                  </rect>
+                );
+              })}
+            </g>
+          );
+        })}
+        {xLabels}
+      </svg>
+    );
+  }
+
+  /* ── Grouped bars ── */
+  if (mode === 'grouped') {
+    const n = topCategories.length;
+    const slotW = chartW / months.length;
+    const groupW = slotW * 0.75;
+    const singleW = groupW / n;
+    return (
+      <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
+        {grid}
+        {months.map((m, mi) => {
+          const cx = xCenter(mi);
+          const groupStart = cx - groupW / 2;
+          return (
+            <g key={mi}>
+              {topCategories.map((cat, ci) => {
+                const val = m.byCategory[cat] || 0;
+                const barH = (val / niceMax) * chartH;
+                return (
+                  <rect key={ci} x={groupStart + ci * singleW + 1} y={yPos(val)} width={Math.max(singleW - 2, 1)} height={Math.max(barH, 0)}
+                    rx={2} fill={pieColor(ci)}>
+                    <title>{cat}: {fmt(val)}</title>
+                  </rect>
+                );
+              })}
+            </g>
+          );
+        })}
+        {xLabels}
+      </svg>
+    );
+  }
+
+  /* ── Line chart ── */
+  if (mode === 'line') {
+    return (
+      <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
+        {grid}
+        {topCategories.map((cat, ci) => {
+          const points = months.map((m, mi) => ({ x: xCenter(mi), y: yPos(m.byCategory[cat] || 0) }));
+          const d = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+          return (
+            <g key={ci}>
+              <path d={d} fill="none" stroke={pieColor(ci)} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+              {points.map((p, pi) => (
+                <circle key={pi} cx={p.x} cy={p.y} r={3.5} fill={pieColor(ci)} stroke="#fff" strokeWidth={1.5}>
+                  <title>{cat}: {fmt(months[pi].byCategory[cat] || 0)}</title>
+                </circle>
+              ))}
+            </g>
+          );
+        })}
+        {xLabels}
+      </svg>
+    );
+  }
+
+  /* ── Area chart ── */
+  if (mode === 'area') {
+    const baseline = pad.top + chartH;
+    return (
+      <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
+        {grid}
+        {[...topCategories].reverse().map((cat, ri) => {
+          const ci = topCategories.length - 1 - ri;
+          const points = months.map((m, mi) => ({ x: xCenter(mi), y: yPos(m.byCategory[cat] || 0) }));
+          const lineD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+          const areaD = `${lineD} L ${points[points.length - 1].x} ${baseline} L ${points[0].x} ${baseline} Z`;
+          return (
+            <g key={ci}>
+              <path d={areaD} fill={pieColor(ci)} opacity={0.18} />
+              <path d={lineD} fill="none" stroke={pieColor(ci)} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+            </g>
+          );
+        })}
+        {xLabels}
+      </svg>
+    );
+  }
+
+  return null;
+}
+
 function PieChart({ entries, total, size = 160, onSliceClick, highlightedNames }) {
   if (!entries.length || total === 0) return null;
   const cx = size / 2;
@@ -190,6 +356,11 @@ export function TransactionsPage() {
   const [savedToast, setSavedToast] = useState(false);
   const [includedCategories, setIncludedCategories] = useState(new Set());
   const [includedSubcategories, setIncludedSubcategories] = useState(new Set());
+  const [chartMode, setChartMode] = useState('stacked');
+  const [showAccounts, setShowAccounts] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('showAccounts') ?? 'true'); }
+    catch { return true; }
+  });
   const [organizedCategories, setOrganizedCategories] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem('organizedCategories') || '[]')); }
     catch { return new Set(); }
@@ -288,6 +459,57 @@ export function TransactionsPage() {
     () => findRecurring(transactions || []),
     [transactions],
   );
+
+  /* Bar chart data — spending by category (or subcategory when single category filtered) over time */
+  const barChartData = useMemo(() => {
+    const source = filtered.filter(t => t.amount < 0 && t.date);
+    if (!source.length) return { months: [], topCategories: [], maxTotal: 0, drillDown: false, parent: null };
+
+    // Detect single-category drill-down (same logic as pie chart)
+    const visibleCats = [...new Set(source.map(t => t.category || 'Uncategorized'))];
+    const drillDown = visibleCats.length === 1;
+
+    // Aggregate by month + (category or subcategory)
+    const buckets = {};
+    const catTotals = {};
+    for (const t of source) {
+      const d = new Date(t.date);
+      if (isNaN(d)) continue;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const group = drillDown
+        ? (t.subcategory || 'Uncategorized')
+        : (t.category || 'Uncategorized');
+      if (!buckets[key]) buckets[key] = {};
+      buckets[key][group] = (buckets[key][group] || 0) + Math.abs(t.amount);
+      catTotals[group] = (catTotals[group] || 0) + Math.abs(t.amount);
+    }
+
+    // Top 6 groups by total spend
+    const topCategories = Object.entries(catTotals)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([name]) => name);
+
+    // Build sorted month array (last 6 months max)
+    const sortedKeys = Object.keys(buckets).sort();
+    const recentKeys = sortedKeys.slice(-6);
+    const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    let maxTotal = 0;
+    const months = recentKeys.map(key => {
+      const [, m] = key.split('-');
+      const byCategory = {};
+      let monthTotal = 0;
+      for (const cat of topCategories) {
+        const val = buckets[key][cat] || 0;
+        byCategory[cat] = val;
+        monthTotal += val;
+      }
+      if (monthTotal > maxTotal) maxTotal = monthTotal;
+      return { label: MONTH_SHORT[parseInt(m, 10) - 1], byCategory };
+    });
+
+    return { months, topCategories, maxTotal, drillDown, parent: drillDown ? visibleCats[0] : null };
+  }, [filtered]);
 
   /* Pie chart data — categories, or subcategories if only 1 category filtered */
   const pieData = useMemo(() => {
@@ -523,30 +745,46 @@ export function TransactionsPage() {
             {filtered.length} transaction{filtered.length !== 1 ? 's' : ''} across {accountNames.length} account{accountNames.length !== 1 ? 's' : ''}
           </div>
         </div>
-        <button className={styles.exportBtn}>
-          <span className="material-symbols-outlined">download</span>
-          Export CSV
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            className={styles.exportBtn}
+            onClick={() => {
+              const next = !showAccounts;
+              setShowAccounts(next);
+              localStorage.setItem('showAccounts', JSON.stringify(next));
+              if (!next) setActiveAccount('all');
+            }}
+          >
+            <span className="material-symbols-outlined">{showAccounts ? 'visibility' : 'visibility_off'}</span>
+            {showAccounts ? 'Hide' : 'Show'} Accounts
+          </button>
+          <button className={styles.exportBtn}>
+            <span className="material-symbols-outlined">download</span>
+            Export CSV
+          </button>
+        </div>
       </div>
 
       {/* Filter Bar */}
-      <div className={styles.filterBar}>
-        <div
-          className={`${styles.filterPill} ${activeAccount === 'all' ? styles.filterPillActive : ''}`}
-          onClick={() => { setActiveAccount('all'); setPage(0); }}
-        >
-          All Accounts
-        </div>
-        {accountNames.map(acc => (
+      {showAccounts && (
+        <div className={styles.filterBar}>
           <div
-            key={acc}
-            className={`${styles.filterPill} ${activeAccount === acc ? styles.filterPillActive : ''}`}
-            onClick={() => { setActiveAccount(acc); setPage(0); }}
+            className={`${styles.filterPill} ${activeAccount === 'all' ? styles.filterPillActive : ''}`}
+            onClick={() => { setActiveAccount('all'); setPage(0); }}
           >
-            {acc}
+            All Accounts
           </div>
-        ))}
-      </div>
+          {accountNames.map(acc => (
+            <div
+              key={acc}
+              className={`${styles.filterPill} ${activeAccount === acc ? styles.filterPillActive : ''}`}
+              onClick={() => { setActiveAccount(acc); setPage(0); }}
+            >
+              {acc}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Category Review Buckets */}
       <div className={styles.bucketGrid}>
@@ -862,6 +1100,45 @@ export function TransactionsPage() {
         </div>
       )}
 
+      {/* Spending Over Time Chart */}
+      {barChartData.months.length > 0 && (
+        <div className={styles.barCard}>
+          <div className={styles.barCardHeader}>
+            <div className={styles.sectionLabel} style={{ marginBottom: 0 }}>
+              {barChartData.drillDown ? `${barChartData.parent} — Subcategories Over Time` : 'Spending Over Time'}
+            </div>
+            <div className={styles.chartModeGroup}>
+              {CHART_MODES.map(m => (
+                <button
+                  key={m.key}
+                  className={`${styles.chartModeBtn} ${chartMode === m.key ? styles.chartModeBtnActive : ''}`}
+                  onClick={() => setChartMode(m.key)}
+                  title={m.label}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{m.icon}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <SpendingChart
+            months={barChartData.months}
+            topCategories={barChartData.topCategories}
+            maxTotal={barChartData.maxTotal}
+            width={960}
+            height={300}
+            mode={chartMode}
+          />
+          <div className={styles.barLegend}>
+            {barChartData.topCategories.map((cat, i) => (
+              <div key={cat} className={styles.barLegendItem}>
+                <span className={styles.barLegendDot} style={{ background: pieColor(i) }} />
+                <span className={styles.barLegendName}>{cat}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Main Grid */}
       <div className={styles.mainGrid}>
         {/* Table */}
@@ -883,8 +1160,10 @@ export function TransactionsPage() {
                   { key: 'subcategory', label: 'Subcategory' },
                   { key: 'amount', label: 'Amount' },
                   { key: 'date', label: 'Date' },
-                  { key: 'account', label: 'Account' },
-                  { key: 'institution', label: 'Institution' },
+                  ...(showAccounts ? [
+                    { key: 'account', label: 'Account' },
+                    { key: 'institution', label: 'Institution' },
+                  ] : []),
                 ].map(col => (
                   <th key={col.key}>
                     <button
@@ -1097,13 +1376,17 @@ export function TransactionsPage() {
                       </span>
                     </td>
                     <td className={styles.dateCell}>{formatDate(t.date)}</td>
-                    <td>
-                      <div className={styles.accountCell}>
-                        <div className={styles.accountDot} style={{ background: catColor(t.account || 'Unknown') }} />
-                        {t.account}
-                      </div>
-                    </td>
-                    <td className={styles.institutionCell}>{t.institution}</td>
+                    {showAccounts && (
+                      <td>
+                        <div className={styles.accountCell}>
+                          <div className={styles.accountDot} style={{ background: catColor(t.account || 'Unknown') }} />
+                          {t.account}
+                        </div>
+                      </td>
+                    )}
+                    {showAccounts && (
+                      <td className={styles.institutionCell}>{t.institution}</td>
+                    )}
                     <td>
                       <button
                         className={styles.hideBtn}
