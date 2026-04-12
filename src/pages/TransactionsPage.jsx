@@ -72,7 +72,7 @@ const CHART_MODES = [
 
 function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 280, mode = 'stacked' }) {
   if (!months.length) return null;
-  const pad = { top: 4, right: 8, bottom: 24, left: 6 };
+  const pad = { top: 4, right: 8, bottom: 24, left: 48 };
   const chartW = width - pad.left - pad.right;
   const chartH = height - pad.top - pad.bottom;
 
@@ -109,7 +109,7 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
     return (
       <g key={i}>
         <line x1={pad.left} y1={y} x2={width - pad.right} y2={y} stroke="var(--color-text-tertiary)" strokeOpacity={0.15} strokeWidth={0.5} />
-        <text x={2} y={y - 4} textAnchor="start" fontSize={9} fill="var(--color-text-tertiary)">
+        <text x={pad.left - 6} y={y + 3.5} textAnchor="end" fontSize={9} fill="var(--color-text-tertiary)">
           {t >= 1000 ? `$${(t / 1000).toFixed(t % 1000 === 0 ? 0 : 1)}k` : `$${t}`}
         </text>
       </g>
