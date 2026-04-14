@@ -1416,9 +1416,7 @@ export function TransactionsPage() {
                   { key: 'amount', label: 'Amount' },
                   { key: 'date', label: 'Date' },
                   { key: 'institution', label: 'Institution' },
-                  ...(showAccounts ? [
-                    { key: 'account', label: 'Account' },
-                  ] : []),
+                  { key: 'account', label: 'Account' },
                 ].map(col => (
                   <th key={col.key}>
                     <button
@@ -1636,14 +1634,12 @@ export function TransactionsPage() {
                       />
                     </td>
                     <td className={styles.institutionCell}>{t.institution}</td>
-                    {showAccounts && (
-                      <td>
-                        <div className={styles.accountCell}>
-                          <div className={styles.accountDot} style={{ background: catColor(t.account || 'Unknown') }} />
-                          {t.account}
-                        </div>
-                      </td>
-                    )}
+                    <td>
+                      <div className={styles.accountCell}>
+                        <div className={styles.accountDot} style={{ background: catColor(t.account || 'Unknown') }} />
+                        {t.account}
+                      </div>
+                    </td>
                     <td>
                       <button
                         className={styles.hideBtn}
