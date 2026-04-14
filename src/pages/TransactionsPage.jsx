@@ -486,6 +486,11 @@ export function TransactionsPage() {
   const [chartMode, setChartMode] = useState('stacked');
   const [chartMonthCount, setChartMonthCount] = useState(13);
   const [selectedMonth, setSelectedMonth] = useState(null);
+  const [columnWidths, setColumnWidths] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('txnColumnWidths') || '{}'); }
+    catch { return {}; }
+  });
+  const resizingColRef = useRef(null);
   const [showAccounts, setShowAccounts] = useState(() => {
     try { return JSON.parse(localStorage.getItem('showAccounts') ?? 'true'); }
     catch { return true; }
@@ -849,6 +854,39 @@ export function TransactionsPage() {
       setEditingId(null);
       setNewCategoryText('');
     }
+  }
+
+  function startResizeColumn(e, key, currentWidth) {
+    e.preventDefault();
+    e.stopPropagation();
+    resizingColRef.current = {
+      key,
+      startX: e.clientX,
+      startWidth: currentWidth,
+    };
+    const onMove = moveEvent => {
+      if (!resizingColRef.current) return;
+      const { key: k, startX, startWidth } = resizingColRef.current;
+      const newWidth = Math.max(60, startWidth + (moveEvent.clientX - startX));
+      setColumnWidths(prev => ({ ...prev, [k]: newWidth }));
+    };
+    const onUp = () => {
+      if (resizingColRef.current) {
+        setColumnWidths(prev => {
+          localStorage.setItem('txnColumnWidths', JSON.stringify(prev));
+          return prev;
+        });
+      }
+      resizingColRef.current = null;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
   }
 
   function handleSubcategorySelect(t, newSub) {
@@ -1417,24 +1455,46 @@ export function TransactionsPage() {
                   { key: 'date', label: 'Date' },
                   { key: 'institution', label: 'Institution' },
                   { key: 'account', label: 'Account' },
-                ].map(col => (
-                  <th key={col.key}>
-                    <button
-                      className={styles.sortableHeader}
-                      onClick={() => handleSort(col.key)}
-                      type="button"
-                    >
-                      {col.label}
-                      <span className="material-symbols-outlined" style={{
-                        fontSize: 14,
-                        opacity: sortCol === col.key ? 1 : 0,
-                        transition: 'opacity 0.15s',
-                      }}>
-                        {sortDir === 'asc' ? 'arrow_upward' : 'arrow_downward'}
-                      </span>
-                    </button>
-                  </th>
-                ))}
+                ].map(col => {
+                  const w = columnWidths[col.key];
+                  return (
+                    <th key={col.key} style={{
+                      width: w ? w : undefined,
+                      minWidth: w ? w : undefined,
+                      maxWidth: w ? w : undefined,
+                      position: 'relative',
+                    }}>
+                      <button
+                        className={styles.sortableHeader}
+                        onClick={() => handleSort(col.key)}
+                        type="button"
+                      >
+                        {col.label}
+                        <span className="material-symbols-outlined" style={{
+                          fontSize: 14,
+                          opacity: sortCol === col.key ? 1 : 0,
+                          transition: 'opacity 0.15s',
+                        }}>
+                          {sortDir === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+                        </span>
+                      </button>
+                      <span
+                        onMouseDown={e => startResizeColumn(e, col.key, w || e.currentTarget.parentElement.offsetWidth)}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          right: 0,
+                          width: 6,
+                          height: '100%',
+                          cursor: 'col-resize',
+                          userSelect: 'none',
+                          zIndex: 2,
+                        }}
+                        title="Drag to resize"
+                      />
+                    </th>
+                  );
+                })}
                 <th style={{ width: 40 }}></th>
               </tr>
             </thead>
