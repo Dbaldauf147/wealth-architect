@@ -24,3 +24,9 @@ dist-ssr
 *.sw?
 
 .vercel
+
+# Env & local config
+.env
+.env.*
+!.env.example
+.claude/
