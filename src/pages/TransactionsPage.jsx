@@ -460,7 +460,7 @@ const SUBCATEGORIES = {
 };
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, bulkUpdateCategoryByIds, addCategoryRule, customCategories, addCustomCategory, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
+  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, bulkUpdateCategoryByIds, addCategoryRule, addSubcategoryRule, customCategories, addCustomCategory, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
   const subDropdownRef = useRef(null);
@@ -473,6 +473,7 @@ export function TransactionsPage() {
   const [sortCol, setSortCol] = useState('date');
   const [sortDir, setSortDir] = useState('desc');
   const [pendingRule, setPendingRule] = useState(null);
+  const [pendingSubRule, setPendingSubRule] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
   const [bulkCategorySearch, setBulkCategorySearch] = useState('');
@@ -846,6 +847,23 @@ export function TransactionsPage() {
       flashSaved();
       setEditingId(null);
       setNewCategoryText('');
+    }
+  }
+
+  function handleSubcategorySelect(t, newSub) {
+    updateTransactionSubcategory(t.transactionId, newSub);
+    flashSaved();
+    setEditingSubId(null);
+    setSubSearchText('');
+    if (!newSub) return;
+    const matchCount = getMatchCount(t.description);
+    if (matchCount > 1) {
+      setPendingSubRule({
+        transactionId: t.transactionId,
+        description: t.description,
+        newSubcategory: newSub,
+        matchCount,
+      });
     }
   }
 
@@ -1395,9 +1413,9 @@ export function TransactionsPage() {
                   { key: 'subcategory', label: 'Subcategory' },
                   { key: 'amount', label: 'Amount' },
                   { key: 'date', label: 'Date' },
+                  { key: 'institution', label: 'Institution' },
                   ...(showAccounts ? [
                     { key: 'account', label: 'Account' },
-                    { key: 'institution', label: 'Institution' },
                   ] : []),
                 ].map(col => (
                   <th key={col.key}>
@@ -1545,10 +1563,7 @@ export function TransactionsPage() {
                                   onChange={e => setSubSearchText(e.target.value)}
                                   onKeyDown={e => {
                                     if (e.key === 'Enter' && subSearchText.trim()) {
-                                      updateTransactionSubcategory(t.transactionId, subSearchText.trim());
-                                      flashSaved();
-                                      setEditingSubId(null);
-                                      setSubSearchText('');
+                                      handleSubcategorySelect(t, subSearchText.trim());
                                     }
                                   }}
                                   autoFocus
@@ -1557,12 +1572,7 @@ export function TransactionsPage() {
                                   <div
                                     className={styles.categoryOption}
                                     style={{ color: '#ba1a1a' }}
-                                    onClick={() => {
-                                      updateTransactionSubcategory(t.transactionId, '');
-                                      flashSaved();
-                                      setEditingSubId(null);
-                                      setSubSearchText('');
-                                    }}
+                                    onClick={() => handleSubcategorySelect(t, '')}
                                   >
                                     <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
                                     Clear subcategory
@@ -1572,12 +1582,7 @@ export function TransactionsPage() {
                                   <div
                                     className={styles.categoryOption}
                                     style={{ color: '#0058be', fontWeight: 600 }}
-                                    onClick={() => {
-                                      updateTransactionSubcategory(t.transactionId, subSearchText.trim());
-                                      flashSaved();
-                                      setEditingSubId(null);
-                                      setSubSearchText('');
-                                    }}
+                                    onClick={() => handleSubcategorySelect(t, subSearchText.trim())}
                                   >
                                     <span className="material-symbols-outlined" style={{ fontSize: 14 }}>add</span>
                                     Create "{subSearchText.trim()}"
@@ -1589,12 +1594,7 @@ export function TransactionsPage() {
                                   <div
                                     key={sub}
                                     className={`${styles.categoryOption} ${sub === t.subcategory ? styles.categoryOptionActive : ''}`}
-                                    onClick={() => {
-                                      updateTransactionSubcategory(t.transactionId, sub);
-                                      flashSaved();
-                                      setEditingSubId(null);
-                                      setSubSearchText('');
-                                    }}
+                                    onClick={() => handleSubcategorySelect(t, sub)}
                                   >
                                     {sub}
                                   </div>
@@ -1611,6 +1611,7 @@ export function TransactionsPage() {
                       </span>
                     </td>
                     <td className={styles.dateCell}>{formatDate(t.date)}</td>
+                    <td className={styles.institutionCell}>{t.institution}</td>
                     {showAccounts && (
                       <td>
                         <div className={styles.accountCell}>
@@ -1618,9 +1619,6 @@ export function TransactionsPage() {
                           {t.account}
                         </div>
                       </td>
-                    )}
-                    {showAccounts && (
-                      <td className={styles.institutionCell}>{t.institution}</td>
                     )}
                     <td>
                       <button
@@ -1843,6 +1841,45 @@ export function TransactionsPage() {
             </div>
             <div className={styles.ruleDialogHint}>
               Rules auto-categorize matching charges on future syncs
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Subcategory rule confirmation */}
+      {pendingSubRule && (
+        <div className={styles.ruleOverlay}>
+          <div className={styles.ruleDialog}>
+            <div className={styles.ruleDialogIcon}>
+              <span className="material-symbols-outlined" style={{ fontSize: 24 }}>bookmark</span>
+            </div>
+            <div className={styles.ruleDialogTitle}>
+              Set subcategory to "{pendingSubRule.newSubcategory}"
+            </div>
+            <div className={styles.ruleDialogDesc}>
+              There are <strong>{pendingSubRule.matchCount}</strong> transactions from <strong>{pendingSubRule.description}</strong>. Apply this subcategory to all of them?
+            </div>
+            <div className={styles.ruleDialogActions}>
+              <button
+                className={styles.ruleBtn}
+                onClick={() => setPendingSubRule(null)}
+              >
+                Just this one
+              </button>
+              <button
+                className={styles.ruleBtnPrimary}
+                onClick={() => {
+                  addSubcategoryRule(pendingSubRule.description, pendingSubRule.newSubcategory);
+                  flashSaved();
+                  setPendingSubRule(null);
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>auto_fix_high</span>
+                Apply to all {pendingSubRule.matchCount} + create rule
+              </button>
+            </div>
+            <div className={styles.ruleDialogHint}>
+              Rules auto-tag matching charges on future syncs
             </div>
           </div>
         </div>

@@ -23,6 +23,16 @@ function saveCategoryRules(rules) {
   localStorage.setItem('categoryRules', JSON.stringify(rules));
 }
 
+function loadSubcategoryRules() {
+  try {
+    return JSON.parse(localStorage.getItem('subcategoryRules') || '[]');
+  } catch { return []; }
+}
+
+function saveSubcategoryRules(rules) {
+  localStorage.setItem('subcategoryRules', JSON.stringify(rules));
+}
+
 function loadCategoryOverrides() {
   try {
     return JSON.parse(localStorage.getItem('categoryOverrides') || '{}');
@@ -87,10 +97,21 @@ function applyRulesToTransactions(txns, rules) {
   });
 }
 
+function applySubcategoryRulesToTransactions(txns, rules) {
+  if (!rules.length) return txns;
+  return txns.map(t => {
+    for (const rule of rules) {
+      if (ruleMatches(rule, t)) return { ...t, subcategory: rule.subcategory };
+    }
+    return t;
+  });
+}
+
 export function DataProvider({ children }) {
   const [allTransactions, setAllTransactions] = useState([]);
   const [hiddenIds, setHiddenIds] = useState(loadHiddenIds);
   const [categoryRules, setCategoryRules] = useState(loadCategoryRules);
+  const [subcategoryRules, setSubcategoryRules] = useState(loadSubcategoryRules);
   const [categoryOverrides, setCategoryOverrides] = useState(loadCategoryOverrides);
   const [subcategoryOverrides, setSubcategoryOverrides] = useState(loadSubcategoryOverrides);
   const [customCategories, setCustomCategories] = useState(loadCustomCategories);
@@ -118,10 +139,12 @@ export function DataProvider({ children }) {
         fetchBalances(),
       ]);
       const rules = loadCategoryRules();
+      const subRules = loadSubcategoryRules();
       const overrides = loadCategoryOverrides();
       const subOverrides = loadSubcategoryOverrides();
       const withRules = applyRulesToTransactions(txns, rules);
-      setAllTransactions(applyOverrides(withRules, overrides, subOverrides));
+      const withSubRules = applySubcategoryRulesToTransactions(withRules, subRules);
+      setAllTransactions(applyOverrides(withSubRules, overrides, subOverrides));
       setBalances(bal);
       setLastSync(new Date());
     } catch (err) {
@@ -188,6 +211,29 @@ export function DataProvider({ children }) {
     });
     bulkUpdateCategory(description, amount, category);
   }, [bulkUpdateCategory]);
+
+  const bulkUpdateSubcategory = useCallback((description, newSubcategory) => {
+    const ruleDesc = normalizeDesc(description);
+    setAllTransactions(prev => prev.map(t => {
+      const txnDesc = normalizeDesc(t.description);
+      if (txnDesc.includes(ruleDesc) || ruleDesc.includes(txnDesc)) {
+        return { ...t, subcategory: newSubcategory };
+      }
+      return t;
+    }));
+  }, []);
+
+  const addSubcategoryRule = useCallback((description, subcategory) => {
+    setSubcategoryRules(prev => {
+      const filtered = prev.filter(r =>
+        normalizeDesc(r.description) !== normalizeDesc(description)
+      );
+      const next = [...filtered, { description, subcategory }];
+      saveSubcategoryRules(next);
+      return next;
+    });
+    bulkUpdateSubcategory(description, subcategory);
+  }, [bulkUpdateSubcategory]);
 
   const removeCategoryRule = useCallback((index) => {
     setCategoryRules(prev => {
@@ -260,6 +306,8 @@ export function DataProvider({ children }) {
       addCategoryRule,
       removeCategoryRule,
       categoryRules,
+      addSubcategoryRule,
+      subcategoryRules,
       customCategories,
       addCustomCategory,
       getMatchCount,
