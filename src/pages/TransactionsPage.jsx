@@ -559,6 +559,7 @@ export function TransactionsPage() {
       let cmp = 0;
       switch (sortCol) {
         case 'merchant': cmp = (a.description || '').localeCompare(b.description || ''); break;
+        case 'description': cmp = (a.fullDescription || '').localeCompare(b.fullDescription || ''); break;
         case 'category': cmp = (a.category || '').localeCompare(b.category || ''); break;
         case 'amount': cmp = a.amount - b.amount; break;
         case 'date': cmp = new Date(a.date || 0) - new Date(b.date || 0); break;
@@ -1409,6 +1410,7 @@ export function TransactionsPage() {
                 </th>
                 {[
                   { key: 'merchant', label: 'Merchant' },
+                  { key: 'description', label: 'Description' },
                   { key: 'category', label: 'Category' },
                   { key: 'subcategory', label: 'Subcategory' },
                   { key: 'amount', label: 'Amount' },
@@ -1470,6 +1472,9 @@ export function TransactionsPage() {
                           </div>
                         </div>
                       </div>
+                    </td>
+                    <td className={styles.institutionCell} style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.fullDescription || t.description}>
+                      {t.fullDescription || t.description}
                     </td>
                     <td style={{ position: 'relative' }}>
                       <span
