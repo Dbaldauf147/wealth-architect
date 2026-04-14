@@ -9,10 +9,12 @@ import { useData } from './contexts/DataContext';
 
 import { BudgetsPage } from './pages/BudgetsPage';
 import { RecurringPage } from './pages/RecurringPage';
+import { CashFlowPage } from './pages/CashFlowPage';
 
 const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: 'dashboard' },
   { id: 'transactions', label: 'Transactions', icon: 'receipt_long' },
+  { id: 'cashflow', label: 'Cash Flow', icon: 'payments' },
   { id: 'budgets', label: 'Budgets', icon: 'savings' },
   { id: 'recurring', label: 'Recurring', icon: 'autorenew' },
   { id: 'assets', label: 'Assets & Liabilities', icon: 'account_balance' },
@@ -53,6 +55,7 @@ export function App() {
   function renderPage() {
     switch (view) {
       case 'transactions': return <TransactionsPage />;
+      case 'cashflow': return <CashFlowPage />;
       case 'budgets': return <BudgetsPage />;
       case 'recurring': return <RecurringPage />;
       case 'assets': return <AssetsPage />;
