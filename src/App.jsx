@@ -10,6 +10,7 @@ import { useData } from './contexts/DataContext';
 import { BudgetsPage } from './pages/BudgetsPage';
 import { RecurringPage } from './pages/RecurringPage';
 import { CashFlowPage } from './pages/CashFlowPage';
+import { CardPromosPage } from './pages/CardPromosPage';
 
 const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: 'dashboard' },
@@ -19,6 +20,7 @@ const NAV_ITEMS = [
   { id: 'recurring', label: 'Recurring', icon: 'autorenew' },
   { id: 'assets', label: 'Assets & Liabilities', icon: 'account_balance' },
   { id: 'cards', label: 'Cards Optimizer', icon: 'credit_card' },
+  { id: 'promos', label: 'Card Promotions', icon: 'redeem' },
 ];
 
 const BOTTOM_NAV = [
@@ -60,6 +62,7 @@ export function App() {
       case 'recurring': return <RecurringPage />;
       case 'assets': return <AssetsPage />;
       case 'cards': return <CardsPage />;
+      case 'promos': return <CardPromosPage />;
       case 'settings': return <SettingsPage />;
       default: return <OverviewPage />;
     }
