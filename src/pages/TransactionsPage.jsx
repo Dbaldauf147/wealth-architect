@@ -411,6 +411,19 @@ function formatDate(dateStr) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+/* Coerce any date string into YYYY-MM-DD for <input type="date"> */
+function toIsoDate(dateStr) {
+  if (!dateStr) return '';
+  // Already in ISO form
+  if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) return dateStr.slice(0, 10);
+  const d = new Date(dateStr);
+  if (isNaN(d)) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 /* Build a simple recurring-transaction list from raw transactions */
 function findRecurring(transactions) {
   // Group by normalised description
@@ -1676,7 +1689,7 @@ export function TransactionsPage() {
                     <td className={styles.dateCell}>
                       <input
                         type="date"
-                        value={t.date || ''}
+                        value={toIsoDate(t.date)}
                         onChange={e => {
                           updateTransactionDate(t.transactionId, e.target.value);
                           flashSaved();
@@ -1689,8 +1702,9 @@ export function TransactionsPage() {
                           padding: 0,
                           cursor: 'pointer',
                           width: '100%',
+                          colorScheme: 'light',
                         }}
-                        title="Click to edit date"
+                        title={`Click to edit date (current: ${formatDate(t.date)})`}
                       />
                     </td>
                     <td className={styles.institutionCell}>{t.institution}</td>
