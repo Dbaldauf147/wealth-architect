@@ -460,7 +460,7 @@ const SUBCATEGORIES = {
 };
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, bulkUpdateCategoryByIds, addCategoryRule, addSubcategoryRule, customCategories, addCustomCategory, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
+  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, addSubcategoryRule, customCategories, addCustomCategory, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
   const subDropdownRef = useRef(null);
@@ -1615,7 +1615,26 @@ export function TransactionsPage() {
                         {t.amount >= 0 ? '+' : ''}{fmt(t.amount)}
                       </span>
                     </td>
-                    <td className={styles.dateCell}>{formatDate(t.date)}</td>
+                    <td className={styles.dateCell}>
+                      <input
+                        type="date"
+                        value={t.date || ''}
+                        onChange={e => {
+                          updateTransactionDate(t.transactionId, e.target.value);
+                          flashSaved();
+                        }}
+                        style={{
+                          border: 'none',
+                          background: 'transparent',
+                          font: 'inherit',
+                          color: 'inherit',
+                          padding: 0,
+                          cursor: 'pointer',
+                          width: '100%',
+                        }}
+                        title="Click to edit date"
+                      />
+                    </td>
                     <td className={styles.institutionCell}>{t.institution}</td>
                     {showAccounts && (
                       <td>

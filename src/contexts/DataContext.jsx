@@ -53,14 +53,26 @@ function saveSubcategoryOverrides(overrides) {
   localStorage.setItem('subcategoryOverrides', JSON.stringify(overrides));
 }
 
-function applyOverrides(txns, overrides, subOverrides) {
+function loadDateOverrides() {
+  try {
+    return JSON.parse(localStorage.getItem('dateOverrides') || '{}');
+  } catch { return {}; }
+}
+
+function saveDateOverrides(overrides) {
+  localStorage.setItem('dateOverrides', JSON.stringify(overrides));
+}
+
+function applyOverrides(txns, overrides, subOverrides, dateOverrides) {
   const hasCat = Object.keys(overrides).length > 0;
   const hasSub = Object.keys(subOverrides).length > 0;
-  if (!hasCat && !hasSub) return txns;
+  const hasDate = dateOverrides && Object.keys(dateOverrides).length > 0;
+  if (!hasCat && !hasSub && !hasDate) return txns;
   return txns.map(t => {
     let updated = t;
     if (overrides[t.transactionId]) updated = { ...updated, category: overrides[t.transactionId] };
     if (subOverrides[t.transactionId]) updated = { ...updated, subcategory: subOverrides[t.transactionId] };
+    if (hasDate && dateOverrides[t.transactionId]) updated = { ...updated, date: dateOverrides[t.transactionId] };
     return updated;
   });
 }
@@ -114,6 +126,7 @@ export function DataProvider({ children }) {
   const [subcategoryRules, setSubcategoryRules] = useState(loadSubcategoryRules);
   const [categoryOverrides, setCategoryOverrides] = useState(loadCategoryOverrides);
   const [subcategoryOverrides, setSubcategoryOverrides] = useState(loadSubcategoryOverrides);
+  const [dateOverrides, setDateOverrides] = useState(loadDateOverrides);
   const [customCategories, setCustomCategories] = useState(loadCustomCategories);
   const [balances, setBalances] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -142,9 +155,10 @@ export function DataProvider({ children }) {
       const subRules = loadSubcategoryRules();
       const overrides = loadCategoryOverrides();
       const subOverrides = loadSubcategoryOverrides();
+      const dOverrides = loadDateOverrides();
       const withRules = applyRulesToTransactions(txns, rules);
       const withSubRules = applySubcategoryRulesToTransactions(withRules, subRules);
-      setAllTransactions(applyOverrides(withSubRules, overrides, subOverrides));
+      setAllTransactions(applyOverrides(withSubRules, overrides, subOverrides, dOverrides));
       setBalances(bal);
       setLastSync(new Date());
     } catch (err) {
@@ -211,6 +225,20 @@ export function DataProvider({ children }) {
     });
     bulkUpdateCategory(description, amount, category);
   }, [bulkUpdateCategory]);
+
+  const updateTransactionDate = useCallback((transactionId, newDate) => {
+    if (!transactionId) return;
+    setAllTransactions(prev => prev.map(t =>
+      t.transactionId === transactionId ? { ...t, date: newDate } : t
+    ));
+    setDateOverrides(prev => {
+      const next = { ...prev };
+      if (newDate) next[transactionId] = newDate;
+      else delete next[transactionId];
+      saveDateOverrides(next);
+      return next;
+    });
+  }, []);
 
   const bulkUpdateSubcategory = useCallback((description, newSubcategory) => {
     const ruleDesc = normalizeDesc(description);
@@ -302,6 +330,7 @@ export function DataProvider({ children }) {
       refresh: loadData,
       updateTransactionCategory,
       updateTransactionSubcategory,
+      updateTransactionDate,
       bulkUpdateCategoryByIds,
       addCategoryRule,
       removeCategoryRule,
