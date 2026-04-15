@@ -504,6 +504,16 @@ export function TransactionsPage() {
     try { return JSON.parse(localStorage.getItem('txnColumnWidths') || '{}'); }
     catch { return {}; }
   });
+  const [columnFilters, setColumnFilters] = useState({
+    merchant: '',
+    description: '',
+    category: '',
+    subcategory: '',
+    amount: '',
+    date: '',
+    institution: '',
+    account: '',
+  });
   const resizingColRef = useRef(null);
   const [showAccounts, setShowAccounts] = useState(() => {
     try { return JSON.parse(localStorage.getItem('showAccounts') ?? 'true'); }
@@ -574,6 +584,33 @@ export function TransactionsPage() {
           formatDate(t.date).toLowerCase().includes(q),
       );
     }
+    // Per-column filters
+    const cf = columnFilters;
+    const anyCol = Object.values(cf).some(v => v && String(v).trim());
+    if (anyCol) {
+      const matchText = (val, q) => !q || (String(val || '').toLowerCase().includes(String(q).toLowerCase()));
+      const matchAmount = (amt, q) => {
+        if (!q || !String(q).trim()) return true;
+        const raw = String(q).trim();
+        const num = parseFloat(raw.replace(/[$,\s]/g, ''));
+        if (!isNaN(num)) {
+          if (raw.startsWith('>')) return amt > num;
+          if (raw.startsWith('<')) return amt < num;
+          return Math.abs(Math.abs(amt) - Math.abs(num)) < 0.005;
+        }
+        return String(amt).includes(raw);
+      };
+      list = list.filter(t =>
+        matchText(t.description, cf.merchant) &&
+        matchText(t.fullDescription || t.description, cf.description) &&
+        matchText(t.category || 'Uncategorized', cf.category) &&
+        matchText(t.subcategory, cf.subcategory) &&
+        matchAmount(t.amount, cf.amount) &&
+        (cf.date ? formatDate(t.date).toLowerCase().includes(cf.date.toLowerCase()) || String(t.date || '').includes(cf.date) : true) &&
+        matchText(t.institution, cf.institution) &&
+        matchText(t.account, cf.account)
+      );
+    }
     const sorted = [...list].sort((a, b) => {
       let cmp = 0;
       switch (sortCol) {
@@ -590,7 +627,7 @@ export function TransactionsPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return sorted;
-  }, [transactions, activeAccount, searchQuery, includedCategories, includedSubcategories, selectedMonth, sortCol, sortDir]);
+  }, [transactions, activeAccount, searchQuery, includedCategories, includedSubcategories, selectedMonth, columnFilters, sortCol, sortDir]);
 
   const paginated = useMemo(
     () => filtered.slice(0, (page + 1) * PAGE_SIZE),
@@ -928,15 +965,15 @@ export function TransactionsPage() {
     setEditingSubId(null);
     setSubSearchText('');
     if (!newSub) return;
+    // Always offer the rule when setting a subcategory — even if only this one matches,
+    // creating the rule auto-tags future matching transactions on sync.
     const matchCount = getMatchCount(t.description);
-    if (matchCount > 1) {
-      setPendingSubRule({
-        transactionId: t.transactionId,
-        description: t.description,
-        newSubcategory: newSub,
-        matchCount,
-      });
-    }
+    setPendingSubRule({
+      transactionId: t.transactionId,
+      description: t.description,
+      newSubcategory: newSub,
+      matchCount,
+    });
   }
 
   function handleBulkCategory(cat) {
@@ -1529,6 +1566,58 @@ export function TransactionsPage() {
                   );
                 })}
                 <th style={{ width: 40 }}></th>
+              </tr>
+              <tr className={styles.filterRow}>
+                <th></th>
+                {[
+                  { key: 'merchant', placeholder: 'Filter merchant' },
+                  { key: 'description', placeholder: 'Filter description' },
+                  { key: 'category', placeholder: 'Filter category' },
+                  { key: 'subcategory', placeholder: 'Filter sub' },
+                  { key: 'amount', placeholder: '$, >100, <50' },
+                  { key: 'date', placeholder: 'yyyy or mon' },
+                  { key: 'institution', placeholder: 'Filter institution' },
+                  { key: 'account', placeholder: 'Filter account' },
+                ].map(col => (
+                  <th key={col.key} style={{ padding: '4px 8px', background: 'var(--color-surface)' }}>
+                    <input
+                      type="text"
+                      value={columnFilters[col.key] || ''}
+                      onChange={e => {
+                        const v = e.target.value;
+                        setColumnFilters(prev => ({ ...prev, [col.key]: v }));
+                        setPage(0);
+                      }}
+                      placeholder={col.placeholder}
+                      style={{
+                        width: '100%',
+                        padding: '4px 8px',
+                        fontSize: 11,
+                        border: '1px solid var(--border-ghost)',
+                        borderRadius: 4,
+                        background: 'var(--color-surface-alt)',
+                        color: 'var(--color-text-primary)',
+                        fontWeight: 400,
+                        textTransform: 'none',
+                        letterSpacing: 'normal',
+                      }}
+                    />
+                  </th>
+                ))}
+                <th style={{ padding: '4px 8px', background: 'var(--color-surface)' }}>
+                  {Object.values(columnFilters).some(v => v) && (
+                    <button
+                      onClick={() => {
+                        setColumnFilters({ merchant: '', description: '', category: '', subcategory: '', amount: '', date: '', institution: '', account: '' });
+                        setPage(0);
+                      }}
+                      title="Clear all column filters"
+                      style={{ width: 24, height: 24, border: 'none', background: 'var(--color-surface-alt)', borderRadius: 4, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)' }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>filter_alt_off</span>
+                    </button>
+                  )}
+                </th>
               </tr>
             </thead>
             <tbody>

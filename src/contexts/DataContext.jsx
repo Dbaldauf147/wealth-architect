@@ -314,9 +314,13 @@ export function DataProvider({ children }) {
 
   const getMatchCount = useCallback((description) => {
     const ruleDesc = normalizeDesc(description);
+    if (!ruleDesc) return 0;
     return allTransactions.filter(t => {
       const txnDesc = normalizeDesc(t.description);
-      return txnDesc.includes(ruleDesc) || ruleDesc.includes(txnDesc);
+      const txnFull = normalizeDesc(t.fullDescription);
+      if (txnDesc && (txnDesc.includes(ruleDesc) || ruleDesc.includes(txnDesc))) return true;
+      if (txnFull && txnFull.includes(ruleDesc)) return true;
+      return false;
     }).length;
   }, [allTransactions]);
 
