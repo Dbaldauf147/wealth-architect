@@ -28,6 +28,8 @@ export function OverviewPage() {
   const { balances, analytics, transactions, loading, error, lastSync } = useData();
   const [chartPeriod, setChartPeriod] = useState('6M');
   const [chartMode, setChartMode] = useState('bar');
+  const [hoverPoint, setHoverPoint] = useState(null); // { kind: 'income'|'expense', i, x, y }
+  const [hoverDonut, setHoverDonut] = useState(null); // index in ALLOCATION
 
   // Loading state
   if (loading) {
@@ -220,7 +222,7 @@ export function OverviewPage() {
                   const ticks = [0, 0.25, 0.5, 0.75, 1];
 
                   return (
-                    <svg width="100%" height="100%" viewBox={`0 0 ${svgW} ${svgH}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
+                    <svg width="100%" height="100%" viewBox={`0 0 ${svgW} ${svgH}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }} onMouseLeave={() => setHoverPoint(null)}>
                       {ticks.map((t, i) => {
                         const y = pad.top + cH - t * cH;
                         return t > 0 ? (
@@ -246,22 +248,37 @@ export function OverviewPage() {
                         fill="url(#ov-income-grad)" />
                       <path d={incomeD} fill="none" stroke="var(--color-secondary)" strokeWidth={2.5}
                         strokeLinecap="round" strokeLinejoin="round" />
-                      {incomePoints.map((p, i) => (
-                        <circle key={`inc-${i}`} cx={p.x} cy={p.y} r={3.5} fill="#fff" stroke="var(--color-secondary)" strokeWidth={2}>
-                          <title>{SPENDING_DATA[i].month} Income: ${SPENDING_DATA[i].income.toLocaleString()}</title>
-                        </circle>
-                      ))}
+                      {incomePoints.map((p, i) => {
+                        const isHov = hoverPoint && hoverPoint.kind === 'income' && hoverPoint.i === i;
+                        return (
+                          <g key={`inc-${i}`}>
+                            <circle cx={p.x} cy={p.y} r={10} fill="var(--color-secondary)" opacity={0}
+                              style={{ cursor: 'pointer' }}
+                              onMouseEnter={() => setHoverPoint({ kind: 'income', i, x: p.x, y: p.y })} />
+                            <circle cx={p.x} cy={p.y} r={isHov ? 5 : 3.5} fill="#fff"
+                              stroke="var(--color-secondary)" strokeWidth={isHov ? 2.5 : 2}
+                              style={{ transition: 'r 0.12s' }} />
+                          </g>
+                        );
+                      })}
 
                       {/* Expense area + line */}
                       <path d={`${expenseD} L ${expensePoints[expensePoints.length - 1].x} ${baseLine} L ${expensePoints[0].x} ${baseLine} Z`}
                         fill="url(#ov-expense-grad)" />
                       <path d={expenseD} fill="none" stroke="#94a3b8" strokeWidth={2.5}
                         strokeLinecap="round" strokeLinejoin="round" />
-                      {expensePoints.map((p, i) => (
-                        <circle key={`exp-${i}`} cx={p.x} cy={p.y} r={3.5} fill="#fff" stroke="#94a3b8" strokeWidth={2}>
-                          <title>{SPENDING_DATA[i].month} Expenses: ${SPENDING_DATA[i].expenses.toLocaleString()}</title>
-                        </circle>
-                      ))}
+                      {expensePoints.map((p, i) => {
+                        const isHov = hoverPoint && hoverPoint.kind === 'expense' && hoverPoint.i === i;
+                        return (
+                          <g key={`exp-${i}`}>
+                            <circle cx={p.x} cy={p.y} r={10} fill="#94a3b8" opacity={0}
+                              style={{ cursor: 'pointer' }}
+                              onMouseEnter={() => setHoverPoint({ kind: 'expense', i, x: p.x, y: p.y })} />
+                            <circle cx={p.x} cy={p.y} r={isHov ? 5 : 3.5} fill="#fff" stroke="#94a3b8"
+                              strokeWidth={isHov ? 2.5 : 2} style={{ transition: 'r 0.12s' }} />
+                          </g>
+                        );
+                      })}
 
                       {/* X-axis labels */}
                       {SPENDING_DATA.map((d, i) => (
@@ -270,6 +287,29 @@ export function OverviewPage() {
                           {d.month}
                         </text>
                       ))}
+
+                      {/* Hover tooltip */}
+                      {hoverPoint && (() => {
+                        const d = SPENDING_DATA[hoverPoint.i];
+                        if (!d) return null;
+                        const label = hoverPoint.kind === 'income' ? `Income — $${d.income.toLocaleString()}` : `Expenses — $${d.expenses.toLocaleString()}`;
+                        const color = hoverPoint.kind === 'income' ? 'var(--color-secondary)' : '#94a3b8';
+                        const boxW = Math.max(label.length * 5.8 + 20, 130);
+                        const boxH = 32;
+                        let tx = hoverPoint.x - boxW / 2;
+                        if (tx < 4) tx = 4;
+                        if (tx + boxW > svgW - 4) tx = svgW - 4 - boxW;
+                        let ty = hoverPoint.y - boxH - 10;
+                        if (ty < 2) ty = hoverPoint.y + 12;
+                        return (
+                          <g style={{ pointerEvents: 'none' }}>
+                            <rect x={tx} y={ty} width={boxW} height={boxH} rx={5} fill="var(--color-text-primary)" opacity={0.92} />
+                            <circle cx={tx + 10} cy={ty + 11} r={4} fill={color} />
+                            <text x={tx + 18} y={ty + 14} fontSize={10} fontWeight={700} fill="#fff" fontFamily="var(--font-headline)">{label}</text>
+                            <text x={tx + 10} y={ty + 26} fontSize={9} fill="rgba(255,255,255,0.75)">{d.month}</text>
+                          </g>
+                        );
+                      })()}
                     </svg>
                   );
                 })()
@@ -319,34 +359,51 @@ export function OverviewPage() {
             <span className={styles.chartTitle}>Asset Allocation</span>
           </div>
           <div className={styles.donutWrapper}>
-            <svg width="160" height="160" viewBox="0 0 160 160">
+            <svg width="160" height="160" viewBox="0 0 160 160" onMouseLeave={() => setHoverDonut(null)}>
               {(() => {
                 let cumulative = 0;
-                return ALLOCATION.map((item, i) => {
+                const slices = ALLOCATION.map((item, i) => {
                   const startAngle = cumulative * 3.6;
                   cumulative += item.pct;
                   const endAngle = cumulative * 3.6;
+                  const midAngle = (startAngle + endAngle) / 2;
                   const startRad = ((startAngle - 90) * Math.PI) / 180;
                   const endRad = ((endAngle - 90) * Math.PI) / 180;
+                  const midRad = ((midAngle - 90) * Math.PI) / 180;
                   const largeArc = item.pct > 50 ? 1 : 0;
                   const x1 = 80 + 60 * Math.cos(startRad);
                   const y1 = 80 + 60 * Math.sin(startRad);
                   const x2 = 80 + 60 * Math.cos(endRad);
                   const y2 = 80 + 60 * Math.sin(endRad);
-                  return (
-                    <path
-                      key={i}
-                      d={`M 80 80 L ${x1} ${y1} A 60 60 0 ${largeArc} 1 ${x2} ${y2} Z`}
-                      fill={item.color}
-                      stroke="var(--color-surface)"
-                      strokeWidth="2"
-                    />
-                  );
+                  return { item, i, d: `M 80 80 L ${x1} ${y1} A 60 60 0 ${largeArc} 1 ${x2} ${y2} Z`, midRad };
                 });
+                return (
+                  <>
+                    {slices.map(({ item, i, d }) => {
+                      const dim = hoverDonut != null && hoverDonut !== i;
+                      return (
+                        <path
+                          key={i}
+                          d={d}
+                          fill={item.color}
+                          stroke="var(--color-surface)"
+                          strokeWidth="2"
+                          opacity={dim ? 0.45 : 1}
+                          style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
+                          onMouseEnter={() => setHoverDonut(i)}
+                        />
+                      );
+                    })}
+                    <circle cx="80" cy="80" r="36" fill="var(--color-surface)" />
+                    <text x="80" y="76" textAnchor="middle" fontFamily="var(--font-headline)" fontSize="14" fontWeight="800" fill="var(--color-text-primary)">
+                      {hoverDonut != null ? ALLOCATION[hoverDonut].value : fmtCompact(balances?.totalAssets)}
+                    </text>
+                    <text x="80" y="92" textAnchor="middle" fontFamily="var(--font-body)" fontSize="9" fill="var(--color-text-tertiary)">
+                      {hoverDonut != null ? `${ALLOCATION[hoverDonut].label.toUpperCase()} · ${ALLOCATION[hoverDonut].pct}%` : 'TOTAL'}
+                    </text>
+                  </>
+                );
               })()}
-              <circle cx="80" cy="80" r="36" fill="var(--color-surface)" />
-              <text x="80" y="76" textAnchor="middle" fontFamily="var(--font-headline)" fontSize="14" fontWeight="800" fill="var(--color-text-primary)">{fmtCompact(balances?.totalAssets)}</text>
-              <text x="80" y="92" textAnchor="middle" fontFamily="var(--font-body)" fontSize="9" fill="var(--color-text-tertiary)">TOTAL</text>
             </svg>
           </div>
           <div className={styles.donutLegend}>

@@ -425,6 +425,7 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
 }
 
 function PieChart({ entries, total, size = 160, onSliceClick, highlightedNames }) {
+  const [hoverIdx, setHoverIdx] = useState(null);
   if (!entries.length || total === 0) return null;
   const cx = size / 2;
   const cy = size / 2;
@@ -437,6 +438,7 @@ function PieChart({ entries, total, size = 160, onSliceClick, highlightedNames }
     const startAngle = currentAngle;
     const endAngle = currentAngle + angle;
     currentAngle = endAngle;
+    const midAngle = (startAngle + endAngle) / 2;
     const x1 = cx + r * Math.cos(startAngle);
     const y1 = cy + r * Math.sin(startAngle);
     const x2 = cx + r * Math.cos(endAngle);
@@ -447,13 +449,16 @@ function PieChart({ entries, total, size = 160, onSliceClick, highlightedNames }
     const yi2 = cy + inner * Math.sin(endAngle);
     const largeArc = angle > Math.PI ? 1 : 0;
     const d = `M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} L ${xi2} ${yi2} A ${inner} ${inner} 0 ${largeArc} 0 ${xi1} ${yi1} Z`;
-    return { d, color: pieColor(i), name: e.name, pct };
+    return { d, color: pieColor(i), name: e.name, pct, value: e.value, midAngle };
   });
+  const hovered = hoverIdx != null ? slices[hoverIdx] : null;
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} onMouseLeave={() => setHoverIdx(null)}>
       {slices.map((s, i) => {
         const isHighlighted = highlightedNames && highlightedNames.has(s.name);
-        const dimmed = highlightedNames && highlightedNames.size > 0 && !isHighlighted;
+        const filterDim = highlightedNames && highlightedNames.size > 0 && !isHighlighted;
+        const hoverDim = hoverIdx != null && hoverIdx !== i;
+        const opacity = filterDim ? 0.3 : hoverDim ? 0.5 : 1;
         return (
           <path
             key={i}
@@ -461,14 +466,36 @@ function PieChart({ entries, total, size = 160, onSliceClick, highlightedNames }
             fill={s.color}
             stroke="#fff"
             strokeWidth="1.5"
-            opacity={dimmed ? 0.3 : 1}
+            opacity={opacity}
             style={{ cursor: onSliceClick ? 'pointer' : 'default', transition: 'opacity 0.15s' }}
+            onMouseEnter={() => setHoverIdx(i)}
             onClick={() => onSliceClick && onSliceClick(s.name)}
-          >
-            <title>{s.name}: {Math.round(s.pct * 100)}%</title>
-          </path>
+          />
         );
       })}
+      {hovered && (() => {
+        const tx = cx + (inner + (r - inner) / 2) * Math.cos(hovered.midAngle);
+        const ty = cy + (inner + (r - inner) / 2) * Math.sin(hovered.midAngle);
+        const label = `${hovered.name}`;
+        const valTxt = `${fmt(hovered.value)} · ${Math.round(hovered.pct * 100)}%`;
+        const boxW = Math.max(label.length, valTxt.length) * 5.5 + 16;
+        const boxH = 34;
+        let bx = tx - boxW / 2;
+        let by = ty - boxH - 6;
+        if (bx < 2) bx = 2;
+        if (bx + boxW > size - 2) bx = size - 2 - boxW;
+        if (by < 2) by = ty + 6;
+        return (
+          <g style={{ pointerEvents: 'none' }}>
+            <rect x={bx} y={by} width={boxW} height={boxH} rx={5}
+              fill="var(--color-text-primary)" opacity={0.92} />
+            <text x={bx + boxW / 2} y={by + 14} textAnchor="middle"
+              fontSize={10} fontWeight={700} fill="#fff" fontFamily="var(--font-headline)">{label}</text>
+            <text x={bx + boxW / 2} y={by + 27} textAnchor="middle"
+              fontSize={9} fill="rgba(255,255,255,0.85)">{valTxt}</text>
+          </g>
+        );
+      })()}
     </svg>
   );
 }
