@@ -264,15 +264,9 @@
 }
 
 .table th, .table td {
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Only clip cells that don't host popovers/dropdowns. Cells with inline-style position:relative
-   (e.g., Category, Subcategory) stay visible so dropdowns aren't hidden. */
-.table td > :not(input):not(select) {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .table th {

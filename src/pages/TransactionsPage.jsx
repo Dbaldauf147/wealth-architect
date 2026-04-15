@@ -1560,10 +1560,10 @@ export function TransactionsPage() {
                         </div>
                       </div>
                     </td>
-                    <td className={styles.institutionCell} style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.fullDescription || t.description}>
+                    <td className={styles.institutionCell} title={t.fullDescription || t.description}>
                       {t.fullDescription || t.description}
                     </td>
-                    <td style={{ position: 'relative' }}>
+                    <td style={{ position: 'relative', overflow: 'visible' }}>
                       <span
                         className={styles.categoryBadge}
                         style={{ background: bg, color, cursor: 'pointer' }}
@@ -1630,7 +1630,7 @@ export function TransactionsPage() {
                         </div>
                       )}
                     </td>
-                    <td style={{ position: 'relative' }}>
+                    <td style={{ position: 'relative', overflow: 'visible' }}>
                       {(() => {
                         const subKey = t.transactionId || i;
                         const subs = SUBCATEGORIES[t.category] || [];
