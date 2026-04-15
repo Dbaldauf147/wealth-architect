@@ -29,6 +29,44 @@ function smoothPath(points) {
 export function CashFlowPage() {
   const { transactions, loading } = useData();
   const [monthCount, setMonthCount] = useState(13);
+  const [drilldown, setDrilldown] = useState(null); // { monthKey, kind: 'income'|'expenses' }
+
+  /* Category breakdown for clicked cell */
+  const drilldownData = useMemo(() => {
+    if (!drilldown || !transactions) return null;
+    const { monthKey, kind } = drilldown;
+    const byCat = {};
+    let total = 0;
+    for (const t of transactions) {
+      if (!t.date || t.amount === 0) continue;
+      const d = new Date(t.date);
+      if (isNaN(d)) continue;
+      const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (k !== monthKey) continue;
+      if (kind === 'income' && t.amount <= 0) continue;
+      if (kind === 'expenses' && t.amount >= 0) continue;
+      const cat = t.category || 'Uncategorized';
+      const sub = t.subcategory || '';
+      if (!byCat[cat]) byCat[cat] = { total: 0, count: 0, subs: {} };
+      const amt = Math.abs(t.amount);
+      byCat[cat].total += amt;
+      byCat[cat].count += 1;
+      if (sub) {
+        byCat[cat].subs[sub] = (byCat[cat].subs[sub] || 0) + amt;
+      }
+      total += amt;
+    }
+    const rows = Object.entries(byCat)
+      .map(([name, v]) => ({
+        name,
+        total: v.total,
+        count: v.count,
+        pct: total > 0 ? v.total / total : 0,
+        subs: Object.entries(v.subs).map(([n, a]) => ({ name: n, total: a })).sort((a, b) => b.total - a.total),
+      }))
+      .sort((a, b) => b.total - a.total);
+    return { rows, total, monthKey, kind };
+  }, [drilldown, transactions]);
 
   const data = useMemo(() => {
     if (!transactions) return { months: [], totalIncome: 0, totalExpenses: 0, net: 0, avgIncome: 0, avgExpenses: 0 };
@@ -197,7 +235,7 @@ export function CashFlowPage() {
           <line x1={pad.left} y1={yPos(0)} x2={chartW - pad.right} y2={yPos(0)}
             stroke="var(--color-text-tertiary)" strokeOpacity={0.3} strokeWidth={1} />
 
-          {/* Income & Expense bars */}
+          {/* Income & Expense bars — clickable to show category breakdown */}
           {data.months.map((m, mi) => {
             const cx = xCenter(mi);
             const incH = (m.income / niceMax) * innerH;
@@ -205,12 +243,16 @@ export function CashFlowPage() {
             return (
               <g key={mi}>
                 <rect x={cx - barW - 2} y={yPos(m.income)} width={barW} height={incH}
-                  rx={3} fill={incomeColor} opacity={0.85}>
-                  <title>{m.label} {m.year} Income: {fmt(m.income)}</title>
+                  rx={3} fill={incomeColor} opacity={0.85}
+                  style={{ cursor: m.income > 0 ? 'pointer' : 'default' }}
+                  onClick={() => m.income > 0 && setDrilldown({ monthKey: m.key, kind: 'income' })}>
+                  <title>{m.label} {m.year} Income: {fmt(m.income)} (click for categories)</title>
                 </rect>
                 <rect x={cx + 2} y={yPos(m.expenses)} width={barW} height={expH}
-                  rx={3} fill={expenseColor} opacity={0.85}>
-                  <title>{m.label} {m.year} Expenses: {fmt(m.expenses)}</title>
+                  rx={3} fill={expenseColor} opacity={0.85}
+                  style={{ cursor: m.expenses > 0 ? 'pointer' : 'default' }}
+                  onClick={() => m.expenses > 0 && setDrilldown({ monthKey: m.key, kind: 'expenses' })}>
+                  <title>{m.label} {m.year} Expenses: {fmt(m.expenses)} (click for categories)</title>
                 </rect>
               </g>
             );
@@ -275,13 +317,45 @@ export function CashFlowPage() {
           <tbody>
             {[...data.months].reverse().map(m => {
               const savings = m.income > 0 ? (m.income - m.expenses) / m.income : 0;
+              const isActiveInc = drilldown && drilldown.monthKey === m.key && drilldown.kind === 'income';
+              const isActiveExp = drilldown && drilldown.monthKey === m.key && drilldown.kind === 'expenses';
               return (
                 <tr key={m.key} style={{ borderBottom: '1px solid var(--border-ghost)' }}>
                   <td style={{ padding: '10px 12px', fontWeight: 600 }}>{m.label} {m.year}</td>
-                  <td style={{ padding: '10px 12px', textAlign: 'right', color: incomeColor, fontFamily: 'var(--font-headline)', fontWeight: 600 }}>
+                  <td
+                    onClick={() => m.income > 0 && setDrilldown(isActiveInc ? null : { monthKey: m.key, kind: 'income' })}
+                    style={{
+                      padding: '10px 12px',
+                      textAlign: 'right',
+                      color: incomeColor,
+                      fontFamily: 'var(--font-headline)',
+                      fontWeight: 600,
+                      cursor: m.income > 0 ? 'pointer' : 'default',
+                      background: isActiveInc ? `${incomeColor}14` : undefined,
+                      textDecoration: m.income > 0 ? 'underline dotted' : undefined,
+                      textDecorationColor: `${incomeColor}66`,
+                      textUnderlineOffset: 3,
+                    }}
+                    title={m.income > 0 ? 'Click to see categories' : undefined}
+                  >
                     {m.income > 0 ? fmt(m.income) : '—'}
                   </td>
-                  <td style={{ padding: '10px 12px', textAlign: 'right', color: expenseColor, fontFamily: 'var(--font-headline)', fontWeight: 600 }}>
+                  <td
+                    onClick={() => m.expenses > 0 && setDrilldown(isActiveExp ? null : { monthKey: m.key, kind: 'expenses' })}
+                    style={{
+                      padding: '10px 12px',
+                      textAlign: 'right',
+                      color: expenseColor,
+                      fontFamily: 'var(--font-headline)',
+                      fontWeight: 600,
+                      cursor: m.expenses > 0 ? 'pointer' : 'default',
+                      background: isActiveExp ? `${expenseColor}14` : undefined,
+                      textDecoration: m.expenses > 0 ? 'underline dotted' : undefined,
+                      textDecorationColor: `${expenseColor}66`,
+                      textUnderlineOffset: 3,
+                    }}
+                    title={m.expenses > 0 ? 'Click to see categories' : undefined}
+                  >
                     {m.expenses > 0 ? fmt(m.expenses) : '—'}
                   </td>
                   <td style={{ padding: '10px 12px', textAlign: 'right', color: m.net >= 0 ? incomeColor : expenseColor, fontFamily: 'var(--font-headline)', fontWeight: 700 }}>
@@ -296,6 +370,68 @@ export function CashFlowPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Drilldown panel */}
+      {drilldownData && (() => {
+        const [y, m] = drilldownData.monthKey.split('-');
+        const monthName = MONTH_SHORT[parseInt(m, 10) - 1];
+        const color = drilldownData.kind === 'income' ? incomeColor : expenseColor;
+        const heading = drilldownData.kind === 'income' ? 'Income' : 'Expenses';
+        return (
+          <div style={{ background: 'var(--color-surface)', border: `2px solid ${color}33`, borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color }}>
+                  {heading} · {monthName} {y}
+                </div>
+                <div style={{ fontFamily: 'var(--font-headline)', fontSize: 22, fontWeight: 700, color, marginTop: 4 }}>
+                  {fmt(drilldownData.total)} total
+                </div>
+              </div>
+              <button
+                onClick={() => setDrilldown(null)}
+                style={{ width: 32, height: 32, border: 'none', background: 'var(--color-surface-alt)', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                title="Close"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
+              </button>
+            </div>
+            {drilldownData.rows.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 24, color: 'var(--color-text-tertiary)', fontSize: 13 }}>No transactions</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {drilldownData.rows.map(r => (
+                  <div key={r.name} style={{ border: '1px solid var(--border-ghost)', borderRadius: 8, padding: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontFamily: 'var(--font-headline)', fontSize: 14, fontWeight: 700 }}>{r.name}</span>
+                        <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>({r.count} txn{r.count !== 1 ? 's' : ''})</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ fontFamily: 'var(--font-headline)', fontSize: 14, fontWeight: 700, color }}>{fmt(r.total)}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', minWidth: 36, textAlign: 'right' }}>{Math.round(r.pct * 100)}%</span>
+                      </div>
+                    </div>
+                    <div style={{ height: 5, background: 'var(--color-surface-alt)', borderRadius: 3, overflow: 'hidden', marginBottom: r.subs.length ? 10 : 0 }}>
+                      <div style={{ height: '100%', width: `${r.pct * 100}%`, background: color, opacity: 0.85 }} />
+                    </div>
+                    {r.subs.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 12 }}>
+                        {r.subs.map(s => (
+                          <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                            <span>— {s.name}</span>
+                            <span style={{ fontFamily: 'var(--font-headline)', fontWeight: 600 }}>{fmt(s.total)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
