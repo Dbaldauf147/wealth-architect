@@ -700,8 +700,11 @@ export function TransactionsPage() {
   /* Pie chart data — scoped to the same months visible in the spending chart */
   const pieData = useMemo(() => {
     const chartKeys = barChartData.visibleKeys;
+    // Only expenses in the category breakdown — ignore income entirely.
+    // Refunds/reimbursements (positive) against an expense category still net.
     const source = filtered.filter(t => {
       if (t.amount === 0 || !t.date) return false;
+      if ((t.category || '') === 'Income') return false;
       if (!chartKeys || chartKeys.size === 0) return true;
       const d = new Date(t.date);
       if (isNaN(d)) return false;
@@ -710,8 +713,7 @@ export function TransactionsPage() {
     });
     const visibleCats = [...new Set(source.map(t => t.category || 'Uncategorized'))];
     const drillDown = visibleCats.length === 1;
-    // Sum signed amounts so refunds/reimbursements net within the category,
-    // then take absolute magnitude for slice size
+    // Sum signed amounts per category, then keep only categories whose net is a true expense (negative overall)
     const signed = {};
     for (const t of source) {
       const key = drillDown
@@ -720,8 +722,8 @@ export function TransactionsPage() {
       signed[key] = (signed[key] || 0) + t.amount;
     }
     const entries = Object.entries(signed)
+      .filter(([, v]) => v < 0)
       .map(([name, v]) => ({ name, value: Math.abs(v) }))
-      .filter(e => e.value > 0)
       .sort((a, b) => b.value - a.value);
     const total = entries.reduce((s, e) => s + e.value, 0);
     return { entries, total, drillDown, parent: drillDown ? visibleCats[0] : null };
