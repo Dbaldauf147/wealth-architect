@@ -722,7 +722,8 @@ export function TransactionsPage() {
       signed[key] = (signed[key] || 0) + t.amount;
     }
     const entries = Object.entries(signed)
-      .filter(([, v]) => v < 0)
+      // Include any category that's a net expense; always show Uncategorized if present
+      .filter(([name, v]) => v < 0 || (name === 'Uncategorized' && v !== 0))
       .map(([name, v]) => ({ name, value: Math.abs(v) }))
       .sort((a, b) => b.value - a.value);
     const total = entries.reduce((s, e) => s + e.value, 0);
