@@ -91,6 +91,7 @@ function smoothPath(points) {
 
 function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 280, mode = 'stacked', onMonthClick, selectedMonth }) {
   const [hoverIdx, setHoverIdx] = useState(null);
+  const [hoverSeg, setHoverSeg] = useState(null); // { mi, ci, x, y }
   if (!months.length) return null;
   const pad = { top: 16, right: 12, bottom: 40, left: 50 };
   const chartW = width - pad.left - pad.right;
@@ -220,7 +221,40 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
     viewBox: `0 0 ${width} ${height}`,
     preserveAspectRatio: 'xMidYMid meet',
     style: { display: 'block' },
+    onMouseLeave: () => setHoverSeg(null),
   };
+
+  /* Custom segment tooltip — category + amount + month */
+  function renderSegTooltip() {
+    if (!hoverSeg) return null;
+    const { mi, ci, x, y } = hoverSeg;
+    const m = months[mi];
+    const cat = topCategories[ci];
+    const val = (m && cat) ? (m.byCategory[cat] || 0) : 0;
+    const label = `${cat} — ${fmt(val)}`;
+    const sub = m ? `${m.label} ${m.year}` : '';
+    const boxW = Math.max(110, label.length * 6.2, sub.length * 6.2);
+    const boxH = 38;
+    // Clamp within chart bounds so tooltip never leaks outside
+    let tx = x - boxW / 2;
+    if (tx < 4) tx = 4;
+    if (tx + boxW > width - 4) tx = width - 4 - boxW;
+    let ty = y - boxH - 10;
+    if (ty < 2) ty = y + 12;
+    return (
+      <g style={{ pointerEvents: 'none' }}>
+        <rect x={tx} y={ty} width={boxW} height={boxH} rx={6}
+          fill="var(--color-text-primary)" opacity={0.92} />
+        <circle cx={tx + 10} cy={ty + 13} r={4} fill={pieColor(ci)} />
+        <text x={tx + 18} y={ty + 16} fontSize={10.5} fontWeight={700} fill="#fff" fontFamily="var(--font-headline)">
+          {label}
+        </text>
+        <text x={tx + 10} y={ty + 30} fontSize={9.5} fill="rgba(255,255,255,0.7)">
+          {sub}
+        </text>
+      </g>
+    );
+  }
 
   /* ── Stacked bars ── */
   if (mode === 'stacked') {
@@ -240,11 +274,14 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                 const y = pad.top + chartH - yOffset - barH;
                 yOffset += barH;
                 const isTop = ci === topCategories.length - 1 || topCategories.slice(ci + 1).every(c => (m.byCategory[c] || 0) === 0);
+                const isHovered = hoverSeg && hoverSeg.mi === mi && hoverSeg.ci === ci;
                 return (
                   <rect key={ci} x={cx - barW / 2} y={y} width={barW} height={Math.max(barH, 0)}
-                    rx={isTop ? 4 : 0} fill={pieColor(ci)} opacity={0.9}>
-                    <title>{cat}: {fmt(val)}</title>
-                  </rect>
+                    rx={isTop ? 4 : 0} fill={pieColor(ci)}
+                    opacity={hoverSeg && !isHovered ? 0.5 : 0.95}
+                    style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
+                    onMouseEnter={() => setHoverSeg({ mi, ci, x: cx, y: y + barH / 2 })}
+                  />
                 );
               })}
               {/* Total label above bar */}
@@ -258,6 +295,7 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
           );
         })}
         {xLabels}
+        {renderSegTooltip()}
       </svg>
     );
   }
@@ -278,18 +316,24 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
               {topCategories.map((cat, ci) => {
                 const val = m.byCategory[cat] || 0;
                 const barH = (val / niceMax) * chartH;
+                const bx = groupStart + ci * singleW + 0.5;
+                const by = yPos(val);
+                const isHovered = hoverSeg && hoverSeg.mi === mi && hoverSeg.ci === ci;
                 return (
-                  <rect key={ci} x={groupStart + ci * singleW + 0.5} y={yPos(val)}
+                  <rect key={ci} x={bx} y={by}
                     width={Math.max(singleW - 1, 2)} height={Math.max(barH, 0)}
-                    rx={3} fill={pieColor(ci)} opacity={0.9}>
-                    <title>{cat}: {fmt(val)}</title>
-                  </rect>
+                    rx={3} fill={pieColor(ci)}
+                    opacity={hoverSeg && !isHovered ? 0.5 : 0.95}
+                    style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
+                    onMouseEnter={() => setHoverSeg({ mi, ci, x: bx + singleW / 2, y: by })}
+                  />
                 );
               })}
             </g>
           );
         })}
         {xLabels}
+        {renderSegTooltip()}
       </svg>
     );
   }
@@ -302,22 +346,31 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
         {topCategories.map((cat, ci) => {
           const points = months.map((m, mi) => ({ x: xCenter(mi), y: yPos(m.byCategory[cat] || 0) }));
           const d = smoothPath(points);
+          const dim = hoverSeg && hoverSeg.ci !== ci;
           return (
-            <g key={ci}>
+            <g key={ci} opacity={dim ? 0.3 : 1} style={{ transition: 'opacity 0.12s' }}>
               <path d={d} fill="none" stroke={pieColor(ci)} strokeWidth={2.5}
                 strokeLinecap="round" strokeLinejoin="round" opacity={0.85} />
-              {points.map((p, pi) => (
-                <g key={pi}>
-                  <circle cx={p.x} cy={p.y} r={5} fill={pieColor(ci)} opacity={0} style={{ cursor: 'pointer' }}>
-                    <title>{cat}: {fmt(months[pi].byCategory[cat] || 0)}</title>
-                  </circle>
-                  <circle cx={p.x} cy={p.y} r={4} fill="#fff" stroke={pieColor(ci)} strokeWidth={2} />
-                </g>
-              ))}
+              {points.map((p, pi) => {
+                const isHovered = hoverSeg && hoverSeg.mi === pi && hoverSeg.ci === ci;
+                return (
+                  <g key={pi}>
+                    <circle cx={p.x} cy={p.y} r={10} fill={pieColor(ci)} opacity={0}
+                      style={{ cursor: 'pointer' }}
+                      onMouseEnter={() => setHoverSeg({ mi: pi, ci, x: p.x, y: p.y })}
+                    />
+                    <circle cx={p.x} cy={p.y} r={isHovered ? 5.5 : 4}
+                      fill="#fff" stroke={pieColor(ci)} strokeWidth={isHovered ? 2.5 : 2}
+                      style={{ transition: 'r 0.12s' }}
+                    />
+                  </g>
+                );
+              })}
             </g>
           );
         })}
         {xLabels}
+        {renderSegTooltip()}
       </svg>
     );
   }
@@ -333,8 +386,9 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
           const points = months.map((m, mi) => ({ x: xCenter(mi), y: yPos(m.byCategory[cat] || 0) }));
           const lineD = smoothPath(points);
           const areaD = `${lineD} L ${points[points.length - 1].x} ${base} L ${points[0].x} ${base} Z`;
+          const dim = hoverSeg && hoverSeg.ci !== ci;
           return (
-            <g key={ci}>
+            <g key={ci} opacity={dim ? 0.25 : 1} style={{ transition: 'opacity 0.12s' }}>
               <defs>
                 <linearGradient id={`area-grad-${ci}`} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={pieColor(ci)} stopOpacity={0.35} />
@@ -344,10 +398,25 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
               <path d={areaD} fill={`url(#area-grad-${ci})`} />
               <path d={lineD} fill="none" stroke={pieColor(ci)} strokeWidth={2.5}
                 strokeLinecap="round" strokeLinejoin="round" opacity={0.85} />
+              {points.map((p, pi) => {
+                const isHovered = hoverSeg && hoverSeg.mi === pi && hoverSeg.ci === ci;
+                return (
+                  <g key={pi}>
+                    <circle cx={p.x} cy={p.y} r={10} fill={pieColor(ci)} opacity={0}
+                      style={{ cursor: 'pointer' }}
+                      onMouseEnter={() => setHoverSeg({ mi: pi, ci, x: p.x, y: p.y })}
+                    />
+                    {isHovered && (
+                      <circle cx={p.x} cy={p.y} r={5} fill="#fff" stroke={pieColor(ci)} strokeWidth={2.5} />
+                    )}
+                  </g>
+                );
+              })}
             </g>
           );
         })}
         {xLabels}
+        {renderSegTooltip()}
       </svg>
     );
   }
