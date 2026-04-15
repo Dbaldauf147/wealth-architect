@@ -93,10 +93,19 @@ function normalizeDesc(s) {
 
 function ruleMatches(rule, t) {
   const ruleDesc = normalizeDesc(rule.description);
+  if (!ruleDesc) return false;
   const txnDesc = normalizeDesc(t.description);
-  if (!ruleDesc || !txnDesc) return false;
-  // Match if either contains the other (handles truncation, slight variations)
-  return txnDesc.includes(ruleDesc) || ruleDesc.includes(txnDesc);
+  const txnFull = normalizeDesc(t.fullDescription);
+  if (!txnDesc && !txnFull) return false;
+  // Match if rule keyword appears anywhere in the description OR full description.
+  // Bidirectional to handle truncation and slight variations.
+  if (txnDesc) {
+    if (txnDesc.includes(ruleDesc) || ruleDesc.includes(txnDesc)) return true;
+  }
+  if (txnFull) {
+    if (txnFull.includes(ruleDesc)) return true;
+  }
+  return false;
 }
 
 function applyRulesToTransactions(txns, rules) {
@@ -271,6 +280,14 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  const removeSubcategoryRule = useCallback((index) => {
+    setSubcategoryRules(prev => {
+      const next = prev.filter((_, i) => i !== index);
+      saveSubcategoryRules(next);
+      return next;
+    });
+  }, []);
+
   const bulkUpdateCategoryByIds = useCallback((transactionIds, newCategory) => {
     const idSet = new Set(transactionIds);
     setAllTransactions(prev => prev.map(t =>
@@ -334,6 +351,7 @@ export function DataProvider({ children }) {
       bulkUpdateCategoryByIds,
       addCategoryRule,
       removeCategoryRule,
+      removeSubcategoryRule,
       categoryRules,
       addSubcategoryRule,
       subcategoryRules,
