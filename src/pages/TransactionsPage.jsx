@@ -452,6 +452,7 @@ const ALL_CATEGORIES = [
   'Food & Drink', 'Shopping', 'Travel', 'Entertainment', 'Bills & Utilities',
   'Housing', 'Transportation', 'Health & Wellness', 'Income', 'Transfer',
   'Education', 'Personal Care', 'Gifts & Donations', 'Investments', 'Fees & Charges',
+  'Uncategorized',
 ];
 
 const SUBCATEGORIES = {
