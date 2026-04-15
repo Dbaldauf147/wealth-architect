@@ -626,9 +626,11 @@ export function TransactionsPage() {
     const visibleCats = [...new Set(source.map(t => t.category || 'Uncategorized'))];
     const drillDown = visibleCats.length === 1;
 
-    // Aggregate by month + (category or subcategory)
-    const buckets = {};
-    const catTotals = {};
+    // Aggregate by month + (category or subcategory).
+    // Sum signed amounts so refunds/reimbursements net against expenses,
+    // then take the absolute value for display magnitude.
+    const signedBuckets = {};
+    const signedTotals = {};
     for (const t of source) {
       const d = new Date(t.date);
       if (isNaN(d)) continue;
@@ -636,9 +638,21 @@ export function TransactionsPage() {
       const group = drillDown
         ? (t.subcategory || 'Uncategorized')
         : (t.category || 'Uncategorized');
-      if (!buckets[key]) buckets[key] = {};
-      buckets[key][group] = (buckets[key][group] || 0) + Math.abs(t.amount);
-      catTotals[group] = (catTotals[group] || 0) + Math.abs(t.amount);
+      if (!signedBuckets[key]) signedBuckets[key] = {};
+      signedBuckets[key][group] = (signedBuckets[key][group] || 0) + t.amount;
+      signedTotals[group] = (signedTotals[group] || 0) + t.amount;
+    }
+    // Convert to absolute magnitudes for bar heights
+    const buckets = {};
+    const catTotals = {};
+    for (const k of Object.keys(signedBuckets)) {
+      buckets[k] = {};
+      for (const g of Object.keys(signedBuckets[k])) {
+        buckets[k][g] = Math.abs(signedBuckets[k][g]);
+      }
+    }
+    for (const g of Object.keys(signedTotals)) {
+      catTotals[g] = Math.abs(signedTotals[g]);
     }
 
     // Top 6 groups by total spend
@@ -695,16 +709,18 @@ export function TransactionsPage() {
     });
     const visibleCats = [...new Set(source.map(t => t.category || 'Uncategorized'))];
     const drillDown = visibleCats.length === 1;
-    const groups = {};
+    // Sum signed amounts so refunds/reimbursements net within the category,
+    // then take absolute magnitude for slice size
+    const signed = {};
     for (const t of source) {
       const key = drillDown
         ? (t.subcategory || 'Uncategorized')
         : (t.category || 'Uncategorized');
-      if (!groups[key]) groups[key] = 0;
-      groups[key] += Math.abs(t.amount);
+      signed[key] = (signed[key] || 0) + t.amount;
     }
-    const entries = Object.entries(groups)
-      .map(([name, value]) => ({ name, value }))
+    const entries = Object.entries(signed)
+      .map(([name, v]) => ({ name, value: Math.abs(v) }))
+      .filter(e => e.value > 0)
       .sort((a, b) => b.value - a.value);
     const total = entries.reduce((s, e) => s + e.value, 0);
     return { entries, total, drillDown, parent: drillDown ? visibleCats[0] : null };
