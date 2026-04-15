@@ -1800,7 +1800,8 @@ export function TransactionsPage() {
                         type="date"
                         value={toIsoDate(t.date)}
                         onChange={e => {
-                          updateTransactionDate(t.transactionId, e.target.value);
+                          const fallbackKey = `${t.date || ''}|${(t.description || '').trim()}|${t.amount}`;
+                          updateTransactionDate(t.transactionId, e.target.value, fallbackKey);
                           flashSaved();
                         }}
                         style={{

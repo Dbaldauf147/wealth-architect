@@ -63,6 +63,11 @@ function saveDateOverrides(overrides) {
   localStorage.setItem('dateOverrides', JSON.stringify(overrides));
 }
 
+/* Build a composite key for transactions without a stable transactionId */
+function txnFallbackKey(t) {
+  return `${t.date || ''}|${(t.description || '').trim()}|${t.amount}`;
+}
+
 function applyOverrides(txns, overrides, subOverrides, dateOverrides) {
   const hasCat = Object.keys(overrides).length > 0;
   const hasSub = Object.keys(subOverrides).length > 0;
@@ -70,9 +75,16 @@ function applyOverrides(txns, overrides, subOverrides, dateOverrides) {
   if (!hasCat && !hasSub && !hasDate) return txns;
   return txns.map(t => {
     let updated = t;
-    if (overrides[t.transactionId]) updated = { ...updated, category: overrides[t.transactionId] };
-    if (subOverrides[t.transactionId]) updated = { ...updated, subcategory: subOverrides[t.transactionId] };
-    if (hasDate && dateOverrides[t.transactionId]) updated = { ...updated, date: dateOverrides[t.transactionId] };
+    const id = t.transactionId;
+    const fb = txnFallbackKey(t);
+    if (id && overrides[id]) updated = { ...updated, category: overrides[id] };
+    else if (overrides[fb]) updated = { ...updated, category: overrides[fb] };
+    if (id && subOverrides[id]) updated = { ...updated, subcategory: subOverrides[id] };
+    else if (subOverrides[fb]) updated = { ...updated, subcategory: subOverrides[fb] };
+    if (hasDate) {
+      if (id && dateOverrides[id]) updated = { ...updated, date: dateOverrides[id] };
+      else if (dateOverrides[fb]) updated = { ...updated, date: dateOverrides[fb] };
+    }
     return updated;
   });
 }
@@ -235,15 +247,18 @@ export function DataProvider({ children }) {
     bulkUpdateCategory(description, amount, category);
   }, [bulkUpdateCategory]);
 
-  const updateTransactionDate = useCallback((transactionId, newDate) => {
-    if (!transactionId) return;
-    setAllTransactions(prev => prev.map(t =>
-      t.transactionId === transactionId ? { ...t, date: newDate } : t
-    ));
+  const updateTransactionDate = useCallback((transactionId, newDate, fallbackKey) => {
+    const key = transactionId || fallbackKey;
+    if (!key) return;
+    setAllTransactions(prev => prev.map(t => {
+      if (transactionId && t.transactionId === transactionId) return { ...t, date: newDate };
+      if (!transactionId && fallbackKey && txnFallbackKey(t) === fallbackKey) return { ...t, date: newDate };
+      return t;
+    }));
     setDateOverrides(prev => {
       const next = { ...prev };
-      if (newDate) next[transactionId] = newDate;
-      else delete next[transactionId];
+      if (newDate) next[key] = newDate;
+      else delete next[key];
       saveDateOverrides(next);
       return next;
     });
