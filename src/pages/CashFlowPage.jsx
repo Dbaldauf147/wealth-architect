@@ -41,7 +41,8 @@ export function CashFlowPage() {
     for (const t of transactions) {
       if (!t.date || t.amount === 0) continue;
       const tCat = (t.category || '').toLowerCase();
-      if (tCat === 'transfer' || tCat === 'credit card payment') continue;
+      if (tCat === 'transfer' || tCat === 'credit card payments' || tCat === 'credit card payment') continue;
+      if (tCat === 'investments') continue;
       const d = new Date(t.date);
       if (isNaN(d)) continue;
       const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
