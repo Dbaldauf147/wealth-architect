@@ -80,7 +80,7 @@ export function CashFlowPage() {
     for (const t of transactions) {
       if (!t.date || t.amount === 0) continue;
       const cat = (t.category || '').toLowerCase();
-      if (cat === 'transfer' || cat === 'credit card payment') continue;
+      if (cat === 'transfer' || cat === 'credit card payments' || cat === 'credit card payment') continue;
       const d = new Date(t.date);
       if (isNaN(d)) continue;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
