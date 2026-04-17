@@ -570,7 +570,7 @@ const SUBCATEGORIES = {
 };
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, addSubcategoryRule, customCategories, addCustomCategory, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
+  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, addSubcategoryRule, customCategories, addCustomCategory, hiddenCategories, renameCategory, removeCategory, unhideCategory, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
   const subDropdownRef = useRef(null);
@@ -579,6 +579,10 @@ export function TransactionsPage() {
   const [page, setPage] = useState(0);
   const [editingId, setEditingId] = useState(null);
   const [newCategoryText, setNewCategoryText] = useState('');
+  const [manageCategoriesMode, setManageCategoriesMode] = useState(false);
+  const [showHiddenCategories, setShowHiddenCategories] = useState(false);
+  const [renamingCategory, setRenamingCategory] = useState(null);
+  const [renameText, setRenameText] = useState('');
   const [showHidden, setShowHidden] = useState(false);
   const [sortCol, setSortCol] = useState('date');
   const [sortDir, setSortDir] = useState('desc');
@@ -628,11 +632,18 @@ export function TransactionsPage() {
 
   /* ── Memos (ordered by dependency) ── */
 
-  /* All categories from data + defaults + custom */
+  /* All categories from data + defaults + custom (excludes hidden) */
   const categoryOptions = useMemo(() => {
     const fromData = (transactions || []).map(t => t.category).filter(Boolean);
-    return [...new Set([...ALL_CATEGORIES, ...fromData, ...customCategories])].sort();
-  }, [transactions, customCategories]);
+    const all = [...new Set([...ALL_CATEGORIES, ...fromData, ...customCategories])];
+    return all.filter(c => !hiddenCategories.has(c)).sort();
+  }, [transactions, customCategories, hiddenCategories]);
+
+  /* Hidden category list (for restore in manage mode) */
+  const hiddenCategoryList = useMemo(
+    () => [...hiddenCategories].sort(),
+    [hiddenCategories],
+  );
 
   /* Account pill list */
   const accountNames = useMemo(
@@ -900,6 +911,10 @@ export function TransactionsPage() {
       if (confirmRef.current && confirmRef.current.contains(e.target)) return;
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
         setEditingId(null);
+        setManageCategoriesMode(false);
+        setRenamingCategory(null);
+        setRenameText('');
+        setShowHiddenCategories(false);
       }
     }
     if (editingId !== null) document.addEventListener('mousedown', handleClick);
@@ -1764,20 +1779,47 @@ export function TransactionsPage() {
                       </span>
                       {editingId === (t.transactionId || i) && (
                         <div className={styles.categoryDropdown} ref={dropdownRef}>
-                          <input
-                            className={styles.categorySearch}
-                            type="text"
-                            placeholder="Search or type new..."
-                            value={newCategoryText}
-                            onChange={e => setNewCategoryText(e.target.value)}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter' && newCategoryText.trim()) {
-                                handleCategorySelect(t, i, newCategoryText.trim());
-                              }
-                            }}
-                            autoFocus
-                          />
-                          {t.category && (
+                          <div style={{ display: 'flex', alignItems: 'center', borderBottom: 'var(--border-ghost)' }}>
+                            <input
+                              className={styles.categorySearch}
+                              type="text"
+                              placeholder={manageCategoriesMode ? 'Manage categories' : 'Search or type new...'}
+                              value={newCategoryText}
+                              onChange={e => setNewCategoryText(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter' && newCategoryText.trim() && !manageCategoriesMode) {
+                                  handleCategorySelect(t, i, newCategoryText.trim());
+                                }
+                              }}
+                              disabled={manageCategoriesMode}
+                              style={{ borderBottom: 'none', flex: 1 }}
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              title={manageCategoriesMode ? 'Done' : 'Manage categories'}
+                              onClick={() => {
+                                setManageCategoriesMode(v => !v);
+                                setRenamingCategory(null);
+                                setRenameText('');
+                                setShowHiddenCategories(false);
+                              }}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                cursor: 'pointer',
+                                padding: '6px 10px',
+                                color: manageCategoriesMode ? 'var(--color-secondary, #0058be)' : 'var(--color-text-tertiary)',
+                                display: 'flex',
+                                alignItems: 'center',
+                              }}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                                {manageCategoriesMode ? 'check' : 'settings'}
+                              </span>
+                            </button>
+                          </div>
+                          {!manageCategoriesMode && t.category && (
                             <div
                               className={styles.categoryOption}
                               style={{ color: '#ba1a1a' }}
@@ -1792,7 +1834,7 @@ export function TransactionsPage() {
                               Clear category
                             </div>
                           )}
-                          {newCategoryText.trim() && !categoryOptions.some(c => c.toLowerCase() === newCategoryText.trim().toLowerCase()) && (
+                          {!manageCategoriesMode && newCategoryText.trim() && !categoryOptions.some(c => c.toLowerCase() === newCategoryText.trim().toLowerCase()) && (
                             <div
                               className={styles.categoryOption}
                               style={{ color: '#0058be', fontWeight: 600 }}
@@ -1803,19 +1845,128 @@ export function TransactionsPage() {
                             </div>
                           )}
                           {categoryOptions
-                            .filter(cat => !newCategoryText || cat.toLowerCase().includes(newCategoryText.toLowerCase()))
+                            .filter(cat => manageCategoriesMode || !newCategoryText || cat.toLowerCase().includes(newCategoryText.toLowerCase()))
                             .map(cat => (
                             <div
                               key={cat}
-                              className={`${styles.categoryOption} ${cat === t.category ? styles.categoryOptionActive : ''}`}
-                              onClick={() => handleCategorySelect(t, i, cat)}
+                              className={`${styles.categoryOption} ${cat === t.category && !manageCategoriesMode ? styles.categoryOptionActive : ''}`}
+                              onClick={() => {
+                                if (manageCategoriesMode) return;
+                                handleCategorySelect(t, i, cat);
+                              }}
+                              style={manageCategoriesMode ? { cursor: 'default' } : undefined}
                             >
                               <span className="material-symbols-outlined" style={{ fontSize: 14, color: catColor(cat) }}>
                                 {getCategoryIcon(cat)}
                               </span>
-                              {cat}
+                              {renamingCategory === cat ? (
+                                <input
+                                  type="text"
+                                  value={renameText}
+                                  autoFocus
+                                  onChange={e => setRenameText(e.target.value)}
+                                  onClick={e => e.stopPropagation()}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') {
+                                      const newName = renameText.trim();
+                                      if (newName && newName !== cat) renameCategory(cat, newName);
+                                      setRenamingCategory(null);
+                                      setRenameText('');
+                                    } else if (e.key === 'Escape') {
+                                      setRenamingCategory(null);
+                                      setRenameText('');
+                                    }
+                                  }}
+                                  onBlur={() => {
+                                    const newName = renameText.trim();
+                                    if (newName && newName !== cat) renameCategory(cat, newName);
+                                    setRenamingCategory(null);
+                                    setRenameText('');
+                                  }}
+                                  style={{
+                                    flex: 1,
+                                    border: '1px solid var(--color-secondary, #0058be)',
+                                    borderRadius: 4,
+                                    padding: '2px 6px',
+                                    fontSize: 12.5,
+                                    fontFamily: 'var(--font-body)',
+                                    outline: 'none',
+                                  }}
+                                />
+                              ) : (
+                                <span style={{ flex: 1 }}>{cat}</span>
+                              )}
+                              {manageCategoriesMode && renamingCategory !== cat && (
+                                <>
+                                  <button
+                                    type="button"
+                                    title="Rename"
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      setRenamingCategory(cat);
+                                      setRenameText(cat);
+                                    }}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: 'var(--color-text-tertiary)', display: 'flex' }}
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title="Remove"
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      const count = (transactions || []).filter(tx => (tx.category || '') === cat).length;
+                                      const msg = count > 0
+                                        ? `Remove "${cat}"? ${count} transaction${count === 1 ? '' : 's'} will be set to Uncategorized.`
+                                        : `Remove "${cat}"?`;
+                                      if (window.confirm(msg)) removeCategory(cat, '');
+                                    }}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#ba1a1a', display: 'flex' }}
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>delete</span>
+                                  </button>
+                                </>
+                              )}
                             </div>
                           ))}
+                          {manageCategoriesMode && hiddenCategoryList.length > 0 && (
+                            <>
+                              <div
+                                onClick={() => setShowHiddenCategories(v => !v)}
+                                style={{
+                                  display: 'flex', alignItems: 'center', gap: 6,
+                                  padding: '8px 12px',
+                                  fontSize: 11.5,
+                                  color: 'var(--color-text-tertiary)',
+                                  cursor: 'pointer',
+                                  borderTop: 'var(--border-ghost)',
+                                  textTransform: 'uppercase',
+                                  letterSpacing: 0.5,
+                                }}
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                                  {showHiddenCategories ? 'expand_less' : 'expand_more'}
+                                </span>
+                                Hidden ({hiddenCategoryList.length})
+                              </div>
+                              {showHiddenCategories && hiddenCategoryList.map(cat => (
+                                <div key={`hidden-${cat}`} className={styles.categoryOption} style={{ opacity: 0.7, cursor: 'default' }}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: 14, color: catColor(cat) }}>
+                                    {getCategoryIcon(cat)}
+                                  </span>
+                                  <span style={{ flex: 1, textDecoration: 'line-through' }}>{cat}</span>
+                                  <button
+                                    type="button"
+                                    title="Restore"
+                                    onClick={e => { e.stopPropagation(); unhideCategory(cat); }}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: 'var(--color-secondary, #0058be)', display: 'flex' }}
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>undo</span>
+                                  </button>
+                                </div>
+                              ))}
+                            </>
+                          )}
                         </div>
                       )}
                     </td>

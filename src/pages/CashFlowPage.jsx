@@ -30,6 +30,7 @@ export function CashFlowPage() {
   const { transactions, loading } = useData();
   const [monthCount, setMonthCount] = useState(13);
   const [drilldown, setDrilldown] = useState(null); // { monthKey, kind: 'income'|'expenses' }
+  const [expandedDrillCats, setExpandedDrillCats] = useState(new Set());
 
   /* Category breakdown for clicked cell */
   const drilldownData = useMemo(() => {
@@ -39,6 +40,8 @@ export function CashFlowPage() {
     let total = 0;
     for (const t of transactions) {
       if (!t.date || t.amount === 0) continue;
+      const tCat = (t.category || '').toLowerCase();
+      if (tCat === 'transfer' || tCat === 'credit card payment') continue;
       const d = new Date(t.date);
       if (isNaN(d)) continue;
       const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -47,10 +50,11 @@ export function CashFlowPage() {
       if (kind === 'expenses' && t.amount >= 0) continue;
       const cat = t.category || 'Uncategorized';
       const sub = t.subcategory || '';
-      if (!byCat[cat]) byCat[cat] = { total: 0, count: 0, subs: {} };
+      if (!byCat[cat]) byCat[cat] = { total: 0, count: 0, subs: {}, txns: [] };
       const amt = Math.abs(t.amount);
       byCat[cat].total += amt;
       byCat[cat].count += 1;
+      byCat[cat].txns.push({ description: t.description || t.fullDescription || 'Unknown', amount: amt, date: t.date, sub });
       if (sub) {
         byCat[cat].subs[sub] = (byCat[cat].subs[sub] || 0) + amt;
       }
@@ -63,6 +67,7 @@ export function CashFlowPage() {
         count: v.count,
         pct: total > 0 ? v.total / total : 0,
         subs: Object.entries(v.subs).map(([n, a]) => ({ name: n, total: a })).sort((a, b) => b.total - a.total),
+        txns: v.txns.sort((a, b) => b.amount - a.amount),
       }))
       .sort((a, b) => b.total - a.total);
     return { rows, total, monthKey, kind };
@@ -74,12 +79,23 @@ export function CashFlowPage() {
     const buckets = {};
     for (const t of transactions) {
       if (!t.date || t.amount === 0) continue;
+      const cat = (t.category || '').toLowerCase();
+      if (cat === 'transfer' || cat === 'credit card payment') continue;
       const d = new Date(t.date);
       if (isNaN(d)) continue;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (!buckets[key]) buckets[key] = { income: 0, expenses: 0 };
-      if (t.amount > 0) buckets[key].income += t.amount;
-      else buckets[key].expenses += Math.abs(t.amount);
+      if (!buckets[key]) buckets[key] = { income: 0, expenses: 0, invested: 0, retirement: 0 };
+      if (cat === 'investments') {
+        const amt = Math.abs(t.amount);
+        buckets[key].invested += amt;
+        if ((t.subcategory || '').toLowerCase() === 'retirement') {
+          buckets[key].retirement += amt;
+        }
+      } else if (t.amount > 0) {
+        buckets[key].income += t.amount;
+      } else {
+        buckets[key].expenses += Math.abs(t.amount);
+      }
     }
 
     const sortedKeys = Object.keys(buckets).sort();
@@ -98,28 +114,35 @@ export function CashFlowPage() {
     const recentKeys = allKeys.slice(-monthCount);
     const months = recentKeys.map(key => {
       const [y, m] = key.split('-');
-      const b = buckets[key] || { income: 0, expenses: 0 };
+      const b = buckets[key] || { income: 0, expenses: 0, invested: 0, retirement: 0 };
       return {
         key,
         label: MONTH_SHORT[parseInt(m, 10) - 1],
         year: y,
         income: b.income,
         expenses: b.expenses,
+        invested: b.invested,
+        retirement: b.retirement,
         net: b.income - b.expenses,
       };
     });
 
     const totalIncome = months.reduce((s, m) => s + m.income, 0);
     const totalExpenses = months.reduce((s, m) => s + m.expenses, 0);
+    const totalInvested = months.reduce((s, m) => s + m.invested, 0);
+    const totalRetirement = months.reduce((s, m) => s + m.retirement, 0);
     const activeMonths = months.filter(m => m.income > 0 || m.expenses > 0).length || 1;
 
     return {
       months,
       totalIncome,
       totalExpenses,
+      totalInvested,
+      totalRetirement,
       net: totalIncome - totalExpenses,
       avgIncome: totalIncome / activeMonths,
       avgExpenses: totalExpenses / activeMonths,
+      avgInvested: totalInvested / activeMonths,
       savingsRate: totalIncome > 0 ? (totalIncome - totalExpenses) / totalIncome : 0,
     };
   }, [transactions, monthCount]);
@@ -130,6 +153,8 @@ export function CashFlowPage() {
 
   const incomeColor = '#16a34a';
   const expenseColor = '#dc2626';
+  const investColor = '#7c3aed';
+  const retireColor = '#2563eb';
   const netColor = data.net >= 0 ? incomeColor : expenseColor;
 
   // Chart dimensions
@@ -172,10 +197,14 @@ export function CashFlowPage() {
       </div>
 
       {/* Stat Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
         <StatCard label="Total Income" value={fmt(data.totalIncome)} color={incomeColor} icon="trending_up" />
         <StatCard label="Total Expenses" value={fmt(data.totalExpenses)} color={expenseColor} icon="trending_down" />
         <StatCard label="Net Cash Flow" value={`${data.net >= 0 ? '+' : ''}${fmt(data.net)}`} color={netColor} icon="payments" />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+        <StatCard label="Total Invested" value={fmt(data.totalInvested)} color={investColor} icon="show_chart" />
+        <StatCard label="Retirement" value={fmt(data.totalRetirement)} color={retireColor} icon="elderly" />
         <StatCard
           label="Savings Rate"
           value={`${Math.round(data.savingsRate * 100)}%`}
@@ -310,6 +339,8 @@ export function CashFlowPage() {
               <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Month</th>
               <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Income</th>
               <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Expenses</th>
+              <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Invested</th>
+              <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Retirement</th>
               <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Net</th>
               <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Savings %</th>
             </tr>
@@ -358,6 +389,12 @@ export function CashFlowPage() {
                   >
                     {m.expenses > 0 ? fmt(m.expenses) : '—'}
                   </td>
+                  <td style={{ padding: '10px 12px', textAlign: 'right', color: investColor, fontFamily: 'var(--font-headline)', fontWeight: 600 }}>
+                    {m.invested > 0 ? fmt(m.invested) : '—'}
+                  </td>
+                  <td style={{ padding: '10px 12px', textAlign: 'right', color: retireColor, fontFamily: 'var(--font-headline)', fontWeight: 600 }}>
+                    {m.retirement > 0 ? fmt(m.retirement) : '—'}
+                  </td>
                   <td style={{ padding: '10px 12px', textAlign: 'right', color: m.net >= 0 ? incomeColor : expenseColor, fontFamily: 'var(--font-headline)', fontWeight: 700 }}>
                     {m.net >= 0 ? '+' : ''}{fmt(m.net)}
                   </td>
@@ -400,10 +437,22 @@ export function CashFlowPage() {
               <div style={{ textAlign: 'center', padding: 24, color: 'var(--color-text-tertiary)', fontSize: 13 }}>No transactions</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {drilldownData.rows.map(r => (
+                {drilldownData.rows.map(r => {
+                  const isExpanded = expandedDrillCats.has(r.name);
+                  return (
                   <div key={r.name} style={{ border: '1px solid var(--border-ghost)', borderRadius: 8, padding: 12 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, cursor: 'pointer' }}
+                      onClick={() => setExpandedDrillCats(prev => {
+                        const next = new Set(prev);
+                        if (next.has(r.name)) next.delete(r.name); else next.add(r.name);
+                        return next;
+                      })}
+                    >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--color-text-tertiary)', transition: 'transform 0.15s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                          chevron_right
+                        </span>
                         <span style={{ fontFamily: 'var(--font-headline)', fontSize: 14, fontWeight: 700 }}>{r.name}</span>
                         <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>({r.count} txn{r.count !== 1 ? 's' : ''})</span>
                       </div>
@@ -412,10 +461,10 @@ export function CashFlowPage() {
                         <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', minWidth: 36, textAlign: 'right' }}>{Math.round(r.pct * 100)}%</span>
                       </div>
                     </div>
-                    <div style={{ height: 5, background: 'var(--color-surface-alt)', borderRadius: 3, overflow: 'hidden', marginBottom: r.subs.length ? 10 : 0 }}>
+                    <div style={{ height: 5, background: 'var(--color-surface-alt)', borderRadius: 3, overflow: 'hidden', marginBottom: (isExpanded || r.subs.length) ? 10 : 0 }}>
                       <div style={{ height: '100%', width: `${r.pct * 100}%`, background: color, opacity: 0.85 }} />
                     </div>
-                    {r.subs.length > 0 && (
+                    {!isExpanded && r.subs.length > 0 && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 12 }}>
                         {r.subs.map(s => (
                           <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--color-text-secondary)' }}>
@@ -425,8 +474,24 @@ export function CashFlowPage() {
                         ))}
                       </div>
                     )}
+                    {isExpanded && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 12 }}>
+                        {r.txns.map((tx, idx) => (
+                          <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: 'var(--color-text-secondary)', padding: '4px 0', borderBottom: idx < r.txns.length - 1 ? '1px solid var(--color-surface-alt, #f0f0f0)' : 'none' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, flex: 1, marginRight: 12 }}>
+                              <span style={{ fontWeight: 600, color: 'var(--color-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{tx.description}</span>
+                              <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>
+                                {tx.date}{tx.sub ? ` · ${tx.sub}` : ''}
+                              </span>
+                            </div>
+                            <span style={{ fontFamily: 'var(--font-headline)', fontWeight: 600, whiteSpace: 'nowrap' }}>{fmt(tx.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

@@ -99,6 +99,16 @@ function saveCustomCategories(cats) {
   localStorage.setItem('customCategories', JSON.stringify(cats));
 }
 
+function loadHiddenCategories() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem('hiddenCategories') || '[]'));
+  } catch { return new Set(); }
+}
+
+function saveHiddenCategories(cats) {
+  localStorage.setItem('hiddenCategories', JSON.stringify([...cats]));
+}
+
 function normalizeDesc(s) {
   return (s || '').toLowerCase().trim().replace(/[\s\-–—]+/g, ' ');
 }
@@ -149,6 +159,7 @@ export function DataProvider({ children }) {
   const [subcategoryOverrides, setSubcategoryOverrides] = useState(loadSubcategoryOverrides);
   const [dateOverrides, setDateOverrides] = useState(loadDateOverrides);
   const [customCategories, setCustomCategories] = useState(loadCustomCategories);
+  const [hiddenCategories, setHiddenCategories] = useState(loadHiddenCategories);
   const [balances, setBalances] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -325,6 +336,99 @@ export function DataProvider({ children }) {
       saveCustomCategories(next);
       return next;
     });
+    setHiddenCategories(prev => {
+      if (!prev.has(category)) return prev;
+      const next = new Set(prev);
+      next.delete(category);
+      saveHiddenCategories(next);
+      return next;
+    });
+  }, []);
+
+  const renameCategory = useCallback((oldName, newName) => {
+    const trimmed = (newName || '').trim();
+    if (!trimmed || trimmed === oldName) return;
+    const affectedIds = allTransactions
+      .filter(t => (t.category || '') === oldName && t.transactionId)
+      .map(t => t.transactionId);
+
+    setAllTransactions(prev => prev.map(t =>
+      (t.category || '') === oldName ? { ...t, category: trimmed } : t
+    ));
+
+    setCategoryOverrides(prev => {
+      const next = { ...prev };
+      for (const id of affectedIds) next[id] = trimmed;
+      saveCategoryOverrides(next);
+      return next;
+    });
+
+    setCustomCategories(prev => {
+      const withoutOld = prev.filter(c => c !== oldName);
+      const next = withoutOld.includes(trimmed) ? withoutOld : [...withoutOld, trimmed];
+      saveCustomCategories(next);
+      return next;
+    });
+
+    setHiddenCategories(prev => {
+      const next = new Set(prev);
+      next.add(oldName);
+      next.delete(trimmed);
+      saveHiddenCategories(next);
+      return next;
+    });
+
+    setCategoryRules(prev => {
+      const next = prev.map(r => r.category === oldName ? { ...r, category: trimmed } : r);
+      saveCategoryRules(next);
+      return next;
+    });
+  }, [allTransactions]);
+
+  const removeCategory = useCallback((name, reassignTo = '') => {
+    const affectedIds = allTransactions
+      .filter(t => (t.category || '') === name && t.transactionId)
+      .map(t => t.transactionId);
+
+    setAllTransactions(prev => prev.map(t =>
+      (t.category || '') === name ? { ...t, category: reassignTo } : t
+    ));
+
+    setCategoryOverrides(prev => {
+      const next = { ...prev };
+      for (const id of affectedIds) next[id] = reassignTo;
+      saveCategoryOverrides(next);
+      return next;
+    });
+
+    setCustomCategories(prev => {
+      const next = prev.filter(c => c !== name);
+      saveCustomCategories(next);
+      return next;
+    });
+
+    setHiddenCategories(prev => {
+      const next = new Set(prev);
+      next.add(name);
+      saveHiddenCategories(next);
+      return next;
+    });
+
+    setCategoryRules(prev => {
+      const next = prev.filter(r => r.category !== name);
+      saveCategoryRules(next);
+      return next;
+    });
+  }, [allTransactions]);
+
+  const unhideCategory = useCallback((name) => {
+    setHiddenCategories(prev => {
+      if (!prev.has(name)) return prev;
+      const next = new Set(prev);
+      next.delete(name);
+      saveHiddenCategories(next);
+      return next;
+    });
   }, []);
 
   const getMatchCount = useCallback((description) => {
@@ -376,6 +480,10 @@ export function DataProvider({ children }) {
       subcategoryRules,
       customCategories,
       addCustomCategory,
+      hiddenCategories,
+      renameCategory,
+      removeCategory,
+      unhideCategory,
       getMatchCount,
       toggleHideTransaction,
       hiddenTransactions,
