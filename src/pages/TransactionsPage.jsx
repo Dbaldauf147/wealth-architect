@@ -1073,20 +1073,30 @@ export function TransactionsPage() {
   }
 
   function handleSubcategorySelect(t, newSub) {
-    updateTransactionSubcategory(t.transactionId, newSub);
-    flashSaved();
-    setEditingSubId(null);
-    setSubSearchText('');
-    if (!newSub) return;
-    // Always offer the rule when setting a subcategory — even if only this one matches,
-    // creating the rule auto-tags future matching transactions on sync.
+    if (newSub === t.subcategory) {
+      setEditingSubId(null);
+      setSubSearchText('');
+      return;
+    }
     const matchCount = getMatchCount(t.description);
-    setPendingSubRule({
-      transactionId: t.transactionId,
-      description: t.description,
-      newSubcategory: newSub,
-      matchCount,
-    });
+    if (newSub && matchCount > 1) {
+      // Show confirmation dialog like categories — apply to just this one, or all + rule
+      updateTransactionSubcategory(t.transactionId, newSub);
+      flashSaved();
+      setEditingSubId(null);
+      setSubSearchText('');
+      setPendingSubRule({
+        transactionId: t.transactionId,
+        description: t.description,
+        newSubcategory: newSub,
+        matchCount,
+      });
+    } else {
+      updateTransactionSubcategory(t.transactionId, newSub);
+      flashSaved();
+      setEditingSubId(null);
+      setSubSearchText('');
+    }
   }
 
   function handleBulkCategory(cat) {
