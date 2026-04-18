@@ -1,5 +1,61 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import styles from './App.module.css';
+
+function UpdatePill() {
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+
+  useEffect(() => {
+    const currentVersion = typeof __BUILD_VERSION__ !== 'undefined' ? __BUILD_VERSION__ : null;
+    if (!currentVersion) return;
+
+    const check = async () => {
+      try {
+        const res = await fetch('/version.json?t=' + Date.now(), { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.version && data.version !== currentVersion) {
+          setUpdateAvailable(true);
+        }
+      } catch {}
+    };
+
+    const interval = setInterval(check, 60_000);
+    // First check after 30s to avoid startup noise
+    const timeout = setTimeout(check, 30_000);
+    return () => { clearInterval(interval); clearTimeout(timeout); };
+  }, []);
+
+  if (!updateAvailable) return null;
+
+  return (
+    <div
+      onClick={() => window.location.reload()}
+      style={{
+        position: 'fixed',
+        bottom: 80,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 9999,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '10px 20px',
+        background: 'var(--color-secondary, #0058be)',
+        color: '#fff',
+        borderRadius: 999,
+        boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+        cursor: 'pointer',
+        fontSize: 13,
+        fontWeight: 600,
+        fontFamily: 'var(--font-body)',
+        animation: 'slideUp 0.3s ease-out',
+      }}
+    >
+      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>update</span>
+      New update available — click to refresh
+    </div>
+  );
+}
 import { OverviewPage } from './pages/OverviewPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 import { CardsPage } from './pages/CardsPage';
@@ -175,6 +231,8 @@ export function App() {
           {renderPage()}
         </main>
       </div>
+
+      <UpdatePill />
 
       {/* Mobile Bottom Nav */}
       <nav className={styles.bottomNav}>
