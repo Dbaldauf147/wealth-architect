@@ -42,7 +42,7 @@ export function CashFlowPage() {
       if (!t.date || t.amount === 0) continue;
       const tCat = (t.category || '').toLowerCase();
       if (tCat === 'transfer' || tCat === 'credit card payments' || tCat === 'credit card payment') continue;
-      if (tCat === 'investments') continue;
+      if (tCat === 'investments' || tCat === 'retirement') continue;
       const d = new Date(t.date);
       if (isNaN(d)) continue;
       const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -86,10 +86,11 @@ export function CashFlowPage() {
       if (isNaN(d)) continue;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       if (!buckets[key]) buckets[key] = { income: 0, expenses: 0, invested: 0, retirement: 0 };
-      if (cat === 'investments') {
+      if (cat === 'investments' || cat === 'retirement') {
         const amt = Math.abs(t.amount);
         buckets[key].invested += amt;
-        if ((t.subcategory || '').toLowerCase() === 'retirement') {
+        const sub = (t.subcategory || '').toLowerCase();
+        if (cat === 'retirement' || sub === 'retirement') {
           buckets[key].retirement += amt;
         }
       } else if (t.amount > 0) {
