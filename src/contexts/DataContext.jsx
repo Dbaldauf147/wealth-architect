@@ -63,6 +63,16 @@ function saveDateOverrides(overrides) {
   localStorage.setItem('dateOverrides', JSON.stringify(overrides));
 }
 
+function loadNotes() {
+  try {
+    return JSON.parse(localStorage.getItem('transactionNotes') || '{}');
+  } catch { return {}; }
+}
+
+function saveNotes(notes) {
+  localStorage.setItem('transactionNotes', JSON.stringify(notes));
+}
+
 /* Build a composite key for transactions without a stable transactionId */
 function txnFallbackKey(t) {
   return `${t.date || ''}|${(t.description || '').trim()}|${t.amount}`;
@@ -160,6 +170,7 @@ export function DataProvider({ children }) {
   const [dateOverrides, setDateOverrides] = useState(loadDateOverrides);
   const [customCategories, setCustomCategories] = useState(loadCustomCategories);
   const [hiddenCategories, setHiddenCategories] = useState(loadHiddenCategories);
+  const [transactionNotes, setTransactionNotes] = useState(loadNotes);
   const [balances, setBalances] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -271,6 +282,17 @@ export function DataProvider({ children }) {
       if (newDate) next[key] = newDate;
       else delete next[key];
       saveDateOverrides(next);
+      return next;
+    });
+  }, []);
+
+  const updateTransactionNote = useCallback((transactionId, note) => {
+    if (!transactionId) return;
+    setTransactionNotes(prev => {
+      const next = { ...prev };
+      if (note) next[transactionId] = note;
+      else delete next[transactionId];
+      saveNotes(next);
       return next;
     });
   }, []);
@@ -484,6 +506,8 @@ export function DataProvider({ children }) {
       renameCategory,
       removeCategory,
       unhideCategory,
+      transactionNotes,
+      updateTransactionNote,
       getMatchCount,
       toggleHideTransaction,
       hiddenTransactions,

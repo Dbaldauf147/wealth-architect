@@ -570,7 +570,7 @@ const SUBCATEGORIES = {
 };
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, addSubcategoryRule, customCategories, addCustomCategory, hiddenCategories, renameCategory, removeCategory, unhideCategory, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
+  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, addSubcategoryRule, customCategories, addCustomCategory, hiddenCategories, renameCategory, removeCategory, unhideCategory, transactionNotes, updateTransactionNote, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
   const subDropdownRef = useRef(null);
@@ -611,6 +611,7 @@ export function TransactionsPage() {
     subcategory: '',
     amount: '',
     date: '',
+    notes: '',
     institution: '',
     account: '',
   });
@@ -714,6 +715,7 @@ export function TransactionsPage() {
         matchText(t.subcategory, cf.subcategory) &&
         matchAmount(t.amount, cf.amount) &&
         (cf.date ? formatDate(t.date).toLowerCase().includes(cf.date.toLowerCase()) || String(t.date || '').includes(cf.date) : true) &&
+        matchText(transactionNotes[t.transactionId] || '', cf.notes) &&
         matchText(t.institution, cf.institution) &&
         matchText(t.account, cf.account)
       );
@@ -734,7 +736,7 @@ export function TransactionsPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return sorted;
-  }, [transactions, activeAccount, searchQuery, includedCategories, includedSubcategories, selectedMonth, columnFilters, sortCol, sortDir]);
+  }, [transactions, activeAccount, searchQuery, includedCategories, includedSubcategories, selectedMonth, columnFilters, sortCol, sortDir, transactionNotes]);
 
   const paginated = useMemo(
     () => filtered.slice(0, (page + 1) * PAGE_SIZE),
@@ -1634,6 +1636,7 @@ export function TransactionsPage() {
                   { key: 'subcategory', label: 'Subcategory' },
                   { key: 'amount', label: 'Amount' },
                   { key: 'date', label: 'Date' },
+                  { key: 'notes', label: 'Notes' },
                   { key: 'institution', label: 'Institution' },
                   { key: 'account', label: 'Account' },
                 ].map(col => {
@@ -1687,6 +1690,7 @@ export function TransactionsPage() {
                   { key: 'subcategory', placeholder: 'Filter sub' },
                   { key: 'amount', placeholder: '$, >100, <50' },
                   { key: 'date', placeholder: 'yyyy or mon' },
+                  { key: 'notes', placeholder: 'Filter notes' },
                   { key: 'institution', placeholder: 'Filter institution' },
                   { key: 'account', placeholder: 'Filter account' },
                 ].map(col => (
@@ -2062,6 +2066,15 @@ export function TransactionsPage() {
                           colorScheme: 'light',
                         }}
                         title={`Click to edit date (current: ${formatDate(t.date)})`}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        className={styles.noteInput}
+                        value={transactionNotes[t.transactionId] || ''}
+                        placeholder="Add note..."
+                        onChange={e => updateTransactionNote(t.transactionId, e.target.value)}
                       />
                     </td>
                     <td className={styles.institutionCell}>{t.institution}</td>
