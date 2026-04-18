@@ -31,6 +31,7 @@ export function CashFlowPage() {
   const [monthCount, setMonthCount] = useState(13);
   const [drilldown, setDrilldown] = useState(null); // { monthKey, kind: 'income'|'expenses' }
   const [expandedDrillCats, setExpandedDrillCats] = useState(new Set());
+  const [expandedRevCats, setExpandedRevCats] = useState(new Set());
 
   /* Category breakdown for clicked cell */
   const drilldownData = useMemo(() => {
@@ -151,6 +152,39 @@ export function CashFlowPage() {
       savingsRate: totalIncome > 0 ? (totalIncome - totalExpenses) / totalIncome : 0,
     };
   }, [transactions, monthCount]);
+
+  const revenueBreakdown = useMemo(() => {
+    if (!transactions) return null;
+    const bySub = {};
+    let total = 0;
+    for (const t of transactions) {
+      if (!t.date || t.amount <= 0) continue;
+      const cat = (t.category || '').toLowerCase();
+      if (cat === 'transfer' || cat === 'credit card payments' || cat === 'credit card payment') continue;
+      if (cat === 'investments' || cat === 'retirement') continue;
+      const d = new Date(t.date);
+      if (isNaN(d)) continue;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const allKeys = data.months.map(m => m.key);
+      if (!allKeys.includes(key)) continue;
+      const label = t.subcategory || t.category || 'Other';
+      if (!bySub[label]) bySub[label] = { total: 0, count: 0, txns: [] };
+      bySub[label].total += t.amount;
+      bySub[label].count += 1;
+      bySub[label].txns.push({ description: t.description || t.fullDescription || 'Unknown', amount: t.amount, date: t.date });
+      total += t.amount;
+    }
+    const rows = Object.entries(bySub)
+      .map(([name, v]) => ({
+        name,
+        total: v.total,
+        count: v.count,
+        pct: total > 0 ? v.total / total : 0,
+        txns: v.txns.sort((a, b) => b.amount - a.amount),
+      }))
+      .sort((a, b) => b.total - a.total);
+    return { rows, total };
+  }, [transactions, data.months]);
 
   if (loading) {
     return <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>Loading...</div>;
@@ -413,52 +447,64 @@ export function CashFlowPage() {
         </table>
       </div>
 
-      {/* Income Subcategory Breakdown */}
-      {(() => {
-        const reversed = [...data.months].reverse();
-        const allSubs = new Set();
-        reversed.forEach(m => Object.keys(m.incomeSubs || {}).forEach(s => allSubs.add(s)));
-        const subList = [...allSubs].sort();
-        if (subList.length === 0) return null;
-        return (
-          <div style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: incomeColor, marginBottom: 12 }}>
+      {/* Revenue Breakdown by Source */}
+      {revenueBreakdown && revenueBreakdown.rows.length > 0 && (
+        <div style={{ background: 'var(--color-surface)', border: `2px solid ${incomeColor}33`, borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: incomeColor }}>
               Revenue Breakdown by Source
             </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-ghost)' }}>
-                    <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)', position: 'sticky', left: 0, background: 'var(--color-surface)' }}>Month</th>
-                    {subList.map(s => (
-                      <th key={s} style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{s}</th>
-                    ))}
-                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 700, color: incomeColor }}>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {reversed.map(m => (
-                    <tr key={m.key} style={{ borderBottom: '1px solid var(--border-ghost)' }}>
-                      <td style={{ padding: '10px 12px', fontWeight: 600, position: 'sticky', left: 0, background: 'var(--color-surface)' }}>{m.label} {m.year}</td>
-                      {subList.map(s => {
-                        const val = (m.incomeSubs || {})[s] || 0;
-                        return (
-                          <td key={s} style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'var(--font-headline)', fontWeight: 500, color: val > 0 ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)' }}>
-                            {val > 0 ? fmt(val) : '—'}
-                          </td>
-                        );
-                      })}
-                      <td style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'var(--font-headline)', fontWeight: 700, color: incomeColor }}>
-                        {m.income > 0 ? fmt(m.income) : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div style={{ fontFamily: 'var(--font-headline)', fontSize: 22, fontWeight: 700, color: incomeColor, marginTop: 4 }}>
+              {fmt(revenueBreakdown.total)} total
             </div>
           </div>
-        );
-      })()}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {revenueBreakdown.rows.map(r => {
+              const isExpanded = expandedRevCats.has(r.name);
+              return (
+                <div key={r.name} style={{ border: '1px solid var(--border-ghost)', borderRadius: 8, padding: 12 }}>
+                  <div
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, cursor: 'pointer' }}
+                    onClick={() => setExpandedRevCats(prev => {
+                      const next = new Set(prev);
+                      if (next.has(r.name)) next.delete(r.name); else next.add(r.name);
+                      return next;
+                    })}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--color-text-tertiary)', transition: 'transform 0.15s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                        chevron_right
+                      </span>
+                      <span style={{ fontFamily: 'var(--font-headline)', fontSize: 14, fontWeight: 700 }}>{r.name}</span>
+                      <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>({r.count} txn{r.count !== 1 ? 's' : ''})</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontFamily: 'var(--font-headline)', fontSize: 14, fontWeight: 700, color: incomeColor }}>{fmt(r.total)}</span>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', minWidth: 36, textAlign: 'right' }}>{Math.round(r.pct * 100)}%</span>
+                    </div>
+                  </div>
+                  <div style={{ height: 5, background: 'var(--color-surface-alt)', borderRadius: 3, overflow: 'hidden', marginBottom: isExpanded ? 10 : 0 }}>
+                    <div style={{ height: '100%', width: `${r.pct * 100}%`, background: incomeColor, opacity: 0.85 }} />
+                  </div>
+                  {isExpanded && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 12 }}>
+                      {r.txns.map((tx, idx) => (
+                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: 'var(--color-text-secondary)', padding: '4px 0', borderBottom: idx < r.txns.length - 1 ? '1px solid var(--color-surface-alt, #f0f0f0)' : 'none' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, flex: 1, marginRight: 12 }}>
+                            <span style={{ fontWeight: 600, color: 'var(--color-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{tx.description}</span>
+                            <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{tx.date}</span>
+                          </div>
+                          <span style={{ fontFamily: 'var(--font-headline)', fontWeight: 600, whiteSpace: 'nowrap' }}>{fmt(tx.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Drilldown panel */}
       {drilldownData && (() => {
