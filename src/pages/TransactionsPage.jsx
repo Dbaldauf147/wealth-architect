@@ -2300,50 +2300,14 @@ export function TransactionsPage() {
                     {visibleColumns.has('account') && <td>
                       <div className={styles.accountCell}>
                         <div className={styles.accountDot} style={{ background: catColor(t.account || 'Unknown') }} />
-                        {editingAccountName === t.account ? (
-                          <input
-                            type="text"
-                            value={editingAccountText}
-                            onChange={e => setEditingAccountText(e.target.value)}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter') {
-                                setAccountNickname(t.account, editingAccountText.trim());
-                                setEditingAccountName(null);
-                              } else if (e.key === 'Escape') {
-                                setEditingAccountName(null);
-                              }
-                            }}
-                            onBlur={() => {
-                              setAccountNickname(t.account, editingAccountText.trim());
-                              setEditingAccountName(null);
-                            }}
-                            autoFocus
-                            placeholder={t.account}
-                            onClick={e => e.stopPropagation()}
-                            style={{
-                              border: '1px solid var(--color-secondary, #0058be)',
-                              borderRadius: 4, padding: '2px 6px', fontSize: 12,
-                              fontFamily: 'var(--font-body)', outline: 'none',
-                              width: '100%', boxSizing: 'border-box',
-                            }}
-                          />
-                        ) : (
-                          <>
-                            <span title={accountNicknames[t.account] ? `Original: ${t.account}` : t.account}>
-                              {accountNicknames[t.account] || t.account}
-                            </span>
-                            <span
-                              className="material-symbols-outlined"
-                              onClick={e => {
-                                e.stopPropagation();
-                                setEditingAccountName(t.account);
-                                setEditingAccountText(accountNicknames[t.account] || '');
-                              }}
-                              title="Edit nickname"
-                              style={{ fontSize: 11, marginLeft: 4, color: 'var(--color-text-tertiary)', cursor: 'pointer', opacity: 0.6 }}
-                            >edit</span>
-                          </>
-                        )}
+                        <input
+                          type="text"
+                          className={styles.noteInput}
+                          value={accountNicknames[t.account] || ''}
+                          placeholder={t.account}
+                          title={`Original: ${t.account}`}
+                          onChange={e => setAccountNickname(t.account, e.target.value)}
+                        />
                       </div>
                     </td>}
                     <td>
