@@ -73,6 +73,16 @@ function saveNotes(notes) {
   localStorage.setItem('transactionNotes', JSON.stringify(notes));
 }
 
+function loadAccountNicknames() {
+  try {
+    return JSON.parse(localStorage.getItem('accountNicknames') || '{}');
+  } catch { return {}; }
+}
+
+function saveAccountNicknames(nicknames) {
+  localStorage.setItem('accountNicknames', JSON.stringify(nicknames));
+}
+
 /* Build a composite key for transactions without a stable transactionId */
 function txnFallbackKey(t) {
   return `${t.date || ''}|${(t.description || '').trim()}|${t.amount}`;
@@ -171,6 +181,7 @@ export function DataProvider({ children }) {
   const [customCategories, setCustomCategories] = useState(loadCustomCategories);
   const [hiddenCategories, setHiddenCategories] = useState(loadHiddenCategories);
   const [transactionNotes, setTransactionNotes] = useState(loadNotes);
+  const [accountNicknames, setAccountNicknames] = useState(loadAccountNicknames);
   const [balances, setBalances] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -293,6 +304,16 @@ export function DataProvider({ children }) {
       if (note) next[transactionId] = note;
       else delete next[transactionId];
       saveNotes(next);
+      return next;
+    });
+  }, []);
+
+  const setAccountNickname = useCallback((accountName, nickname) => {
+    setAccountNicknames(prev => {
+      const next = { ...prev };
+      if (nickname) next[accountName] = nickname;
+      else delete next[accountName];
+      saveAccountNicknames(next);
       return next;
     });
   }, []);
@@ -528,6 +549,8 @@ export function DataProvider({ children }) {
       unhideCategory,
       transactionNotes,
       updateTransactionNote,
+      accountNicknames,
+      setAccountNickname,
       getMatchCount,
       toggleHideTransaction,
       hiddenTransactions,

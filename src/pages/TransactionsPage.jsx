@@ -570,7 +570,7 @@ const SUBCATEGORIES = {
 };
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, categoryRules, subcategoryRules, customCategories, addCustomCategory, hiddenCategories, renameCategory, removeCategory, unhideCategory, transactionNotes, updateTransactionNote, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
+  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, categoryRules, subcategoryRules, customCategories, addCustomCategory, hiddenCategories, renameCategory, removeCategory, unhideCategory, transactionNotes, updateTransactionNote, accountNicknames, setAccountNickname, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
   const subDropdownRef = useRef(null);
@@ -591,6 +591,8 @@ export function TransactionsPage() {
   const [pendingSubRule, setPendingSubRule] = useState(null);
   const [pendingSubRulePattern, setPendingSubRulePattern] = useState('');
   const [editingRule, setEditingRule] = useState(null); // { catIndex, catPattern, catTarget, subIndex, subPattern, subTarget }
+  const [editingAccountName, setEditingAccountName] = useState(null);
+  const [editingAccountText, setEditingAccountText] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
   const [bulkCategorySearch, setBulkCategorySearch] = useState('');
@@ -1302,7 +1304,7 @@ export function TransactionsPage() {
               className={`${styles.filterPill} ${activeAccount === acc ? styles.filterPillActive : ''}`}
               onClick={() => { setActiveAccount(acc); setPage(0); }}
             >
-              {acc}
+              {accountNicknames[acc] || acc}
             </div>
           ))}
         </div>
@@ -2296,9 +2298,43 @@ export function TransactionsPage() {
                     </td>}
                     {visibleColumns.has('institution') && <td className={styles.institutionCell}>{t.institution}</td>}
                     {visibleColumns.has('account') && <td>
-                      <div className={styles.accountCell}>
+                      <div
+                        className={styles.accountCell}
+                        title={accountNicknames[t.account] ? `Original: ${t.account} — double-click to edit nickname` : 'Double-click to set a nickname'}
+                        onDoubleClick={() => { setEditingAccountName(t.account); setEditingAccountText(accountNicknames[t.account] || ''); }}
+                        style={{ cursor: 'pointer' }}
+                      >
                         <div className={styles.accountDot} style={{ background: catColor(t.account || 'Unknown') }} />
-                        {t.account}
+                        {editingAccountName === t.account ? (
+                          <input
+                            type="text"
+                            value={editingAccountText}
+                            onChange={e => setEditingAccountText(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                setAccountNickname(t.account, editingAccountText.trim());
+                                setEditingAccountName(null);
+                              } else if (e.key === 'Escape') {
+                                setEditingAccountName(null);
+                              }
+                            }}
+                            onBlur={() => {
+                              setAccountNickname(t.account, editingAccountText.trim());
+                              setEditingAccountName(null);
+                            }}
+                            autoFocus
+                            placeholder={t.account}
+                            onClick={e => e.stopPropagation()}
+                            style={{
+                              border: '1px solid var(--color-secondary, #0058be)',
+                              borderRadius: 4, padding: '2px 6px', fontSize: 12,
+                              fontFamily: 'var(--font-body)', outline: 'none',
+                              width: '100%', boxSizing: 'border-box',
+                            }}
+                          />
+                        ) : (
+                          accountNicknames[t.account] || t.account
+                        )}
                       </div>
                     </td>}
                     <td>
