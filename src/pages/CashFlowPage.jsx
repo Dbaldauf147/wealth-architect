@@ -85,7 +85,7 @@ export function CashFlowPage() {
       const d = new Date(t.date);
       if (isNaN(d)) continue;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (!buckets[key]) buckets[key] = { income: 0, expenses: 0, invested: 0, retirement: 0 };
+      if (!buckets[key]) buckets[key] = { income: 0, expenses: 0, invested: 0, retirement: 0, incomeSubs: {} };
       if (cat === 'investments' || cat === 'retirement') {
         const amt = Math.abs(t.amount);
         buckets[key].invested += amt;
@@ -95,6 +95,8 @@ export function CashFlowPage() {
         }
       } else if (t.amount > 0) {
         buckets[key].income += t.amount;
+        const subLabel = t.subcategory || t.category || 'Other';
+        buckets[key].incomeSubs[subLabel] = (buckets[key].incomeSubs[subLabel] || 0) + t.amount;
       } else {
         buckets[key].expenses += Math.abs(t.amount);
       }
@@ -116,7 +118,7 @@ export function CashFlowPage() {
     const recentKeys = allKeys.slice(-monthCount);
     const months = recentKeys.map(key => {
       const [y, m] = key.split('-');
-      const b = buckets[key] || { income: 0, expenses: 0, invested: 0, retirement: 0 };
+      const b = buckets[key] || { income: 0, expenses: 0, invested: 0, retirement: 0, incomeSubs: {} };
       return {
         key,
         label: MONTH_SHORT[parseInt(m, 10) - 1],
@@ -126,6 +128,7 @@ export function CashFlowPage() {
         invested: b.invested,
         retirement: b.retirement,
         net: b.income - b.expenses,
+        incomeSubs: b.incomeSubs,
       };
     });
 
@@ -409,6 +412,53 @@ export function CashFlowPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Income Subcategory Breakdown */}
+      {(() => {
+        const reversed = [...data.months].reverse();
+        const allSubs = new Set();
+        reversed.forEach(m => Object.keys(m.incomeSubs || {}).forEach(s => allSubs.add(s)));
+        const subList = [...allSubs].sort();
+        if (subList.length === 0) return null;
+        return (
+          <div style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: incomeColor, marginBottom: 12 }}>
+              Revenue Breakdown by Source
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-ghost)' }}>
+                    <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)', position: 'sticky', left: 0, background: 'var(--color-surface)' }}>Month</th>
+                    {subList.map(s => (
+                      <th key={s} style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{s}</th>
+                    ))}
+                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 700, color: incomeColor }}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reversed.map(m => (
+                    <tr key={m.key} style={{ borderBottom: '1px solid var(--border-ghost)' }}>
+                      <td style={{ padding: '10px 12px', fontWeight: 600, position: 'sticky', left: 0, background: 'var(--color-surface)' }}>{m.label} {m.year}</td>
+                      {subList.map(s => {
+                        const val = (m.incomeSubs || {})[s] || 0;
+                        return (
+                          <td key={s} style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'var(--font-headline)', fontWeight: 500, color: val > 0 ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)' }}>
+                            {val > 0 ? fmt(val) : '—'}
+                          </td>
+                        );
+                      })}
+                      <td style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'var(--font-headline)', fontWeight: 700, color: incomeColor }}>
+                        {m.income > 0 ? fmt(m.income) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Drilldown panel */}
       {drilldownData && (() => {
