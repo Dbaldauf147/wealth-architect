@@ -590,6 +590,7 @@ export function TransactionsPage() {
   const [pendingRulePattern, setPendingRulePattern] = useState('');
   const [pendingSubRule, setPendingSubRule] = useState(null);
   const [pendingSubRulePattern, setPendingSubRulePattern] = useState('');
+  const [editingRule, setEditingRule] = useState(null); // { type: 'category'|'subcategory', index, pattern, target }
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
   const [bulkCategorySearch, setBulkCategorySearch] = useState('');
@@ -1836,7 +1837,7 @@ export function TransactionsPage() {
                                   title={`Category rule: "${rowCatRule.description}" → ${rowCatRule.category}`}
                                   onDoubleClick={e => {
                                     e.stopPropagation();
-                                    window.alert(`Category Rule\n\nPattern: "${rowCatRule.description}"\nAssigns to: ${rowCatRule.category}`);
+                                    setEditingRule({ type: 'category', index: rowCatRuleIdx, pattern: rowCatRule.description, target: rowCatRule.category });
                                   }}
                                   style={{ fontSize: 13, color: 'var(--color-secondary, #0058be)', cursor: 'pointer' }}
                                 >auto_fix_high</span>
@@ -1847,7 +1848,7 @@ export function TransactionsPage() {
                                   title={`Subcategory rule: "${rowSubRule.description}" → ${rowSubRule.subcategory}`}
                                   onDoubleClick={e => {
                                     e.stopPropagation();
-                                    window.alert(`Subcategory Rule\n\nPattern: "${rowSubRule.description}"\nAssigns to: ${rowSubRule.subcategory}`);
+                                    setEditingRule({ type: 'subcategory', index: rowSubRuleIdx, pattern: rowSubRule.description, target: rowSubRule.subcategory });
                                   }}
                                   style={{ fontSize: 13, color: '#7c3aed', cursor: 'pointer' }}
                                 >bookmark</span>
@@ -2545,6 +2546,115 @@ export function TransactionsPage() {
             </div>
           </div>
         </div>
+        );
+      })()}
+
+      {/* Edit Rule Dialog */}
+      {editingRule && (() => {
+        const isCategory = editingRule.type === 'category';
+        const liveCount = getMatchCount(editingRule.pattern);
+        const options = isCategory ? categoryOptions : (() => {
+          const allSubs = new Set();
+          for (const cat in SUBCATEGORIES) (SUBCATEGORIES[cat] || []).forEach(s => allSubs.add(s));
+          (transactions || []).forEach(t => { if (t.subcategory) allSubs.add(t.subcategory); });
+          return [...allSubs].sort();
+        })();
+        return (
+          <div className={styles.ruleOverlay}>
+            <div className={styles.ruleDialog} style={{ maxWidth: 420 }}>
+              <div className={styles.ruleDialogIcon}>
+                <span className="material-symbols-outlined" style={{ fontSize: 24, color: isCategory ? 'var(--color-secondary, #0058be)' : '#7c3aed' }}>
+                  {isCategory ? 'auto_fix_high' : 'bookmark'}
+                </span>
+              </div>
+              <div className={styles.ruleDialogTitle}>
+                Edit {isCategory ? 'Category' : 'Subcategory'} Rule
+              </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+                  Match pattern (contains)
+                </label>
+                <input
+                  type="text"
+                  value={editingRule.pattern}
+                  onChange={e => setEditingRule(prev => ({ ...prev, pattern: e.target.value }))}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '8px 12px',
+                    fontSize: 13, fontFamily: 'var(--font-body)',
+                    border: '1px solid var(--border-ghost)', borderRadius: 8,
+                    outline: 'none', background: 'var(--color-surface-alt, #f5f5f5)',
+                  }}
+                  autoFocus
+                />
+                <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
+                  <strong>{liveCount}</strong> transaction{liveCount !== 1 ? 's' : ''} match
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+                  Assign to {isCategory ? 'category' : 'subcategory'}
+                </label>
+                <select
+                  value={editingRule.target}
+                  onChange={e => setEditingRule(prev => ({ ...prev, target: e.target.value }))}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '8px 12px',
+                    fontSize: 13, fontFamily: 'var(--font-body)',
+                    border: '1px solid var(--border-ghost)', borderRadius: 8,
+                    outline: 'none', background: 'var(--color-surface-alt, #f5f5f5)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {options.map(o => <option key={o} value={o}>{o}</option>)}
+                  {!options.includes(editingRule.target) && (
+                    <option value={editingRule.target}>{editingRule.target}</option>
+                  )}
+                </select>
+              </div>
+
+              <div className={styles.ruleDialogActions}>
+                <button
+                  className={styles.ruleBtn}
+                  style={{ color: '#ba1a1a' }}
+                  onClick={() => {
+                    if (isCategory) removeCategoryRule(editingRule.index);
+                    else removeSubcategoryRule(editingRule.index);
+                    flashSaved();
+                    setEditingRule(null);
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>delete</span>
+                  Delete rule
+                </button>
+                <button
+                  className={styles.ruleBtn}
+                  onClick={() => setEditingRule(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className={styles.ruleBtnPrimary}
+                  disabled={!editingRule.pattern.trim() || !editingRule.target}
+                  onClick={() => {
+                    if (isCategory) {
+                      removeCategoryRule(editingRule.index);
+                      addCategoryRule(editingRule.pattern.trim(), null, editingRule.target);
+                    } else {
+                      removeSubcategoryRule(editingRule.index);
+                      addSubcategoryRule(editingRule.pattern.trim(), editingRule.target);
+                    }
+                    flashSaved();
+                    setEditingRule(null);
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>save</span>
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
         );
       })()}
 
