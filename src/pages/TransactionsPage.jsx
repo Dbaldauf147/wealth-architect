@@ -1132,6 +1132,22 @@ export function TransactionsPage() {
     setBulkSubSearch('');
   }
 
+  function handleBulkSubcategoryAndRule(sub) {
+    const selected = filtered.filter(t => selectedIds.has(t.transactionId));
+    const seen = new Set();
+    for (const t of selected) {
+      const key = t.description.toLowerCase().trim();
+      if (!seen.has(key)) {
+        seen.add(key);
+        addSubcategoryRule(t.description, sub);
+      }
+    }
+    flashSaved();
+    setSelectedIds(new Set());
+    setBulkSubOpen(false);
+    setBulkSubSearch('');
+  }
+
   /* Loading state */
   if (loading) {
     return (
@@ -1474,12 +1490,21 @@ export function TransactionsPage() {
               {bulkSubOptions
                 .filter(s => !bulkSubSearch || s.toLowerCase().includes(bulkSubSearch.toLowerCase()))
                 .map(sub => (
-                <div
-                  key={sub}
-                  className={styles.categoryOption}
-                  onClick={() => handleBulkSubcategory(sub)}
-                >
-                  {sub}
+                <div key={sub} className={styles.categoryOption}>
+                  <span
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}
+                    onClick={() => handleBulkSubcategory(sub)}
+                  >
+                    {sub}
+                  </span>
+                  <button
+                    className={styles.ruleSmallBtn}
+                    title="Apply + create auto-rule"
+                    onClick={() => handleBulkSubcategoryAndRule(sub)}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 13 }}>auto_fix_high</span>
+                    + Rule
+                  </button>
                 </div>
               ))}
             </div>
@@ -2040,9 +2065,27 @@ export function TransactionsPage() {
                                   <div
                                     key={sub}
                                     className={`${styles.categoryOption} ${sub === t.subcategory ? styles.categoryOptionActive : ''}`}
-                                    onClick={() => handleSubcategorySelect(t, sub)}
                                   >
-                                    {sub}
+                                    <span
+                                      style={{ flex: 1, cursor: 'pointer' }}
+                                      onClick={() => handleSubcategorySelect(t, sub)}
+                                    >
+                                      {sub}
+                                    </span>
+                                    <button
+                                      className={styles.ruleSmallBtn}
+                                      title="Apply to all matching + create rule"
+                                      onClick={e => {
+                                        e.stopPropagation();
+                                        addSubcategoryRule(t.description, sub);
+                                        flashSaved();
+                                        setEditingSubId(null);
+                                        setSubSearchText('');
+                                      }}
+                                    >
+                                      <span className="material-symbols-outlined" style={{ fontSize: 13 }}>auto_fix_high</span>
+                                      + Rule
+                                    </button>
                                   </div>
                                 ))}
                               </div>
