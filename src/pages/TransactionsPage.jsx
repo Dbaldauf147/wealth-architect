@@ -587,7 +587,9 @@ export function TransactionsPage() {
   const [sortCol, setSortCol] = useState('date');
   const [sortDir, setSortDir] = useState('desc');
   const [pendingRule, setPendingRule] = useState(null);
+  const [pendingRulePattern, setPendingRulePattern] = useState('');
   const [pendingSubRule, setPendingSubRule] = useState(null);
+  const [pendingSubRulePattern, setPendingSubRulePattern] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
   const [bulkCategorySearch, setBulkCategorySearch] = useState('');
@@ -1050,6 +1052,7 @@ export function TransactionsPage() {
         newCategory,
         matchCount,
       });
+      setPendingRulePattern(t.description);
       setEditingId(null);
       setNewCategoryText('');
     } else {
@@ -1112,6 +1115,7 @@ export function TransactionsPage() {
         newSubcategory: newSub,
         matchCount,
       });
+      setPendingSubRulePattern(t.description);
     } else {
       updateTransactionSubcategory(t.transactionId, newSub);
       flashSaved();
@@ -2423,7 +2427,9 @@ export function TransactionsPage() {
       </div>
 
       {/* Bulk category rule confirmation */}
-      {pendingRule && (
+      {pendingRule && (() => {
+        const liveCount = getMatchCount(pendingRulePattern);
+        return (
         <div className={styles.ruleOverlay}>
           <div className={styles.ruleDialog} ref={confirmRef}>
             <div className={styles.ruleDialogIcon}>
@@ -2433,7 +2439,23 @@ export function TransactionsPage() {
               Recategorize as "{pendingRule.newCategory}"
             </div>
             <div className={styles.ruleDialogDesc}>
-              There {pendingRule.matchCount === 1 ? 'is' : 'are'} <strong>{pendingRule.matchCount}</strong> transaction{pendingRule.matchCount !== 1 ? 's' : ''} from <strong>{pendingRule.description}</strong> at <strong>{fmt(Math.abs(pendingRule.amount))}</strong>.
+              Match transactions containing:
+            </div>
+            <input
+              type="text"
+              value={pendingRulePattern}
+              onChange={e => setPendingRulePattern(e.target.value)}
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: '8px 12px',
+                fontSize: 13, fontFamily: 'var(--font-body)',
+                border: '1px solid var(--border-ghost)', borderRadius: 8,
+                outline: 'none', background: 'var(--color-surface-alt, #f5f5f5)',
+                marginBottom: 8,
+              }}
+              autoFocus
+            />
+            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
+              <strong>{liveCount}</strong> transaction{liveCount !== 1 ? 's' : ''} match this pattern
             </div>
             <div className={styles.ruleDialogActions}>
               <button
@@ -2448,25 +2470,29 @@ export function TransactionsPage() {
               </button>
               <button
                 className={styles.ruleBtnPrimary}
+                disabled={!pendingRulePattern.trim()}
                 onClick={() => {
-                  addCategoryRule(pendingRule.description, pendingRule.amount, pendingRule.newCategory);
+                  addCategoryRule(pendingRulePattern.trim(), pendingRule.amount, pendingRule.newCategory);
                   flashSaved();
                   setPendingRule(null);
                 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>auto_fix_high</span>
-                Apply to all {pendingRule.matchCount} + create rule
+                Apply to all {liveCount} + create rule
               </button>
             </div>
             <div className={styles.ruleDialogHint}>
-              Rules auto-categorize matching charges on future syncs
+              Shorten the pattern to match more transactions (e.g. "DoorDash" instead of the full name)
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Subcategory rule confirmation */}
-      {pendingSubRule && (
+      {pendingSubRule && (() => {
+        const liveSubCount = getMatchCount(pendingSubRulePattern);
+        return (
         <div className={styles.ruleOverlay}>
           <div className={styles.ruleDialog}>
             <div className={styles.ruleDialogIcon}>
@@ -2476,7 +2502,23 @@ export function TransactionsPage() {
               Set subcategory to "{pendingSubRule.newSubcategory}"
             </div>
             <div className={styles.ruleDialogDesc}>
-              There are <strong>{pendingSubRule.matchCount}</strong> transactions from <strong>{pendingSubRule.description}</strong>. Apply this subcategory to all of them?
+              Match transactions containing:
+            </div>
+            <input
+              type="text"
+              value={pendingSubRulePattern}
+              onChange={e => setPendingSubRulePattern(e.target.value)}
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: '8px 12px',
+                fontSize: 13, fontFamily: 'var(--font-body)',
+                border: '1px solid var(--border-ghost)', borderRadius: 8,
+                outline: 'none', background: 'var(--color-surface-alt, #f5f5f5)',
+                marginBottom: 8,
+              }}
+              autoFocus
+            />
+            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
+              <strong>{liveSubCount}</strong> transaction{liveSubCount !== 1 ? 's' : ''} match this pattern
             </div>
             <div className={styles.ruleDialogActions}>
               <button
@@ -2487,22 +2529,24 @@ export function TransactionsPage() {
               </button>
               <button
                 className={styles.ruleBtnPrimary}
+                disabled={!pendingSubRulePattern.trim()}
                 onClick={() => {
-                  addSubcategoryRule(pendingSubRule.description, pendingSubRule.newSubcategory);
+                  addSubcategoryRule(pendingSubRulePattern.trim(), pendingSubRule.newSubcategory);
                   flashSaved();
                   setPendingSubRule(null);
                 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>auto_fix_high</span>
-                Apply to all {pendingSubRule.matchCount} + create rule
+                Apply to all {liveSubCount} + create rule
               </button>
             </div>
             <div className={styles.ruleDialogHint}>
-              Rules auto-tag matching charges on future syncs
+              Shorten the pattern to match more transactions (e.g. "DoorDash" instead of the full name)
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Saved toast */}
       <div className={`${styles.savedToast} ${savedToast ? styles.savedToastVisible : ''}`}>
