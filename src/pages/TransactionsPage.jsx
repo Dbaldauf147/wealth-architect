@@ -618,6 +618,34 @@ export function TransactionsPage() {
     institution: '',
     account: '',
   });
+  const ALL_COLUMNS = [
+    { key: 'merchant', label: 'Merchant' },
+    { key: 'description', label: 'Description' },
+    { key: 'category', label: 'Category' },
+    { key: 'subcategory', label: 'Subcategory' },
+    { key: 'amount', label: 'Amount' },
+    { key: 'date', label: 'Date' },
+    { key: 'notes', label: 'Notes' },
+    { key: 'institution', label: 'Institution' },
+    { key: 'account', label: 'Account' },
+  ];
+  const [visibleColumns, setVisibleColumns] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('visibleColumns'));
+      if (saved && Array.isArray(saved)) return new Set(saved);
+    } catch {}
+    return new Set(ALL_COLUMNS.map(c => c.key));
+  });
+  const [columnPickerOpen, setColumnPickerOpen] = useState(false);
+  const columnPickerRef = useRef(null);
+  const toggleColumn = (key) => {
+    setVisibleColumns(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) { if (next.size > 1) next.delete(key); } else next.add(key);
+      localStorage.setItem('visibleColumns', JSON.stringify([...next]));
+      return next;
+    });
+  };
   const resizingColRef = useRef(null);
   const [showAccounts, setShowAccounts] = useState(() => {
     try { return JSON.parse(localStorage.getItem('showAccounts') ?? 'true'); }
@@ -952,6 +980,16 @@ export function TransactionsPage() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [bulkCategoryOpen, bulkSubOpen]);
 
+  useEffect(() => {
+    function handleClick(e) {
+      if (columnPickerRef.current && !columnPickerRef.current.contains(e.target)) {
+        setColumnPickerOpen(false);
+      }
+    }
+    if (columnPickerOpen) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [columnPickerOpen]);
+
   /* ── Handler functions ── */
 
   function flashSaved() {
@@ -1209,6 +1247,39 @@ export function TransactionsPage() {
             <span className="material-symbols-outlined">{showAccounts ? 'visibility' : 'visibility_off'}</span>
             {showAccounts ? 'Hide' : 'Show'} Accounts
           </button>
+          <div style={{ position: 'relative' }} ref={columnPickerRef}>
+            <button
+              className={styles.exportBtn}
+              onClick={() => setColumnPickerOpen(v => !v)}
+            >
+              <span className="material-symbols-outlined">view_column</span>
+              Columns
+            </button>
+            {columnPickerOpen && (
+              <div style={{
+                position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 100,
+                minWidth: 180, background: 'var(--color-surface, #fff)',
+                border: 'var(--border-ghost)', borderRadius: 'var(--radius-lg)',
+                boxShadow: 'var(--shadow-md, 0 4px 16px rgba(0,0,0,0.12))',
+                padding: '6px 0',
+              }}>
+                {ALL_COLUMNS.map(col => (
+                  <label key={col.key} style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px',
+                    fontSize: 12.5, cursor: 'pointer', color: 'var(--color-text-secondary)',
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={visibleColumns.has(col.key)}
+                      onChange={() => toggleColumn(col.key)}
+                      style={{ accentColor: 'var(--color-secondary, #0058be)' }}
+                    />
+                    {col.label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
           <button className={styles.exportBtn}>
             <span className="material-symbols-outlined">download</span>
             Export CSV
@@ -1690,17 +1761,7 @@ export function TransactionsPage() {
                     onChange={toggleSelectAll}
                   />
                 </th>
-                {[
-                  { key: 'merchant', label: 'Merchant' },
-                  { key: 'description', label: 'Description' },
-                  { key: 'category', label: 'Category' },
-                  { key: 'subcategory', label: 'Subcategory' },
-                  { key: 'amount', label: 'Amount' },
-                  { key: 'date', label: 'Date' },
-                  { key: 'notes', label: 'Notes' },
-                  { key: 'institution', label: 'Institution' },
-                  { key: 'account', label: 'Account' },
-                ].map(col => {
+                {ALL_COLUMNS.filter(c => visibleColumns.has(c.key)).map(col => {
                   const w = columnWidths[col.key];
                   return (
                     <th key={col.key} style={{
@@ -1754,7 +1815,7 @@ export function TransactionsPage() {
                   { key: 'notes', placeholder: 'Filter notes' },
                   { key: 'institution', placeholder: 'Filter institution' },
                   { key: 'account', placeholder: 'Filter account' },
-                ].map(col => (
+                ].filter(c => visibleColumns.has(c.key)).map(col => (
                   <th key={col.key} style={{ padding: '4px 8px', background: 'var(--color-surface)' }}>
                     <input
                       type="text"
@@ -1814,7 +1875,7 @@ export function TransactionsPage() {
                         onChange={() => toggleSelect(t.transactionId)}
                       />
                     </td>
-                    <td>
+                    {visibleColumns.has('merchant') && <td>
                       <div className={styles.merchantCell}>
                         <div
                           className={styles.merchantIcon}
@@ -1853,11 +1914,11 @@ export function TransactionsPage() {
                           </div>
                         </div>
                       </div>
-                    </td>
-                    <td className={styles.institutionCell} title={t.fullDescription || t.description}>
+                    </td>}
+                    {visibleColumns.has('description') && <td className={styles.institutionCell} title={t.fullDescription || t.description}>
                       {t.fullDescription || t.description}
-                    </td>
-                    <td style={{ position: 'relative', overflow: 'visible' }}>
+                    </td>}
+                    {visibleColumns.has('category') && <td style={{ position: 'relative', overflow: 'visible' }}>
                       <span
                         className={styles.categoryBadge}
                         style={{ background: bg, color, cursor: 'pointer' }}
@@ -2086,8 +2147,8 @@ export function TransactionsPage() {
                         </div>
                         );
                       })()}
-                    </td>
-                    <td style={{ position: 'relative', overflow: 'visible' }}>
+                    </td>}
+                    {visibleColumns.has('subcategory') && <td style={{ position: 'relative', overflow: 'visible' }}>
                       {(() => {
                         const subKey = t.transactionId || i;
                         const subs = SUBCATEGORIES[t.category] || [];
@@ -2196,13 +2257,13 @@ export function TransactionsPage() {
                           </>
                         );
                       })()}
-                    </td>
-                    <td>
+                    </td>}
+                    {visibleColumns.has('amount') && <td>
                       <span className={t.amount >= 0 ? styles.amountCredit : styles.amountDebit}>
                         {t.amount >= 0 ? '+' : ''}{fmt(t.amount)}
                       </span>
-                    </td>
-                    <td className={styles.dateCell}>
+                    </td>}
+                    {visibleColumns.has('date') && <td className={styles.dateCell}>
                       <input
                         type="date"
                         value={toIsoDate(t.date)}
@@ -2223,8 +2284,8 @@ export function TransactionsPage() {
                         }}
                         title={`Click to edit date (current: ${formatDate(t.date)})`}
                       />
-                    </td>
-                    <td>
+                    </td>}
+                    {visibleColumns.has('notes') && <td>
                       <input
                         type="text"
                         className={styles.noteInput}
@@ -2232,14 +2293,14 @@ export function TransactionsPage() {
                         placeholder="Add note..."
                         onChange={e => updateTransactionNote(t.transactionId, e.target.value)}
                       />
-                    </td>
-                    <td className={styles.institutionCell}>{t.institution}</td>
-                    <td>
+                    </td>}
+                    {visibleColumns.has('institution') && <td className={styles.institutionCell}>{t.institution}</td>}
+                    {visibleColumns.has('account') && <td>
                       <div className={styles.accountCell}>
                         <div className={styles.accountDot} style={{ background: catColor(t.account || 'Unknown') }} />
                         {t.account}
                       </div>
-                    </td>
+                    </td>}
                     <td>
                       <button
                         className={styles.hideBtn}
