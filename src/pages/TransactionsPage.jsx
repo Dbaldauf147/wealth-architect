@@ -1796,6 +1796,9 @@ export function TransactionsPage() {
                 const icon = getCategoryIcon(t.category);
                 const color = catColor(t.category || 'Uncategorized');
                 const bg = catBg(t.category || 'Uncategorized');
+                const { catRule: rowCatRule, subRule: rowSubRule } = findMatchingRules(t);
+                const rowCatRuleIdx = rowCatRule ? categoryRules.indexOf(rowCatRule) : -1;
+                const rowSubRuleIdx = rowSubRule ? subcategoryRules.indexOf(rowSubRule) : -1;
                 return (
                   <tr key={t.transactionId || i} className={selectedIds.has(t.transactionId) ? styles.selectedRow : ''}>
                     <td>
@@ -1814,13 +1817,55 @@ export function TransactionsPage() {
                         >
                           <span className="material-symbols-outlined">{icon}</span>
                         </div>
-                        <div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
                           <div className={styles.merchantName}>{t.description}</div>
                           <div className={styles.merchantSub}>
                             {t.fullDescription && t.fullDescription !== t.description
                               ? t.fullDescription.slice(0, 60)
                               : t.category}
                           </div>
+                          {(rowCatRule || rowSubRule) && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 3 }}>
+                              {rowCatRule && (
+                                <span style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                                  fontSize: 10, padding: '1px 6px', borderRadius: 4,
+                                  background: 'rgba(0, 88, 190, 0.08)', color: 'var(--color-secondary, #0058be)',
+                                  fontWeight: 600,
+                                }}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: 11 }}>auto_fix_high</span>
+                                  Category: {rowCatRule.category}
+                                  <button
+                                    type="button"
+                                    title="Remove category rule"
+                                    onClick={e => { e.stopPropagation(); removeCategoryRule(rowCatRuleIdx); flashSaved(); }}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#ba1a1a', display: 'flex', marginLeft: 2 }}
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 10 }}>close</span>
+                                  </button>
+                                </span>
+                              )}
+                              {rowSubRule && (
+                                <span style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                                  fontSize: 10, padding: '1px 6px', borderRadius: 4,
+                                  background: 'rgba(124, 58, 237, 0.08)', color: '#7c3aed',
+                                  fontWeight: 600,
+                                }}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: 11 }}>auto_fix_high</span>
+                                  Sub: {rowSubRule.subcategory}
+                                  <button
+                                    type="button"
+                                    title="Remove subcategory rule"
+                                    onClick={e => { e.stopPropagation(); removeSubcategoryRule(rowSubRuleIdx); flashSaved(); }}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#ba1a1a', display: 'flex', marginLeft: 2 }}
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 10 }}>close</span>
+                                  </button>
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </td>
