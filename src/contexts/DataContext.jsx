@@ -336,6 +336,24 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  const updateCategoryRule = useCallback((index, newDescription, newCategory) => {
+    setCategoryRules(prev => {
+      const next = prev.map((r, i) => i === index ? { ...r, description: newDescription, category: newCategory } : r);
+      saveCategoryRules(next);
+      return next;
+    });
+    bulkUpdateCategory(newDescription, null, newCategory);
+  }, [bulkUpdateCategory]);
+
+  const updateSubcategoryRule = useCallback((index, newDescription, newSubcategory) => {
+    setSubcategoryRules(prev => {
+      const next = prev.map((r, i) => i === index ? { ...r, description: newDescription, subcategory: newSubcategory } : r);
+      saveSubcategoryRules(next);
+      return next;
+    });
+    bulkUpdateSubcategory(newDescription, newSubcategory);
+  }, [bulkUpdateSubcategory]);
+
   const bulkUpdateCategoryByIds = useCallback((transactionIds, newCategory) => {
     const idSet = new Set(transactionIds);
     setAllTransactions(prev => prev.map(t =>
@@ -496,7 +514,9 @@ export function DataProvider({ children }) {
       bulkUpdateCategoryByIds,
       addCategoryRule,
       removeCategoryRule,
+      updateCategoryRule,
       removeSubcategoryRule,
+      updateSubcategoryRule,
       categoryRules,
       addSubcategoryRule,
       subcategoryRules,

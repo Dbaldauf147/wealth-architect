@@ -570,7 +570,7 @@ const SUBCATEGORIES = {
 };
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, addSubcategoryRule, removeSubcategoryRule, categoryRules, subcategoryRules, customCategories, addCustomCategory, hiddenCategories, renameCategory, removeCategory, unhideCategory, transactionNotes, updateTransactionNote, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
+  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, categoryRules, subcategoryRules, customCategories, addCustomCategory, hiddenCategories, renameCategory, removeCategory, unhideCategory, transactionNotes, updateTransactionNote, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
   const subDropdownRef = useRef(null);
@@ -2669,12 +2669,10 @@ export function TransactionsPage() {
                   className={styles.ruleBtnPrimary}
                   onClick={() => {
                     if (editingRule.hasCatRule && editingRule.catPattern.trim() && editingRule.catTarget) {
-                      removeCategoryRule(editingRule.catIndex);
-                      addCategoryRule(editingRule.catPattern.trim(), null, editingRule.catTarget);
+                      updateCategoryRule(editingRule.catIndex, editingRule.catPattern.trim(), editingRule.catTarget);
                     }
                     if (editingRule.hasSubRule && editingRule.subPattern.trim() && editingRule.subTarget) {
-                      removeSubcategoryRule(editingRule.subIndex);
-                      addSubcategoryRule(editingRule.subPattern.trim(), editingRule.subTarget);
+                      updateSubcategoryRule(editingRule.subIndex, editingRule.subPattern.trim(), editingRule.subTarget);
                     }
                     flashSaved();
                     setEditingRule(null);
