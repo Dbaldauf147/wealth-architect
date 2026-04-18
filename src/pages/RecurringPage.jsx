@@ -46,6 +46,8 @@ export function RecurringPage() {
     for (var i = 0; i < transactions.length; i++) {
       var t = transactions[i];
       if (t.amount >= 0) continue; // skip income
+      var sub = (t.subcategory || '').toLowerCase();
+      if (sub !== 'subscriptions') continue;
       var desc = (t.description || '').trim();
       if (!desc) continue;
       var amt = Math.abs(t.amount).toFixed(2);
