@@ -570,7 +570,7 @@ const SUBCATEGORIES = {
 };
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, addSubcategoryRule, customCategories, addCustomCategory, hiddenCategories, renameCategory, removeCategory, unhideCategory, transactionNotes, updateTransactionNote, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
+  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, addSubcategoryRule, removeSubcategoryRule, categoryRules, subcategoryRules, customCategories, addCustomCategory, hiddenCategories, renameCategory, removeCategory, unhideCategory, transactionNotes, updateTransactionNote, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
   const subDropdownRef = useRef(null);
@@ -1010,6 +1010,27 @@ export function TransactionsPage() {
     setDraggedCategory(null);
     setDragOverBucket(null);
     flashSaved();
+  }
+
+  function findMatchingRules(t) {
+    const norm = s => (s || '').toLowerCase().trim().replace(/[\s\-–—]+/g, ' ');
+    const desc = norm(t.description);
+    const full = norm(t.fullDescription);
+    const catRule = categoryRules.find(r => {
+      const rd = norm(r.description);
+      if (!rd) return false;
+      if (desc && (desc.includes(rd) || rd.includes(desc))) return true;
+      if (full && full.includes(rd)) return true;
+      return false;
+    });
+    const subRule = subcategoryRules.find(r => {
+      const rd = norm(r.description);
+      if (!rd) return false;
+      if (desc && (desc.includes(rd) || rd.includes(desc))) return true;
+      if (full && full.includes(rd)) return true;
+      return false;
+    });
+    return { catRule: catRule || null, subRule: subRule || null };
   }
 
   function handleCategorySelect(t, i, newCategory) {
@@ -1816,7 +1837,10 @@ export function TransactionsPage() {
                         {t.category || 'Uncategorized'}
                         <span className="material-symbols-outlined" style={{ fontSize: 12, marginLeft: 2 }}>edit</span>
                       </span>
-                      {editingId === (t.transactionId || i) && (
+                      {editingId === (t.transactionId || i) && (() => {
+                        const { catRule, subRule } = findMatchingRules(t);
+                        const catRuleIdx = catRule ? categoryRules.indexOf(catRule) : -1;
+                        return (
                         <div className={styles.categoryDropdown} ref={dropdownRef}>
                           <div style={{ display: 'flex', alignItems: 'center', borderBottom: 'var(--border-ghost)' }}>
                             <input
@@ -1858,6 +1882,29 @@ export function TransactionsPage() {
                               </span>
                             </button>
                           </div>
+                          {!manageCategoriesMode && catRule && (
+                            <div style={{
+                              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                              padding: '6px 12px',
+                              fontSize: 11.5,
+                              background: 'rgba(0, 88, 190, 0.06)',
+                              borderBottom: 'var(--border-ghost)',
+                              color: 'var(--color-secondary, #0058be)',
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>auto_fix_high</span>
+                                <span>Rule: <strong>"{catRule.description}"</strong> → {catRule.category}</span>
+                              </div>
+                              <button
+                                type="button"
+                                title="Remove rule"
+                                onClick={() => { removeCategoryRule(catRuleIdx); flashSaved(); }}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#ba1a1a', display: 'flex' }}
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                              </button>
+                            </div>
+                          )}
                           {!manageCategoriesMode && t.category && (
                             <div
                               className={styles.categoryOption}
@@ -2007,13 +2054,16 @@ export function TransactionsPage() {
                             </>
                           )}
                         </div>
-                      )}
+                        );
+                      })()}
                     </td>
                     <td style={{ position: 'relative', overflow: 'visible' }}>
                       {(() => {
                         const subKey = t.transactionId || i;
                         const subs = SUBCATEGORIES[t.category] || [];
                         const allSubs = [...new Set([...subs, ...(transactions || []).filter(tx => tx.category === t.category && tx.subcategory).map(tx => tx.subcategory)])].sort();
+                        const { subRule } = findMatchingRules(t);
+                        const subRuleIdx = subRule ? subcategoryRules.indexOf(subRule) : -1;
                         return (
                           <>
                             <span
@@ -2039,6 +2089,29 @@ export function TransactionsPage() {
                                   }}
                                   autoFocus
                                 />
+                                {subRule && (
+                                  <div style={{
+                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                    padding: '6px 12px',
+                                    fontSize: 11.5,
+                                    background: 'rgba(0, 88, 190, 0.06)',
+                                    borderBottom: 'var(--border-ghost)',
+                                    color: 'var(--color-secondary, #0058be)',
+                                  }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>auto_fix_high</span>
+                                      <span>Rule: <strong>"{subRule.description}"</strong> → {subRule.subcategory}</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      title="Remove rule"
+                                      onClick={() => { removeSubcategoryRule(subRuleIdx); flashSaved(); }}
+                                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#ba1a1a', display: 'flex' }}
+                                    >
+                                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                                    </button>
+                                  </div>
+                                )}
                                 {t.subcategory && (
                                   <div
                                     className={styles.categoryOption}
