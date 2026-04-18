@@ -1829,34 +1829,28 @@ export function TransactionsPage() {
                               ? t.fullDescription.slice(0, 60)
                               : t.category}
                           </div>
-                          {(rowCatRule || rowSubRule) && (
-                            <div
-                              style={{ display: 'flex', gap: 3, marginTop: 2, cursor: 'pointer' }}
-                              onDoubleClick={e => {
-                                e.stopPropagation();
-                                setEditingRule({
-                                  catIndex: rowCatRuleIdx, catPattern: rowCatRule ? rowCatRule.description : '', catTarget: rowCatRule ? rowCatRule.category : '',
-                                  subIndex: rowSubRuleIdx, subPattern: rowSubRule ? rowSubRule.description : '', subTarget: rowSubRule ? rowSubRule.subcategory : '',
-                                  hasCatRule: !!rowCatRule, hasSubRule: !!rowSubRule,
-                                });
-                              }}
-                            >
-                              {rowCatRule && (
-                                <span
-                                  className="material-symbols-outlined"
-                                  title={`Category rule: "${rowCatRule.description}" → ${rowCatRule.category}`}
-                                  style={{ fontSize: 13, color: 'var(--color-secondary, #0058be)' }}
-                                >auto_fix_high</span>
-                              )}
-                              {rowSubRule && (
-                                <span
-                                  className="material-symbols-outlined"
-                                  title={`Subcategory rule: "${rowSubRule.description}" → ${rowSubRule.subcategory}`}
-                                  style={{ fontSize: 13, color: '#7c3aed' }}
-                                >bookmark</span>
-                              )}
-                            </div>
-                          )}
+                          <div
+                            style={{ display: 'flex', gap: 3, marginTop: 2, cursor: 'pointer' }}
+                            onDoubleClick={e => {
+                              e.stopPropagation();
+                              setEditingRule({
+                                catIndex: rowCatRuleIdx, catPattern: rowCatRule ? rowCatRule.description : t.description, catTarget: rowCatRule ? rowCatRule.category : (t.category || ''),
+                                subIndex: rowSubRuleIdx, subPattern: rowSubRule ? rowSubRule.description : t.description, subTarget: rowSubRule ? rowSubRule.subcategory : (t.subcategory || ''),
+                                hasCatRule: !!rowCatRule, hasSubRule: !!rowSubRule,
+                                txnDescription: t.description,
+                              });
+                            }}
+                            title="Double-click to manage auto-categorization rules"
+                          >
+                            <span
+                              className="material-symbols-outlined"
+                              style={{ fontSize: 13, color: rowCatRule ? 'var(--color-secondary, #0058be)' : 'var(--color-text-tertiary)', opacity: rowCatRule ? 1 : 0.4 }}
+                            >auto_fix_high</span>
+                            <span
+                              className="material-symbols-outlined"
+                              style={{ fontSize: 13, color: rowSubRule ? '#7c3aed' : 'var(--color-text-tertiary)', opacity: rowSubRule ? 1 : 0.4 }}
+                            >bookmark</span>
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -2615,7 +2609,17 @@ export function TransactionsPage() {
                     </div>
                   </>
                 ) : (
-                  <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>No category rule for this transaction</div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>No category rule</div>
+                    <button
+                      type="button"
+                      onClick={() => setEditingRule(prev => ({ ...prev, hasCatRule: true, catPattern: prev.txnDescription || '', catTarget: '' }))}
+                      style={{ background: 'none', border: '1px solid var(--color-secondary, #0058be)', borderRadius: 6, cursor: 'pointer', padding: '3px 10px', color: 'var(--color-secondary, #0058be)', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600 }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 13 }}>add</span>
+                      Add rule
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -2659,7 +2663,17 @@ export function TransactionsPage() {
                     </div>
                   </>
                 ) : (
-                  <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>No subcategory rule for this transaction</div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>No subcategory rule</div>
+                    <button
+                      type="button"
+                      onClick={() => setEditingRule(prev => ({ ...prev, hasSubRule: true, subPattern: prev.txnDescription || '', subTarget: '' }))}
+                      style={{ background: 'none', border: '1px solid #7c3aed', borderRadius: 6, cursor: 'pointer', padding: '3px 10px', color: '#7c3aed', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600 }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 13 }}>add</span>
+                      Add rule
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -2669,10 +2683,18 @@ export function TransactionsPage() {
                   className={styles.ruleBtnPrimary}
                   onClick={() => {
                     if (editingRule.hasCatRule && editingRule.catPattern.trim() && editingRule.catTarget) {
-                      updateCategoryRule(editingRule.catIndex, editingRule.catPattern.trim(), editingRule.catTarget);
+                      if (editingRule.catIndex >= 0) {
+                        updateCategoryRule(editingRule.catIndex, editingRule.catPattern.trim(), editingRule.catTarget);
+                      } else {
+                        addCategoryRule(editingRule.catPattern.trim(), null, editingRule.catTarget);
+                      }
                     }
                     if (editingRule.hasSubRule && editingRule.subPattern.trim() && editingRule.subTarget) {
-                      updateSubcategoryRule(editingRule.subIndex, editingRule.subPattern.trim(), editingRule.subTarget);
+                      if (editingRule.subIndex >= 0) {
+                        updateSubcategoryRule(editingRule.subIndex, editingRule.subPattern.trim(), editingRule.subTarget);
+                      } else {
+                        addSubcategoryRule(editingRule.subPattern.trim(), editingRule.subTarget);
+                      }
                     }
                     flashSaved();
                     setEditingRule(null);
