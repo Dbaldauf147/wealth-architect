@@ -1825,44 +1825,28 @@ export function TransactionsPage() {
                               : t.category}
                           </div>
                           {(rowCatRule || rowSubRule) && (
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 3 }}>
+                            <div style={{ display: 'flex', gap: 3, marginTop: 2 }}>
                               {rowCatRule && (
-                                <span style={{
-                                  display: 'inline-flex', alignItems: 'center', gap: 4,
-                                  fontSize: 10, padding: '1px 6px', borderRadius: 4,
-                                  background: 'rgba(0, 88, 190, 0.08)', color: 'var(--color-secondary, #0058be)',
-                                  fontWeight: 600,
-                                }}>
-                                  <span className="material-symbols-outlined" style={{ fontSize: 11 }}>auto_fix_high</span>
-                                  Category: {rowCatRule.category}
-                                  <button
-                                    type="button"
-                                    title="Remove category rule"
-                                    onClick={e => { e.stopPropagation(); removeCategoryRule(rowCatRuleIdx); flashSaved(); }}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#ba1a1a', display: 'flex', marginLeft: 2 }}
-                                  >
-                                    <span className="material-symbols-outlined" style={{ fontSize: 10 }}>close</span>
-                                  </button>
-                                </span>
+                                <span
+                                  className="material-symbols-outlined"
+                                  title={`Category rule: "${rowCatRule.description}" → ${rowCatRule.category}`}
+                                  onDoubleClick={e => {
+                                    e.stopPropagation();
+                                    window.alert(`Category Rule\n\nPattern: "${rowCatRule.description}"\nAssigns to: ${rowCatRule.category}`);
+                                  }}
+                                  style={{ fontSize: 13, color: 'var(--color-secondary, #0058be)', cursor: 'pointer' }}
+                                >auto_fix_high</span>
                               )}
                               {rowSubRule && (
-                                <span style={{
-                                  display: 'inline-flex', alignItems: 'center', gap: 4,
-                                  fontSize: 10, padding: '1px 6px', borderRadius: 4,
-                                  background: 'rgba(124, 58, 237, 0.08)', color: '#7c3aed',
-                                  fontWeight: 600,
-                                }}>
-                                  <span className="material-symbols-outlined" style={{ fontSize: 11 }}>auto_fix_high</span>
-                                  Sub: {rowSubRule.subcategory}
-                                  <button
-                                    type="button"
-                                    title="Remove subcategory rule"
-                                    onClick={e => { e.stopPropagation(); removeSubcategoryRule(rowSubRuleIdx); flashSaved(); }}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#ba1a1a', display: 'flex', marginLeft: 2 }}
-                                  >
-                                    <span className="material-symbols-outlined" style={{ fontSize: 10 }}>close</span>
-                                  </button>
-                                </span>
+                                <span
+                                  className="material-symbols-outlined"
+                                  title={`Subcategory rule: "${rowSubRule.description}" → ${rowSubRule.subcategory}`}
+                                  onDoubleClick={e => {
+                                    e.stopPropagation();
+                                    window.alert(`Subcategory Rule\n\nPattern: "${rowSubRule.description}"\nAssigns to: ${rowSubRule.subcategory}`);
+                                  }}
+                                  style={{ fontSize: 13, color: '#7c3aed', cursor: 'pointer' }}
+                                >bookmark</span>
                               )}
                             </div>
                           )}
