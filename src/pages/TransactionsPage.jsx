@@ -2298,12 +2298,7 @@ export function TransactionsPage() {
                     </td>}
                     {visibleColumns.has('institution') && <td className={styles.institutionCell}>{t.institution}</td>}
                     {visibleColumns.has('account') && <td>
-                      <div
-                        className={styles.accountCell}
-                        title={accountNicknames[t.account] ? `Original: ${t.account} — double-click to edit nickname` : 'Double-click to set a nickname'}
-                        onDoubleClick={() => { setEditingAccountName(t.account); setEditingAccountText(accountNicknames[t.account] || ''); }}
-                        style={{ cursor: 'pointer' }}
-                      >
+                      <div className={styles.accountCell}>
                         <div className={styles.accountDot} style={{ background: catColor(t.account || 'Unknown') }} />
                         {editingAccountName === t.account ? (
                           <input
@@ -2333,7 +2328,21 @@ export function TransactionsPage() {
                             }}
                           />
                         ) : (
-                          accountNicknames[t.account] || t.account
+                          <>
+                            <span title={accountNicknames[t.account] ? `Original: ${t.account}` : t.account}>
+                              {accountNicknames[t.account] || t.account}
+                            </span>
+                            <span
+                              className="material-symbols-outlined"
+                              onClick={e => {
+                                e.stopPropagation();
+                                setEditingAccountName(t.account);
+                                setEditingAccountText(accountNicknames[t.account] || '');
+                              }}
+                              title="Edit nickname"
+                              style={{ fontSize: 11, marginLeft: 4, color: 'var(--color-text-tertiary)', cursor: 'pointer', opacity: 0.6 }}
+                            >edit</span>
+                          </>
                         )}
                       </div>
                     </td>}
