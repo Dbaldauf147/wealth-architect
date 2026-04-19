@@ -644,6 +644,11 @@
   font-size: 12.5px;
 }
 
+.dateCell input[type="date"]::-webkit-calendar-picker-indicator {
+  display: none;
+  -webkit-appearance: none;
+}
+
 /* Notes */
 .noteInput {
   width: 100%;
