@@ -178,11 +178,25 @@ export function RecurringPage() {
     for (var i = 0; i < recurring.length; i++) {
       var r = recurring[i];
       var sub = r.subcategory || r.category || 'Other';
-      if (!buckets[sub]) buckets[sub] = { name: sub, items: [], totalMonthly: 0, totalAnnual: 0, totalSpent: 0 };
+      if (!buckets[sub]) buckets[sub] = { name: sub, items: [], totalMonthly: 0, totalAnnual: 0, totalSpent: 0, lastChargedTs: 0, nextExpected: '' };
       buckets[sub].items.push(r);
       buckets[sub].totalMonthly += r.avgAmount;
       buckets[sub].totalAnnual += r.annualEstimate;
       buckets[sub].totalSpent += r.totalAmount;
+      // Last Charged: most recent date across all items in the bucket
+      if (r.txns.length > 0) {
+        var lastTs = new Date(r.txns[0].date).getTime();
+        if (!isNaN(lastTs) && lastTs > buckets[sub].lastChargedTs) {
+          buckets[sub].lastChargedTs = lastTs;
+          buckets[sub].lastCharged = r.txns[0].date;
+        }
+      }
+      // Next Expected: earliest upcoming next-expected date in the bucket
+      if (r.nextExpected) {
+        if (!buckets[sub].nextExpected || r.nextExpected < buckets[sub].nextExpected) {
+          buckets[sub].nextExpected = r.nextExpected;
+        }
+      }
     }
     var list = Object.values(buckets);
     var dir = bucketSort.dir === 'asc' ? 1 : -1;
@@ -195,6 +209,8 @@ export function RecurringPage() {
       if (col === 'name') return a.name.localeCompare(b.name) * dir;
       if (col === 'items') return (a.items.length - b.items.length) * dir;
       if (col === 'totalMonthly') return (a.totalMonthly - b.totalMonthly) * dir;
+      if (col === 'lastCharged') return ((a.lastChargedTs || 0) - (b.lastChargedTs || 0)) * dir;
+      if (col === 'nextExpected') return (a.nextExpected || '').localeCompare(b.nextExpected || '') * dir;
       return (a.totalSpent - b.totalSpent) * dir;
     });
     return list;
@@ -290,6 +306,12 @@ export function RecurringPage() {
                 <th className={styles.sortableTh} style={{ textAlign: 'center' }} onClick={function() { toggleSort(setBucketSort, 'items', 'desc'); }}>
                   Items{sortArrow(bucketSort, 'items')}
                 </th>
+                <th className={styles.sortableTh} onClick={function() { toggleSort(setBucketSort, 'lastCharged', 'desc'); }}>
+                  Last Charged{sortArrow(bucketSort, 'lastCharged')}
+                </th>
+                <th className={styles.sortableTh} onClick={function() { toggleSort(setBucketSort, 'nextExpected', 'asc'); }}>
+                  Next Expected{sortArrow(bucketSort, 'nextExpected')}
+                </th>
                 <th className={styles.sortableTh} style={{ textAlign: 'right' }} onClick={function() { toggleSort(setBucketSort, 'totalMonthly', 'desc'); }}>
                   Avg Monthly{sortArrow(bucketSort, 'totalMonthly')}
                 </th>
@@ -317,6 +339,8 @@ export function RecurringPage() {
                       <td style={{ textAlign: 'center' }}>
                         <span className={styles.freqBadge}>{bucket.items.length}</span>
                       </td>
+                      <td className={styles.accountCell}>{bucket.lastCharged ? fmtDate(bucket.lastCharged) : '—'}</td>
+                      <td className={styles.accountCell}>{bucket.nextExpected ? fmtDate(bucket.nextExpected) : '—'}</td>
                       <td style={{ textAlign: 'right' }}>
                         <div className={styles.amountMain}>{fmt(bucket.totalMonthly)}</div>
                       </td>
@@ -337,18 +361,12 @@ export function RecurringPage() {
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan="5" style={{ padding: 0 }}>
+                        <td colSpan="7" style={{ padding: 0 }}>
                           <table className={styles.table} style={{ margin: 0 }}>
                             <thead>
                               <tr style={{ background: 'var(--color-surface-alt, #f8f8f8)' }}>
                                 <th className={styles.sortableTh} style={{ paddingLeft: 32 }} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'description', 'asc'); }}>
                                   Payment{sortArrow(itemSort, 'description')}
-                                </th>
-                                <th className={styles.sortableTh} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'date', 'desc'); }}>
-                                  Last Charged{sortArrow(itemSort, 'date')}
-                                </th>
-                                <th className={styles.sortableTh} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'nextExpected', 'asc'); }}>
-                                  Next Expected{sortArrow(itemSort, 'nextExpected')}
                                 </th>
                                 <th className={styles.sortableTh} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'account', 'asc'); }}>
                                   Account{sortArrow(itemSort, 'account')}
@@ -377,8 +395,6 @@ export function RecurringPage() {
                                     <td style={{ paddingLeft: 32 }}>
                                       <div className={styles.paymentName} style={{ textDecoration: itemCancelled ? 'line-through' : 'none' }}>{r.description}</div>
                                     </td>
-                                    <td className={styles.accountCell}>{r.txns.length > 0 ? fmtDate(r.txns[0].date) : '—'}</td>
-                                    <td className={styles.accountCell}>{fmtDate(r.nextExpected)}</td>
                                     <td className={styles.accountCell}>{r.account}</td>
                                     <td style={{ textAlign: 'center' }}>
                                       <span className={styles.freqBadge}>{freqLabel}</span>
@@ -417,7 +433,7 @@ export function RecurringPage() {
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan="2" style={{ fontWeight: 700 }}>Total</td>
+                <td colSpan="4" style={{ fontWeight: 700 }}>Total</td>
                 <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(totalMonthly)}</td>
                 <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(totalSpentAll)}</td>
                 <td />
