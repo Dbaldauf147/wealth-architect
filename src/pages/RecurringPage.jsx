@@ -121,22 +121,25 @@ export function RecurringPage() {
     for (var i = 0; i < recurring.length; i++) {
       var r = recurring[i];
       var sub = r.subcategory || r.category || 'Other';
-      if (!buckets[sub]) buckets[sub] = { name: sub, items: [], totalMonthly: 0, totalAnnual: 0 };
+      if (!buckets[sub]) buckets[sub] = { name: sub, items: [], totalMonthly: 0, totalAnnual: 0, totalSpent: 0 };
       buckets[sub].items.push(r);
       buckets[sub].totalMonthly += r.avgAmount;
       buckets[sub].totalAnnual += r.annualEstimate;
+      buckets[sub].totalSpent += r.totalAmount;
     }
     return Object.values(buckets).sort(function(a, b) { return b.totalAnnual - a.totalAnnual; });
   }, [recurring]);
 
   var totalMonthly = 0;
   var totalAnnual = 0;
+  var totalSpentAll = 0;
   var keepMonthly = 0;
   var getRidMonthly = 0;
   var noMoreMonthly = 0;
   for (var i = 0; i < recurring.length; i++) {
     totalMonthly += recurring[i].avgAmount;
     totalAnnual += recurring[i].annualEstimate;
+    totalSpentAll += recurring[i].totalAmount;
     var st = statuses[recurring[i].key];
     if (st === 'keep') keepMonthly += recurring[i].avgAmount;
     else if (st === 'getrid') getRidMonthly += recurring[i].avgAmount;
@@ -185,6 +188,7 @@ export function RecurringPage() {
                 <th>Subcategory</th>
                 <th style={{ textAlign: 'center' }}>Items</th>
                 <th style={{ textAlign: 'right' }}>Avg Monthly</th>
+                <th style={{ textAlign: 'right' }}>Total Spent</th>
               </tr>
             </thead>
             <tbody>
@@ -210,10 +214,13 @@ export function RecurringPage() {
                       <td style={{ textAlign: 'right' }}>
                         <div className={styles.amountMain}>{fmt(bucket.totalMonthly)}</div>
                       </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <div className={styles.amountMain}>{fmt(bucket.totalSpent)}</div>
+                      </td>
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan="3" style={{ padding: 0 }}>
+                        <td colSpan="4" style={{ padding: 0 }}>
                           <table className={styles.table} style={{ margin: 0 }}>
                             <thead>
                               <tr style={{ background: 'var(--color-surface-alt, #f8f8f8)' }}>
@@ -222,6 +229,7 @@ export function RecurringPage() {
                                 <th>Account</th>
                                 <th style={{ textAlign: 'center' }}>Frequency</th>
                                 <th style={{ textAlign: 'right' }}>Avg Amount</th>
+                                <th style={{ textAlign: 'right' }}>Total Spent</th>
                                 <th style={{ textAlign: 'center' }}>Status</th>
                               </tr>
                             </thead>
@@ -243,6 +251,9 @@ export function RecurringPage() {
                                       {!r.isFixed && (
                                         <div className={styles.amountRange}>{fmt(r.minAmount)} – {fmt(r.maxAmount)}</div>
                                       )}
+                                    </td>
+                                    <td style={{ textAlign: 'right' }}>
+                                      <div className={styles.amountMain}>{fmt(r.totalAmount)}</div>
                                     </td>
                                     <td style={{ textAlign: 'center' }} onClick={function(e) { e.stopPropagation(); }}>
                                       <div className={styles.statusBtns}>
@@ -267,6 +278,7 @@ export function RecurringPage() {
               <tr>
                 <td colSpan="2" style={{ fontWeight: 700 }}>Total</td>
                 <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(totalMonthly)}</td>
+                <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(totalSpentAll)}</td>
               </tr>
             </tfoot>
           </table>
