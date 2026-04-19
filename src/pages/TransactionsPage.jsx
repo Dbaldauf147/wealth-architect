@@ -692,6 +692,48 @@ export function TransactionsPage() {
     return [...new Set(cats)].sort();
   }, [transactions]);
 
+  /* Per-category totals (abs of amount) for Pareto 80/20 bucketing */
+  const categoryTotals = useMemo(() => {
+    const map = new Map();
+    for (const t of (transactions || [])) {
+      const cat = t.category || 'Uncategorized';
+      const amt = Math.abs(Number(t.amount) || 0);
+      map.set(cat, (map.get(cat) || 0) + amt);
+    }
+    return map;
+  }, [transactions]);
+
+  function splitPareto(cats) {
+    const sorted = cats.slice().sort((a, b) => (categoryTotals.get(b) || 0) - (categoryTotals.get(a) || 0));
+    const total = sorted.reduce((s, c) => s + (categoryTotals.get(c) || 0), 0);
+    if (total === 0) return { top: sorted, bottom: [], total: 0 };
+    const threshold = total * 0.8;
+    const top = [];
+    const bottom = [];
+    let cum = 0;
+    for (const c of sorted) {
+      if (cum < threshold) {
+        top.push(c);
+        cum += categoryTotals.get(c) || 0;
+      } else {
+        bottom.push(c);
+      }
+    }
+    return { top, bottom, total };
+  }
+
+  const [pareto8020View, setPareto8020View] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pareto8020View') ?? 'false'); }
+    catch { return false; }
+  });
+  function togglePareto() {
+    setPareto8020View(prev => {
+      const next = !prev;
+      localStorage.setItem('pareto8020View', JSON.stringify(next));
+      return next;
+    });
+  }
+
   /* Filtered + sorted transactions */
   const filtered = useMemo(() => {
     let list = transactions || [];
@@ -1323,142 +1365,174 @@ export function TransactionsPage() {
       )}
 
       {/* Category Review Buckets */}
-      <div className={styles.bucketGrid}>
-        <div
-          className={`${styles.bucket} ${dragOverBucket === 'review' ? styles.bucketActive : ''}`}
-          onDragOver={e => { e.preventDefault(); setDragOverBucket('review'); }}
-          onDragLeave={() => setDragOverBucket(null)}
-          onDrop={() => handleDropCategory('review')}
-        >
-          <div className={styles.bucketHeader}>
-            <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#e8a317' }}>pending</span>
-            <span className={styles.bucketTitle}>Needs Review</span>
-            <span className={styles.bucketCount}>{activeCategories.filter(c => !organizedCategories.has(c)).length}</span>
-            {(() => {
-              const bucketCats = activeCategories.filter(c => !organizedCategories.has(c));
-              const allSelected = bucketCats.length > 0 && bucketCats.every(c => includedCategories.has(c));
-              return (
-                <button
-                  className={styles.categoryFilterClear}
-                  style={{ marginLeft: 'auto', padding: 0, fontSize: 9 }}
-                  onClick={() => {
-                    setIncludedCategories(prev => {
-                      const next = new Set(prev);
-                      if (allSelected) {
-                        for (const c of bucketCats) next.delete(c);
-                      } else {
-                        for (const c of bucketCats) next.add(c);
-                      }
-                      return next;
-                    });
-                    setPage(0);
-                  }}
-                  type="button"
-                >
-                  {allSelected ? 'Deselect All' : 'Select All'}
-                </button>
-              );
-            })()}
-          </div>
-          <div className={styles.bucketItems}>
-            {activeCategories.filter(c => !organizedCategories.has(c)).map(cat => {
-              const color = catColor(cat);
-              const bg = catBg(cat);
-              const selected = includedCategories.has(cat);
-              return (
-                <div
-                  key={cat}
-                  className={styles.bucketChip}
-                  draggable
-                  onDragStart={() => setDraggedCategory(cat)}
-                  onDragEnd={() => setDraggedCategory(null)}
-                  onClick={() => { toggleCategoryFilter(cat); setPage(0); }}
-                  style={{
-                    background: selected ? bg : 'var(--color-surface-alt)',
-                    color: selected ? color : 'var(--color-text-tertiary)',
-                    borderColor: selected ? color + '30' : 'transparent',
-                    opacity: selected ? 1 : 0.5,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{getCategoryIcon(cat)}</span>
-                  {cat}
+      {(() => {
+        const paretoGroupLabelStyle = {
+          width: '100%',
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          color: 'var(--color-text-tertiary)',
+          marginTop: 4,
+          marginBottom: 2,
+          paddingBottom: 3,
+          borderBottom: '1px dashed var(--border-ghost)',
+        };
+        const paretoGroupMetaStyle = { fontWeight: 500, textTransform: 'none', letterSpacing: 0, marginLeft: 6, color: 'var(--color-text-tertiary)' };
+        function renderChip(cat) {
+          const color = catColor(cat);
+          const bg = catBg(cat);
+          const selected = includedCategories.has(cat);
+          return (
+            <div
+              key={cat}
+              className={styles.bucketChip}
+              draggable
+              onDragStart={() => setDraggedCategory(cat)}
+              onDragEnd={() => setDraggedCategory(null)}
+              onClick={() => { toggleCategoryFilter(cat); setPage(0); }}
+              style={{
+                background: selected ? bg : 'var(--color-surface-alt)',
+                color: selected ? color : 'var(--color-text-tertiary)',
+                borderColor: selected ? color + '30' : 'transparent',
+                opacity: selected ? 1 : 0.5,
+                cursor: 'pointer',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{getCategoryIcon(cat)}</span>
+              {cat}
+              {pareto8020View && (
+                <span style={{ fontSize: 10.5, opacity: 0.75, marginLeft: 4 }}>
+                  {fmt(categoryTotals.get(cat) || 0)}
+                </span>
+              )}
+            </div>
+          );
+        }
+        function renderBucketBody(cats, emptyMsg) {
+          if (cats.length === 0) return <span className={styles.bucketEmpty}>{emptyMsg}</span>;
+          if (!pareto8020View) return cats.map(renderChip);
+          const { top, bottom, total } = splitPareto(cats);
+          const topTotal = top.reduce((s, c) => s + (categoryTotals.get(c) || 0), 0);
+          const bottomTotal = total - topTotal;
+          const pct = v => total ? Math.round((v / total) * 100) : 0;
+          return (
+            <>
+              <div style={paretoGroupLabelStyle}>
+                Top 80%
+                <span style={paretoGroupMetaStyle}>{top.length} {top.length === 1 ? 'category' : 'categories'} · {fmt(topTotal)} ({pct(topTotal)}%)</span>
+              </div>
+              {top.length ? top.map(renderChip) : <span className={styles.bucketEmpty}>—</span>}
+              <div style={paretoGroupLabelStyle}>
+                Bottom 20%
+                <span style={paretoGroupMetaStyle}>{bottom.length} {bottom.length === 1 ? 'category' : 'categories'} · {fmt(bottomTotal)} ({pct(bottomTotal)}%)</span>
+              </div>
+              {bottom.length ? bottom.map(renderChip) : <span className={styles.bucketEmpty}>—</span>}
+            </>
+          );
+        }
+        const reviewCats = activeCategories.filter(c => !organizedCategories.has(c));
+        const organizedCats = activeCategories.filter(c => organizedCategories.has(c));
+        return (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+              <button
+                type="button"
+                onClick={togglePareto}
+                title={pareto8020View ? 'Show flat list' : 'Group each bucket into Top 80% and Bottom 20% of spend'}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 4,
+                  background: pareto8020View ? 'var(--color-surface-alt)' : 'none',
+                  border: '1px solid var(--border-ghost)',
+                  borderRadius: 6,
+                  padding: '4px 10px',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: pareto8020View ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
+                  cursor: 'pointer',
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>stacked_bar_chart</span>
+                80/20 view {pareto8020View ? 'on' : 'off'}
+              </button>
+            </div>
+            <div className={styles.bucketGrid}>
+              <div
+                className={`${styles.bucket} ${dragOverBucket === 'review' ? styles.bucketActive : ''}`}
+                onDragOver={e => { e.preventDefault(); setDragOverBucket('review'); }}
+                onDragLeave={() => setDragOverBucket(null)}
+                onDrop={() => handleDropCategory('review')}
+              >
+                <div className={styles.bucketHeader}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#e8a317' }}>pending</span>
+                  <span className={styles.bucketTitle}>Needs Review</span>
+                  <span className={styles.bucketCount}>{reviewCats.length}</span>
+                  {(() => {
+                    const allSelected = reviewCats.length > 0 && reviewCats.every(c => includedCategories.has(c));
+                    return (
+                      <button
+                        className={styles.categoryFilterClear}
+                        style={{ marginLeft: 'auto', padding: 0, fontSize: 9 }}
+                        onClick={() => {
+                          setIncludedCategories(prev => {
+                            const next = new Set(prev);
+                            if (allSelected) { for (const c of reviewCats) next.delete(c); }
+                            else { for (const c of reviewCats) next.add(c); }
+                            return next;
+                          });
+                          setPage(0);
+                        }}
+                        type="button"
+                      >
+                        {allSelected ? 'Deselect All' : 'Select All'}
+                      </button>
+                    );
+                  })()}
                 </div>
-              );
-            })}
-            {activeCategories.filter(c => !organizedCategories.has(c)).length === 0 && (
-              <span className={styles.bucketEmpty}>All categories organized! Drop here to move back.</span>
-            )}
-          </div>
-        </div>
-        <div
-          className={`${styles.bucket} ${dragOverBucket === 'organized' ? styles.bucketActive : ''}`}
-          onDragOver={e => { e.preventDefault(); setDragOverBucket('organized'); }}
-          onDragLeave={() => setDragOverBucket(null)}
-          onDrop={() => handleDropCategory('organized')}
-        >
-          <div className={styles.bucketHeader}>
-            <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#16a34a' }}>check_circle</span>
-            <span className={styles.bucketTitle}>Organized</span>
-            <span className={styles.bucketCount}>{activeCategories.filter(c => organizedCategories.has(c)).length}</span>
-            {(() => {
-              const bucketCats = activeCategories.filter(c => organizedCategories.has(c));
-              const allSelected = bucketCats.length > 0 && bucketCats.every(c => includedCategories.has(c));
-              return (
-                <button
-                  className={styles.categoryFilterClear}
-                  style={{ marginLeft: 'auto', padding: 0, fontSize: 9 }}
-                  onClick={() => {
-                    setIncludedCategories(prev => {
-                      const next = new Set(prev);
-                      if (allSelected) {
-                        for (const c of bucketCats) next.delete(c);
-                      } else {
-                        for (const c of bucketCats) next.add(c);
-                      }
-                      return next;
-                    });
-                    setPage(0);
-                  }}
-                  type="button"
-                >
-                  {allSelected ? 'Deselect All' : 'Select All'}
-                </button>
-              );
-            })()}
-          </div>
-          <div className={styles.bucketItems}>
-            {activeCategories.filter(c => organizedCategories.has(c)).map(cat => {
-              const color = catColor(cat);
-              const bg = catBg(cat);
-              const selected = includedCategories.has(cat);
-              return (
-                <div
-                  key={cat}
-                  className={styles.bucketChip}
-                  draggable
-                  onDragStart={() => setDraggedCategory(cat)}
-                  onDragEnd={() => setDraggedCategory(null)}
-                  onClick={() => { toggleCategoryFilter(cat); setPage(0); }}
-                  style={{
-                    background: selected ? bg : 'var(--color-surface-alt)',
-                    color: selected ? color : 'var(--color-text-tertiary)',
-                    borderColor: selected ? color + '30' : 'transparent',
-                    opacity: selected ? 1 : 0.5,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{getCategoryIcon(cat)}</span>
-                  {cat}
+                <div className={styles.bucketItems}>
+                  {renderBucketBody(reviewCats, 'All categories organized! Drop here to move back.')}
                 </div>
-              );
-            })}
-            {activeCategories.filter(c => organizedCategories.has(c)).length === 0 && (
-              <span className={styles.bucketEmpty}>Drag categories here when they're organized</span>
-            )}
-          </div>
-        </div>
-      </div>
+              </div>
+              <div
+                className={`${styles.bucket} ${dragOverBucket === 'organized' ? styles.bucketActive : ''}`}
+                onDragOver={e => { e.preventDefault(); setDragOverBucket('organized'); }}
+                onDragLeave={() => setDragOverBucket(null)}
+                onDrop={() => handleDropCategory('organized')}
+              >
+                <div className={styles.bucketHeader}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#16a34a' }}>check_circle</span>
+                  <span className={styles.bucketTitle}>Organized</span>
+                  <span className={styles.bucketCount}>{organizedCats.length}</span>
+                  {(() => {
+                    const allSelected = organizedCats.length > 0 && organizedCats.every(c => includedCategories.has(c));
+                    return (
+                      <button
+                        className={styles.categoryFilterClear}
+                        style={{ marginLeft: 'auto', padding: 0, fontSize: 9 }}
+                        onClick={() => {
+                          setIncludedCategories(prev => {
+                            const next = new Set(prev);
+                            if (allSelected) { for (const c of organizedCats) next.delete(c); }
+                            else { for (const c of organizedCats) next.add(c); }
+                            return next;
+                          });
+                          setPage(0);
+                        }}
+                        type="button"
+                      >
+                        {allSelected ? 'Deselect All' : 'Select All'}
+                      </button>
+                    );
+                  })()}
+                </div>
+                <div className={styles.bucketItems}>
+                  {renderBucketBody(organizedCats, "Drag categories here when they're organized")}
+                </div>
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
       {/* Search */}
       <div style={{ marginBottom: 16 }}>
