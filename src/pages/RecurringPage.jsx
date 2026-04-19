@@ -217,6 +217,7 @@ export function RecurringPage() {
                             <thead>
                               <tr style={{ background: 'var(--color-surface-alt, #f8f8f8)' }}>
                                 <th style={{ paddingLeft: 32 }}>Payment</th>
+                                <th>Last Charged</th>
                                 <th>Account</th>
                                 <th style={{ textAlign: 'center' }}>Frequency</th>
                                 <th style={{ textAlign: 'right' }}>Avg Amount</th>
@@ -232,6 +233,7 @@ export function RecurringPage() {
                                     <td style={{ paddingLeft: 32 }}>
                                       <div className={styles.paymentName}>{r.description}</div>
                                     </td>
+                                    <td className={styles.accountCell}>{r.txns.length > 0 ? r.txns[0].date : '—'}</td>
                                     <td className={styles.accountCell}>{r.account}</td>
                                     <td style={{ textAlign: 'center' }}>
                                       <span className={styles.freqBadge}>{freqLabel}</span>
