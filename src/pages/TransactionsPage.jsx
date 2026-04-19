@@ -739,15 +739,14 @@ export function TransactionsPage() {
   }, [transactions]);
 
   /* Per-category spend totals for Pareto 80/20 bucketing.
-     Matches the pie chart's drilldown convention: for each category, sum the |net signed|
-     over its subcategories whose net is negative. Equivalent to "true spend per category
-     after refunds/transfers within each subcategory cancel out". A category with mostly
-     income/refund subs will read low, so the bucket ranking surfaces real expense drivers.
-     Respects the current account / month / search scope. */
+     Matches the Subcategories pie convention exactly: for each category, sum |net signed|
+     over its subcategories whose net is negative, plus its 'Uncategorized' sub if non-zero.
+     Excludes Income transactions like the pie does. Respects current scope. */
   const categoryTotals = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const subSigned = new Map(); // key = `${cat}\u0001${sub}`
     for (const t of (transactions || [])) {
+      if ((t.category || '') === 'Income') continue;
       if (activeAccount !== 'all' && t.account !== activeAccount) continue;
       if (selectedMonth) {
         if (!t.date) continue;
@@ -768,7 +767,10 @@ export function TransactionsPage() {
     }
     const map = new Map();
     for (const [k, v] of subSigned) {
-      if (v >= 0) continue; // only count subs that net negative (true expense subs)
+      const sub = k.split('\u0001')[1];
+      // Match pie filter: keep negative subs, plus 'Uncategorized' regardless of sign
+      const include = v < 0 || (sub === 'Uncategorized' && v !== 0);
+      if (!include) continue;
       const cat = k.split('\u0001')[0];
       map.set(cat, (map.get(cat) || 0) + Math.abs(v));
     }
