@@ -2390,26 +2390,45 @@ export function TransactionsPage() {
                       </span>
                     </td>}
                     {visibleColumns.has('date') && <td className={styles.dateCell}>
-                      <input
-                        type="date"
-                        value={toIsoDate(t.date)}
-                        onChange={e => {
-                          const fallbackKey = `${t.date || ''}|${(t.description || '').trim()}|${t.amount}`;
-                          updateTransactionDate(t.transactionId, e.target.value, fallbackKey);
-                          flashSaved();
-                        }}
-                        style={{
-                          border: 'none',
-                          background: 'transparent',
-                          font: 'inherit',
-                          color: 'inherit',
-                          padding: 0,
-                          cursor: 'pointer',
-                          width: '100%',
-                          colorScheme: 'light',
-                        }}
-                        title={`Click to edit date (current: ${formatDate(t.date)})`}
-                      />
+                      {(() => {
+                        const isoVal = toIsoDate(t.date);
+                        const fallbackKey = `${t.date || ''}|${(t.description || '').trim()}|${t.amount}`;
+                        return (
+                          <label
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', position: 'relative', padding: '2px 4px', borderRadius: 4 }}
+                            title={`Click to edit date (current: ${formatDate(t.date)})`}
+                            onClick={e => {
+                              const input = e.currentTarget.querySelector('input[type="date"]');
+                              if (input && typeof input.showPicker === 'function') {
+                                e.preventDefault();
+                                try { input.showPicker(); } catch {}
+                              }
+                            }}
+                          >
+                            <span>{formatDate(t.date) || '—'}</span>
+                            <span className="material-symbols-outlined" style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>edit_calendar</span>
+                            <input
+                              type="date"
+                              value={isoVal}
+                              onChange={e => {
+                                if (!e.target.value) return;
+                                updateTransactionDate(t.transactionId, e.target.value, fallbackKey);
+                                flashSaved();
+                              }}
+                              style={{
+                                position: 'absolute',
+                                inset: 0,
+                                opacity: 0,
+                                width: '100%',
+                                height: '100%',
+                                cursor: 'pointer',
+                                colorScheme: 'light',
+                              }}
+                              tabIndex={-1}
+                            />
+                          </label>
+                        );
+                      })()}
                     </td>}
                     {visibleColumns.has('notes') && <td>
                       <input
