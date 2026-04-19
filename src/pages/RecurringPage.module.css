@@ -298,6 +298,20 @@
   color: var(--color-error);
 }
 
+.statusBtnCancelled {
+  border: 1px solid var(--color-border, #e2e2e2);
+  background: var(--color-surface);
+  color: var(--color-text-tertiary);
+}
+
+.statusBtnCancelled:hover { border-color: var(--color-text-secondary); color: var(--color-text-secondary); }
+
+.statusBtnCancelledActive {
+  border: 1px solid var(--color-text-secondary);
+  background: var(--color-surface-alt);
+  color: var(--color-text-secondary);
+}
+
 .expandArrow {
   display: inline-block;
   width: 14px;

@@ -204,6 +204,10 @@ export function RecurringPage() {
     var dir = itemSort.dir === 'asc' ? 1 : -1;
     var col = itemSort.col;
     return items.slice().sort(function(a, b) {
+      // Cancelled items always fall to the bottom within the bucket.
+      var aCancelled = statuses[a.key] === 'cancelled' ? 1 : 0;
+      var bCancelled = statuses[b.key] === 'cancelled' ? 1 : 0;
+      if (aCancelled !== bCancelled) return aCancelled - bCancelled;
       if (col === 'description') return a.description.localeCompare(b.description) * dir;
       if (col === 'account') return (a.account || '').localeCompare(b.account || '') * dir;
       if (col === 'frequency') return a.frequency.localeCompare(b.frequency) * dir;
@@ -367,10 +371,11 @@ export function RecurringPage() {
                             <tbody>
                               {sortedItems.map(function(r) {
                                 var freqLabel = r.frequency === 'annual' ? 'Annual' : r.frequency === 'quarterly' ? 'Quarterly' : 'Monthly';
+                                var itemCancelled = statuses[r.key] === 'cancelled';
                                 return (
-                                  <tr key={r.key}>
+                                  <tr key={r.key} style={{ opacity: itemCancelled ? 0.5 : 1 }}>
                                     <td style={{ paddingLeft: 32 }}>
-                                      <div className={styles.paymentName}>{r.description}</div>
+                                      <div className={styles.paymentName} style={{ textDecoration: itemCancelled ? 'line-through' : 'none' }}>{r.description}</div>
                                     </td>
                                     <td className={styles.accountCell}>{r.txns.length > 0 ? fmtDate(r.txns[0].date) : '—'}</td>
                                     <td className={styles.accountCell}>{fmtDate(r.nextExpected)}</td>
@@ -395,6 +400,7 @@ export function RecurringPage() {
                                         <button className={statuses[r.key] === 'keep' ? styles.statusBtnKeepActive : styles.statusBtnKeep} onClick={function() { setStatus(r.key, 'keep'); }} title="Keep">Keep</button>
                                         <button className={statuses[r.key] === 'nomore' ? styles.statusBtnNomoreActive : styles.statusBtnNomore} onClick={function() { setStatus(r.key, 'nomore'); }} title="No More">No More</button>
                                         <button className={statuses[r.key] === 'getrid' ? styles.statusBtnGetridActive : styles.statusBtnGetrid} onClick={function() { setStatus(r.key, 'getrid'); }} title="Get Rid Of">Get Rid</button>
+                                        <button className={statuses[r.key] === 'cancelled' ? styles.statusBtnCancelledActive : styles.statusBtnCancelled} onClick={function() { setStatus(r.key, 'cancelled'); }} title="Already cancelled">Cancelled</button>
                                       </div>
                                     </td>
                                   </tr>
