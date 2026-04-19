@@ -102,8 +102,8 @@ function applyOverrides(txns, overrides, subOverrides, dateOverrides) {
     if (id && subOverrides[id]) updated = { ...updated, subcategory: subOverrides[id] };
     else if (subOverrides[fb]) updated = { ...updated, subcategory: subOverrides[fb] };
     if (hasDate) {
-      if (id && dateOverrides[id]) updated = { ...updated, date: dateOverrides[id] };
-      else if (dateOverrides[fb]) updated = { ...updated, date: dateOverrides[fb] };
+      if (id && dateOverrides[id]) updated = { ...updated, originalDate: t.date, date: dateOverrides[id] };
+      else if (dateOverrides[fb]) updated = { ...updated, originalDate: t.date, date: dateOverrides[fb] };
     }
     return updated;
   });
@@ -307,9 +307,13 @@ export function DataProvider({ children }) {
     const key = transactionId || fallbackKey;
     if (!key) return;
     setAllTransactions(prev => prev.map(t => {
-      if (transactionId && t.transactionId === transactionId) return { ...t, date: newDate };
-      if (!transactionId && fallbackKey && txnFallbackKey(t) === fallbackKey) return { ...t, date: newDate };
-      return t;
+      const matches = (transactionId && t.transactionId === transactionId)
+        || (!transactionId && fallbackKey && txnFallbackKey(t) === fallbackKey);
+      if (!matches) return t;
+      // Preserve the very first observed date so we can show it on hover even after
+      // multiple edits (don't overwrite originalDate if it's already set).
+      const originalDate = t.originalDate || t.date;
+      return { ...t, originalDate, date: newDate };
     }));
     setDateOverrides(prev => {
       const next = { ...prev };

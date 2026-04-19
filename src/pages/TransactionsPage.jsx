@@ -325,8 +325,17 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
         {months.map((m, mi) => {
           const cx = xCenter(mi);
           const groupStart = cx - groupW / 2;
+          const hoverInThisMonth = hoverSeg && hoverSeg.mi === mi;
+          // Invisible per-month hit zone so the user doesn't have to land on a thin bar
+          const monthHit = (
+            <rect key={`hit-${mi}`} x={cx - slotW / 2} y={pad.top} width={slotW} height={chartH}
+              fill="transparent" pointerEvents="all"
+              onMouseEnter={() => setHoverSeg({ mi, ci: 0, x: cx, y: pad.top + chartH / 2 })}
+            />
+          );
           return (
             <g key={mi}>
+              {monthHit}
               {topCategories.map((cat, ci) => {
                 const val = m.byCategory[cat] || 0;
                 const barH = (val / niceMax) * chartH;
@@ -341,6 +350,21 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                     style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
                     onMouseEnter={() => setHoverSeg({ mi, ci, x: bx + singleW / 2, y: by })}
                   />
+                );
+              })}
+              {/* Per-bar amount labels — only the hovered month, drawn above each bar */}
+              {hoverInThisMonth && topCategories.map((cat, ci) => {
+                const val = m.byCategory[cat] || 0;
+                if (val <= 0) return null;
+                const bx = groupStart + ci * singleW + 0.5;
+                const by = yPos(val);
+                const label = val >= 1000 ? `$${(val / 1000).toFixed(1)}k` : `$${Math.round(val)}`;
+                return (
+                  <text key={`lbl-${ci}`} x={bx + singleW / 2} y={by - 3} textAnchor="middle"
+                    fontSize={9} fontWeight={700} fill="var(--color-text-primary)" fontFamily="var(--font-headline)"
+                    style={{ pointerEvents: 'none' }}>
+                    {label}
+                  </text>
                 );
               })}
             </g>
@@ -2393,10 +2417,14 @@ export function TransactionsPage() {
                       {(() => {
                         const isoVal = toIsoDate(t.date);
                         const fallbackKey = `${t.date || ''}|${(t.description || '').trim()}|${t.amount}`;
+                        const isOverridden = !!t.originalDate && t.originalDate !== t.date;
+                        const tooltip = isOverridden
+                          ? `Original: ${formatDate(t.originalDate)}\nClick to edit (current: ${formatDate(t.date)})`
+                          : `Click to edit date (current: ${formatDate(t.date)})`;
                         return (
                           <label
                             style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', position: 'relative', padding: '2px 4px', borderRadius: 4 }}
-                            title={`Click to edit date (current: ${formatDate(t.date)})`}
+                            title={tooltip}
                             onClick={e => {
                               const input = e.currentTarget.querySelector('input[type="date"]');
                               if (input && typeof input.showPicker === 'function') {
@@ -2405,8 +2433,15 @@ export function TransactionsPage() {
                               }
                             }}
                           >
-                            <span>{formatDate(t.date) || '—'}</span>
-                            <span className="material-symbols-outlined" style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>edit_calendar</span>
+                            <span style={isOverridden ? { borderBottom: '1px dotted var(--color-text-tertiary)' } : undefined}>
+                              {formatDate(t.date) || '—'}
+                            </span>
+                            <span
+                              className="material-symbols-outlined"
+                              style={{ fontSize: 12, color: isOverridden ? 'var(--color-secondary, #0058be)' : 'var(--color-text-tertiary)' }}
+                            >
+                              {isOverridden ? 'history' : 'edit_calendar'}
+                            </span>
                             <input
                               type="date"
                               value={isoVal}
