@@ -45,8 +45,9 @@ export function RecurringPage() {
     var groups = {};
     for (var i = 0; i < transactions.length; i++) {
       var t = transactions[i];
+      var cat = (t.category || '').toLowerCase();
       var sub = (t.subcategory || '').toLowerCase();
-      if (sub !== 'subscriptions') continue;
+      if (sub !== 'subscriptions' && cat !== 'subscriptions') continue;
       var desc = (t.description || '').trim();
       if (!desc) continue;
       var key = desc.toLowerCase();
