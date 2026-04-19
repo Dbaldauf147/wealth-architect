@@ -738,44 +738,8 @@ export function TransactionsPage() {
     return [...new Set(cats)].sort();
   }, [transactions]);
 
-  /* Per-category spend totals for Pareto 80/20 bucketing.
-     Matches the Subcategories pie convention exactly: for each category, sum |net signed|
-     over its subcategories whose net is negative, plus its 'Uncategorized' sub if non-zero.
-     Excludes Income transactions like the pie does. Respects current scope. */
-  const categoryTotals = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    const subSigned = new Map(); // key = `${cat}\u0001${sub}`
-    for (const t of (transactions || [])) {
-      if ((t.category || '') === 'Income') continue;
-      if (activeAccount !== 'all' && t.account !== activeAccount) continue;
-      if (selectedMonth) {
-        if (!t.date) continue;
-        const d = new Date(t.date);
-        if (isNaN(d)) continue;
-        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        if (key !== selectedMonth) continue;
-      }
-      if (q) {
-        const hay = [t.description, t.category, t.account, t.institution, t.fullDescription, String(t.amount), formatDate(t.date)]
-          .map(v => String(v || '').toLowerCase());
-        if (!hay.some(h => h.includes(q))) continue;
-      }
-      const cat = t.category || 'Uncategorized';
-      const sub = t.subcategory || 'Uncategorized';
-      const k = `${cat}\u0001${sub}`;
-      subSigned.set(k, (subSigned.get(k) || 0) + (Number(t.amount) || 0));
-    }
-    const map = new Map();
-    for (const [k, v] of subSigned) {
-      const sub = k.split('\u0001')[1];
-      // Match pie filter: keep negative subs, plus 'Uncategorized' regardless of sign
-      const include = v < 0 || (sub === 'Uncategorized' && v !== 0);
-      if (!include) continue;
-      const cat = k.split('\u0001')[0];
-      map.set(cat, (map.get(cat) || 0) + Math.abs(v));
-    }
-    return map;
-  }, [transactions, activeAccount, selectedMonth, searchQuery]);
+  // categoryTotals is defined further down so it can use barChartData.visibleKeys for
+  // the same chart-month-window scope the pie uses.
 
   function splitPareto(cats) {
     const sorted = cats.slice().sort((a, b) => (categoryTotals.get(b) || 0) - (categoryTotals.get(a) || 0));
@@ -995,6 +959,48 @@ export function TransactionsPage() {
 
     return { months, topCategories, maxTotal, drillDown, parent: drillDown ? visibleCats[0] : null, totalMonths: allKeys.length, visibleKeys: new Set(recentKeys) };
   }, [filtered, chartMonthCount]);
+
+  /* Per-category spend totals for Pareto 80/20 bucketing.
+     Mirrors the Subcategories pie convention exactly so chip totals always agree with
+     the pie that's paired with the bar chart:
+       - Excludes Income transactions
+       - Restricted to the months currently visible on the bar chart (visibleKeys)
+       - Respects active account / single-month / search scope
+       - Per category, sums |net signed| over its subcategories that net negative,
+         plus its 'Uncategorized' sub regardless of sign (matches pie's Uncategorized rule)
+     Category/subcategory filters are deliberately NOT applied — that would hide chips. */
+  const categoryTotals = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const chartKeys = barChartData.visibleKeys;
+    const subSigned = new Map(); // key = `${cat}\u0001${sub}`
+    for (const t of (transactions || [])) {
+      if ((t.category || '') === 'Income') continue;
+      if (activeAccount !== 'all' && t.account !== activeAccount) continue;
+      if (!t.date) continue;
+      const d = new Date(t.date);
+      if (isNaN(d)) continue;
+      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (selectedMonth && monthKey !== selectedMonth) continue;
+      if (chartKeys && chartKeys.size > 0 && !chartKeys.has(monthKey)) continue;
+      if (q) {
+        const hay = [t.description, t.category, t.account, t.institution, t.fullDescription, String(t.amount), formatDate(t.date)]
+          .map(v => String(v || '').toLowerCase());
+        if (!hay.some(h => h.includes(q))) continue;
+      }
+      const cat = t.category || 'Uncategorized';
+      const sub = t.subcategory || 'Uncategorized';
+      const k = `${cat}\u0001${sub}`;
+      subSigned.set(k, (subSigned.get(k) || 0) + (Number(t.amount) || 0));
+    }
+    const map = new Map();
+    for (const [k, v] of subSigned) {
+      const sub = k.split('\u0001')[1];
+      if (!(v < 0 || (sub === 'Uncategorized' && v !== 0))) continue;
+      const cat = k.split('\u0001')[0];
+      map.set(cat, (map.get(cat) || 0) + Math.abs(v));
+    }
+    return map;
+  }, [transactions, activeAccount, selectedMonth, searchQuery, barChartData.visibleKeys]);
 
   /* Pie chart data — scoped to the same months visible in the spending chart */
   const pieData = useMemo(() => {
