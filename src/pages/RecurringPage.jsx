@@ -185,12 +185,16 @@ export function RecurringPage() {
                 <th>Subcategory</th>
                 <th style={{ textAlign: 'center' }}>Items</th>
                 <th style={{ textAlign: 'right' }}>Avg Monthly</th>
-                <th style={{ textAlign: 'right' }}>Annual Est.</th>
               </tr>
             </thead>
             <tbody>
               {subBuckets.map(function(bucket) {
                 var isOpen = expandedSubVal === bucket.name;
+                var sortedItems = bucket.items.slice().sort(function(a, b) {
+                  var aDate = a.txns.length > 0 ? new Date(a.txns[0].date) : 0;
+                  var bDate = b.txns.length > 0 ? new Date(b.txns[0].date) : 0;
+                  return bDate - aDate;
+                });
                 return (
                   <Fragment key={bucket.name}>
                     <tr style={{ cursor: 'pointer' }} onClick={function() { setExpandedSub(isOpen ? null : bucket.name); }}>
@@ -206,13 +210,10 @@ export function RecurringPage() {
                       <td style={{ textAlign: 'right' }}>
                         <div className={styles.amountMain}>{fmt(bucket.totalMonthly)}</div>
                       </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <div className={styles.annualAmount}>{fmtShort(bucket.totalAnnual)}</div>
-                      </td>
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan="4" style={{ padding: 0 }}>
+                        <td colSpan="3" style={{ padding: 0 }}>
                           <table className={styles.table} style={{ margin: 0 }}>
                             <thead>
                               <tr style={{ background: 'var(--color-surface-alt, #f8f8f8)' }}>
@@ -221,12 +222,11 @@ export function RecurringPage() {
                                 <th>Account</th>
                                 <th style={{ textAlign: 'center' }}>Frequency</th>
                                 <th style={{ textAlign: 'right' }}>Avg Amount</th>
-                                <th style={{ textAlign: 'right' }}>Annual Est.</th>
                                 <th style={{ textAlign: 'center' }}>Status</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {bucket.items.map(function(r) {
+                              {sortedItems.map(function(r) {
                                 var freqLabel = r.frequency === 'annual' ? 'Annual' : r.frequency === 'quarterly' ? 'Quarterly' : 'Monthly';
                                 return (
                                   <tr key={r.key}>
@@ -243,9 +243,6 @@ export function RecurringPage() {
                                       {!r.isFixed && (
                                         <div className={styles.amountRange}>{fmt(r.minAmount)} – {fmt(r.maxAmount)}</div>
                                       )}
-                                    </td>
-                                    <td style={{ textAlign: 'right' }}>
-                                      <div className={styles.annualAmount}>{fmtShort(r.annualEstimate)}</div>
                                     </td>
                                     <td style={{ textAlign: 'center' }} onClick={function(e) { e.stopPropagation(); }}>
                                       <div className={styles.statusBtns}>
@@ -270,7 +267,6 @@ export function RecurringPage() {
               <tr>
                 <td colSpan="2" style={{ fontWeight: 700 }}>Total</td>
                 <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(totalMonthly)}</td>
-                <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtShort(totalAnnual)}</td>
               </tr>
             </tfoot>
           </table>
