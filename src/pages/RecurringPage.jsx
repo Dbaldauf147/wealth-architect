@@ -187,6 +187,10 @@ export function RecurringPage() {
     var list = Object.values(buckets);
     var dir = bucketSort.dir === 'asc' ? 1 : -1;
     list.sort(function(a, b) {
+      // Cancelled buckets always sink to the bottom regardless of column sort.
+      var aCancelled = subcatStatuses[a.name] === 'cancelled' ? 1 : 0;
+      var bCancelled = subcatStatuses[b.name] === 'cancelled' ? 1 : 0;
+      if (aCancelled !== bCancelled) return aCancelled - bCancelled;
       var col = bucketSort.col;
       if (col === 'name') return a.name.localeCompare(b.name) * dir;
       if (col === 'items') return (a.items.length - b.items.length) * dir;
@@ -194,7 +198,7 @@ export function RecurringPage() {
       return (a.totalSpent - b.totalSpent) * dir;
     });
     return list;
-  }, [recurring, bucketSort]);
+  }, [recurring, bucketSort, subcatStatuses]);
 
   function sortItems(items) {
     var dir = itemSort.dir === 'asc' ? 1 : -1;
