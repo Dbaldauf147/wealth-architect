@@ -1,8 +1,42 @@
 import { useMemo, useState, useEffect } from 'react';
+import { useData } from '../contexts/DataContext';
 
 function fmt(n) {
   if (n == null || n === '') return '—';
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
+}
+
+function periodWindowStart(period) {
+  // Returns the inclusive start date of the current cycle for the given period.
+  const now = new Date();
+  if (period === 'monthly') return new Date(now.getFullYear(), now.getMonth(), 1);
+  if (period === 'quarterly') {
+    const q = Math.floor(now.getMonth() / 3);
+    return new Date(now.getFullYear(), q * 3, 1);
+  }
+  if (period === 'annual') return new Date(now.getFullYear(), 0, 1);
+  return null; // one-time → no window
+}
+
+function autoUsedForPromo(promo, transactions) {
+  if (!promo.matchSubcategory && !promo.matchCategory) return null;
+  if (!transactions || transactions.length === 0) return 0;
+  const start = periodWindowStart(promo.period);
+  const wantSub = (promo.matchSubcategory || '').trim().toLowerCase();
+  const wantCat = (promo.matchCategory || '').trim().toLowerCase();
+  let sum = 0;
+  for (const t of transactions) {
+    const amt = Number(t.amount) || 0;
+    if (amt >= 0) continue; // expenses only
+    if (start) {
+      const d = new Date(t.date);
+      if (isNaN(d) || d < start) continue;
+    }
+    if (wantSub && (t.subcategory || '').toLowerCase() !== wantSub) continue;
+    if (wantCat && (t.category || '').toLowerCase() !== wantCat) continue;
+    sum += Math.abs(amt);
+  }
+  return sum;
 }
 
 /* ── Seed data: Chase Sapphire Reserve benefits ── */
@@ -14,6 +48,7 @@ const SEED_PROMOS = [
     value: 300,
     used: 0,
     period: 'annual',
+    matchSubcategory: 'Travel Credit',
     notes: 'Auto-applied to anything Chase codes as travel — NYC MTA, Citi Bike, rideshare, tolls, parking, hotels, airlines.',
     color: '#0058be',
   },
@@ -74,12 +109,24 @@ function savePromos(promos) {
 }
 
 export function CardPromosPage() {
+  const { transactions } = useData();
   const [promos, setPromos] = useState(loadPromos);
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState({});
   const [showSeedBtn, setShowSeedBtn] = useState(false);
 
   useEffect(() => savePromos(promos), [promos]);
+
+  // Resolve "effective used" per promo: auto-tracked from transactions if a match
+  // field is set, otherwise the manual "used" value the user typed.
+  const effectiveUsed = useMemo(() => {
+    const map = new Map();
+    for (const p of promos) {
+      const auto = autoUsedForPromo(p, transactions);
+      map.set(p.id, auto != null ? auto : (Number(p.used) || 0));
+    }
+    return map;
+  }, [promos, transactions]);
 
   const byCard = useMemo(() => {
     const groups = {};
@@ -95,7 +142,7 @@ export function CardPromosPage() {
     let totalUsed = 0;
     for (const p of promos) {
       const value = Number(p.value) || 0;
-      const used = Number(p.used) || 0;
+      const used = effectiveUsed.get(p.id) || 0;
       totalValue += value;
       totalUsed += Math.min(used, value);
     }
@@ -105,7 +152,7 @@ export function CardPromosPage() {
       remaining: totalValue - totalUsed,
       pct: totalValue > 0 ? totalUsed / totalValue : 0,
     };
-  }, [promos]);
+  }, [promos, effectiveUsed]);
 
   function addPromo() {
     const newPromo = {
@@ -209,7 +256,7 @@ export function CardPromosPage() {
       {byCard.map(([cardName, cardPromos]) => {
         const cardColor = cardPromos[0]?.color || '#475569';
         const cardValue = cardPromos.reduce((s, p) => s + (Number(p.value) || 0), 0);
-        const cardUsed = cardPromos.reduce((s, p) => s + Math.min(Number(p.used) || 0, Number(p.value) || 0), 0);
+        const cardUsed = cardPromos.reduce((s, p) => s + Math.min(effectiveUsed.get(p.id) || 0, Number(p.value) || 0), 0);
         return (
           <div key={cardName} style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, borderBottom: '1px solid var(--border-ghost)', paddingBottom: 12 }}>
@@ -227,8 +274,10 @@ export function CardPromosPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {cardPromos.map(p => {
                 const isEditing = editingId === p.id;
-                const pct = p.value > 0 ? Math.min(1, (Number(p.used) || 0) / Number(p.value)) : 0;
-                const remaining = Math.max(0, (Number(p.value) || 0) - (Number(p.used) || 0));
+                const usedNow = effectiveUsed.get(p.id) || 0;
+                const isAuto = !!(p.matchSubcategory || p.matchCategory);
+                const pct = p.value > 0 ? Math.min(1, usedNow / Number(p.value)) : 0;
+                const remaining = Math.max(0, (Number(p.value) || 0) - usedNow);
 
                 if (isEditing) {
                   return (
@@ -239,7 +288,7 @@ export function CardPromosPage() {
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
                         <LabeledInput label="Total $" type="number" value={editDraft.value} onChange={v => setEditDraft({ ...editDraft, value: v })} />
-                        <LabeledInput label="Used $" type="number" value={editDraft.used} onChange={v => setEditDraft({ ...editDraft, used: v })} />
+                        <LabeledInput label="Used $ (manual)" type="number" value={editDraft.used} onChange={v => setEditDraft({ ...editDraft, used: v })} />
                         <div>
                           <div style={labelStyle}>Period</div>
                           <select value={editDraft.period || 'annual'} onChange={e => setEditDraft({ ...editDraft, period: e.target.value })} style={inputStyle}>
@@ -254,6 +303,13 @@ export function CardPromosPage() {
                           <input type="color" value={editDraft.color || '#475569'} onChange={e => setEditDraft({ ...editDraft, color: e.target.value })} style={{ ...inputStyle, padding: 2, height: 34 }} />
                         </div>
                       </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                        <LabeledInput label="Auto-track from Subcategory" value={editDraft.matchSubcategory} onChange={v => setEditDraft({ ...editDraft, matchSubcategory: v })} />
+                        <LabeledInput label="Or from Category" value={editDraft.matchCategory} onChange={v => setEditDraft({ ...editDraft, matchCategory: v })} />
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 8 }}>
+                        If either match field is set, "used" is computed automatically each cycle by summing matching transactions (the manual "Used $" is ignored).
+                      </div>
                       <LabeledInput label="Notes" value={editDraft.notes} onChange={v => setEditDraft({ ...editDraft, notes: v })} />
                       <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
                         <button onClick={cancelEdit} style={btnSecondaryStyle}>Cancel</button>
@@ -266,18 +322,25 @@ export function CardPromosPage() {
                 return (
                   <div key={p.id} style={{ border: '1px solid var(--border-ghost)', borderRadius: 8, padding: 14, display: 'flex', gap: 16, alignItems: 'flex-start' }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                         <div style={{ fontFamily: 'var(--font-headline)', fontSize: 14, fontWeight: 700 }}>{p.name}</div>
                         <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'var(--color-surface-alt)', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                           {p.period}
                         </span>
+                        {isAuto && (
+                          <span title={`Auto-tracked from ${p.matchSubcategory ? 'subcategory “' + p.matchSubcategory + '”' : 'category “' + p.matchCategory + '”'}`}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'rgba(0,88,190,0.08)', color: 'var(--color-secondary, #0058be)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>autorenew</span>
+                            Auto
+                          </span>
+                        )}
                       </div>
                       {p.notes && <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 8, lineHeight: 1.4 }}>{p.notes}</div>}
                       <div style={{ height: 6, background: 'var(--color-surface-alt)', borderRadius: 3, overflow: 'hidden', marginBottom: 4 }}>
                         <div style={{ height: '100%', width: `${pct * 100}%`, background: pct >= 1 ? '#16a34a' : cardColor, transition: 'width 0.2s' }} />
                       </div>
                       <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
-                        {fmt(Number(p.used) || 0)} used · <strong style={{ color: remaining > 0 ? '#16a34a' : 'var(--color-text-tertiary)' }}>{fmt(remaining)} remaining</strong> of {fmt(p.value)}
+                        {fmt(usedNow)} used · <strong style={{ color: remaining > 0 ? '#16a34a' : 'var(--color-text-tertiary)' }}>{fmt(remaining)} remaining</strong> of {fmt(p.value)}
                       </div>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
