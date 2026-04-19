@@ -693,19 +693,33 @@ export function TransactionsPage() {
   }, [transactions]);
 
   /* Per-category spend totals for Pareto 80/20 bucketing.
-     Expense-only: skips positive amounts (income/refunds/transfers in) and sums |negatives|,
-     matching CardsPage.spendByCategory so the 80/20 chip amounts line up with
-     "spend" shown elsewhere in the app. */
+     Expense-only (skip positives) and respects the current account / month / search scope
+     so the chip totals match the view the user is looking at. Category/subcategory filters
+     are deliberately NOT applied — that would hide the very chips this view ranks. */
   const categoryTotals = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
     const map = new Map();
     for (const t of (transactions || [])) {
+      if (activeAccount !== 'all' && t.account !== activeAccount) continue;
+      if (selectedMonth) {
+        if (!t.date) continue;
+        const d = new Date(t.date);
+        if (isNaN(d)) continue;
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        if (key !== selectedMonth) continue;
+      }
+      if (q) {
+        const hay = [t.description, t.category, t.account, t.institution, t.fullDescription, String(t.amount), formatDate(t.date)]
+          .map(v => String(v || '').toLowerCase());
+        if (!hay.some(h => h.includes(q))) continue;
+      }
       const amt = Number(t.amount) || 0;
       if (amt >= 0) continue;
       const cat = t.category || 'Uncategorized';
       map.set(cat, (map.get(cat) || 0) + Math.abs(amt));
     }
     return map;
-  }, [transactions]);
+  }, [transactions, activeAccount, selectedMonth, searchQuery]);
 
   function splitPareto(cats) {
     const sorted = cats.slice().sort((a, b) => (categoryTotals.get(b) || 0) - (categoryTotals.get(a) || 0));
