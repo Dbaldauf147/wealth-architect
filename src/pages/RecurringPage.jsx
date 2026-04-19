@@ -52,7 +52,7 @@ export function RecurringPage() {
       if (!desc) continue;
       var key = desc.toLowerCase();
       if (!groups[key]) {
-        groups[key] = { description: desc, category: t.category || 'Uncategorized', months: {}, account: t.account || '', txns: [] };
+        groups[key] = { description: desc, category: t.category || 'Uncategorized', subcategory: t.subcategory || '', months: {}, account: t.account || '', txns: [] };
       }
       groups[key].txns.push({ date: t.date, amount: t.amount, account: t.account, description: t.description });
       var month = t.month || 'Unknown';
@@ -91,6 +91,7 @@ export function RecurringPage() {
         key: itemKey,
         description: g.description,
         category: g.category,
+        subcategory: g.subcategory,
         account: g.account,
         avgAmount: avgAmount,
         totalAmount: totalAmt,
@@ -169,6 +170,7 @@ export function RecurringPage() {
               <tr>
                 <th>Payment</th>
                 <th>Category</th>
+                <th>Subcategory</th>
                 <th>Account</th>
                 <th style={{ textAlign: 'center' }}>Frequency</th>
                 <th style={{ textAlign: 'right' }}>Avg Amount</th>
@@ -187,7 +189,7 @@ export function RecurringPage() {
                 return (
                   <Fragment key={freq}>
                     <tr className={styles.sectionHeaderRow}>
-                      <td colSpan="5">
+                      <td colSpan="6">
                         <span className={styles.sectionHeaderLabel}>{freqLabel}</span>
                         <span className={styles.sectionHeaderCount}>{items.length} payment{items.length !== 1 ? 's' : ''}</span>
                       </td>
@@ -210,6 +212,9 @@ export function RecurringPage() {
                       </td>
                       <td>
                         <span className={styles.categoryBadge}>{r.category}</span>
+                      </td>
+                      <td>
+                        <span className={styles.categoryBadge} style={{ opacity: r.subcategory ? 1 : 0.4 }}>{r.subcategory || '—'}</span>
                       </td>
                       <td className={styles.accountCell}>{r.account}</td>
                       <td style={{ textAlign: 'center' }}>
@@ -235,7 +240,7 @@ export function RecurringPage() {
                     {isOpen && r.txns.map(function(t, ti) {
                       return (
                         <tr key={'txn-' + ti} className={styles.txnDetailRow}>
-                          <td colSpan="2" style={{ paddingLeft: 40 }}>
+                          <td colSpan="3" style={{ paddingLeft: 40 }}>
                             <span className={styles.txnDate}>{t.date}</span>
                           </td>
                           <td>{t.account}</td>
