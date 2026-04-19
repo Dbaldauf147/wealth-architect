@@ -18,12 +18,37 @@ function periodWindowStart(period) {
   return null; // one-time → no window
 }
 
-function autoUsedForPromo(promo, transactions) {
-  if (!promo.matchSubcategory && !promo.matchCategory) return null;
-  if (!transactions || transactions.length === 0) return 0;
-  const start = periodWindowStart(promo.period);
+function normalizeDesc(s) {
+  return (s || '').toLowerCase().trim().replace(/[\s\-–—]+/g, ' ');
+}
+
+function promoHasAutoMatch(p) {
+  return !!((p.matchSubcategory || '').trim() || (p.matchCategory || '').trim() || (p.matchDescription || '').trim());
+}
+
+// OR semantics across the three match fields: a transaction qualifies if it matches
+// ANY of the populated criteria. Description match uses the same bidirectional contains
+// check used by the auto-categorization rules on the Transactions page.
+function transactionMatchesPromo(t, promo) {
   const wantSub = (promo.matchSubcategory || '').trim().toLowerCase();
   const wantCat = (promo.matchCategory || '').trim().toLowerCase();
+  const wantDesc = normalizeDesc(promo.matchDescription);
+  if (!wantSub && !wantCat && !wantDesc) return false;
+  if (wantSub && (t.subcategory || '').toLowerCase() === wantSub) return true;
+  if (wantCat && (t.category || '').toLowerCase() === wantCat) return true;
+  if (wantDesc) {
+    const txnDesc = normalizeDesc(t.description);
+    const txnFull = normalizeDesc(t.fullDescription);
+    if (txnDesc && (txnDesc.includes(wantDesc) || wantDesc.includes(txnDesc))) return true;
+    if (txnFull && txnFull.includes(wantDesc)) return true;
+  }
+  return false;
+}
+
+function autoUsedForPromo(promo, transactions) {
+  if (!promoHasAutoMatch(promo)) return null;
+  if (!transactions || transactions.length === 0) return 0;
+  const start = periodWindowStart(promo.period);
   let sum = 0;
   for (const t of transactions) {
     const amt = Number(t.amount) || 0;
@@ -32,8 +57,7 @@ function autoUsedForPromo(promo, transactions) {
       const d = new Date(t.date);
       if (isNaN(d) || d < start) continue;
     }
-    if (wantSub && (t.subcategory || '').toLowerCase() !== wantSub) continue;
-    if (wantCat && (t.category || '').toLowerCase() !== wantCat) continue;
+    if (!transactionMatchesPromo(t, promo)) continue;
     sum += Math.abs(amt);
   }
   return sum;
@@ -275,7 +299,7 @@ export function CardPromosPage() {
               {cardPromos.map(p => {
                 const isEditing = editingId === p.id;
                 const usedNow = effectiveUsed.get(p.id) || 0;
-                const isAuto = !!(p.matchSubcategory || p.matchCategory);
+                const isAuto = promoHasAutoMatch(p);
                 const pct = p.value > 0 ? Math.min(1, usedNow / Number(p.value)) : 0;
                 const remaining = Math.max(0, (Number(p.value) || 0) - usedNow);
 
@@ -303,12 +327,13 @@ export function CardPromosPage() {
                           <input type="color" value={editDraft.color || '#475569'} onChange={e => setEditDraft({ ...editDraft, color: e.target.value })} style={{ ...inputStyle, padding: 2, height: 34 }} />
                         </div>
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
-                        <LabeledInput label="Auto-track from Subcategory" value={editDraft.matchSubcategory} onChange={v => setEditDraft({ ...editDraft, matchSubcategory: v })} />
-                        <LabeledInput label="Or from Category" value={editDraft.matchCategory} onChange={v => setEditDraft({ ...editDraft, matchCategory: v })} />
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+                        <LabeledInput label="Auto-track Subcategory" value={editDraft.matchSubcategory} onChange={v => setEditDraft({ ...editDraft, matchSubcategory: v })} />
+                        <LabeledInput label="Or Category" value={editDraft.matchCategory} onChange={v => setEditDraft({ ...editDraft, matchCategory: v })} />
+                        <LabeledInput label="Or Description contains" value={editDraft.matchDescription} onChange={v => setEditDraft({ ...editDraft, matchDescription: v })} />
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 8 }}>
-                        If either match field is set, "used" is computed automatically each cycle by summing matching transactions (the manual "Used $" is ignored).
+                        If any match field is set, "used" auto-sums matching expense transactions in the current cycle (manual "Used $" is ignored). Multiple fields are OR'd — a transaction qualifies if it matches any one of them. Description match uses bidirectional contains, same as auto-categorization rules.
                       </div>
                       <LabeledInput label="Notes" value={editDraft.notes} onChange={v => setEditDraft({ ...editDraft, notes: v })} />
                       <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
@@ -327,13 +352,19 @@ export function CardPromosPage() {
                         <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'var(--color-surface-alt)', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                           {p.period}
                         </span>
-                        {isAuto && (
-                          <span title={`Auto-tracked from ${p.matchSubcategory ? 'subcategory “' + p.matchSubcategory + '”' : 'category “' + p.matchCategory + '”'}`}
-                                style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'rgba(0,88,190,0.08)', color: 'var(--color-secondary, #0058be)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>autorenew</span>
-                            Auto
-                          </span>
-                        )}
+                        {isAuto && (() => {
+                          const parts = [];
+                          if (p.matchSubcategory) parts.push(`subcategory “${p.matchSubcategory}”`);
+                          if (p.matchCategory) parts.push(`category “${p.matchCategory}”`);
+                          if (p.matchDescription) parts.push(`description contains “${p.matchDescription}”`);
+                          return (
+                            <span title={`Auto-tracked from ${parts.join(' OR ')}`}
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'rgba(0,88,190,0.08)', color: 'var(--color-secondary, #0058be)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 12 }}>autorenew</span>
+                              Auto
+                            </span>
+                          );
+                        })()}
                       </div>
                       {p.notes && <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 8, lineHeight: 1.4 }}>{p.notes}</div>}
                       <div style={{ height: 6, background: 'var(--color-surface-alt)', borderRadius: 3, overflow: 'hidden', marginBottom: 4 }}>
