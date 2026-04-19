@@ -87,6 +87,17 @@ export function RecurringPage() {
 
       var annualEstimate = frequency === 'annual' ? avgAmount : frequency === 'quarterly' ? avgAmount * 4 : avgAmount * 12;
 
+      // Next expected payment = most recent charge + frequency interval
+      var mostRecentDate = new Date(sortedTxns[sortedTxns.length - 1].date);
+      var nextDate = new Date(mostRecentDate);
+      if (frequency === 'annual') nextDate.setFullYear(nextDate.getFullYear() + 1);
+      else if (frequency === 'quarterly') nextDate.setMonth(nextDate.getMonth() + 3);
+      else nextDate.setMonth(nextDate.getMonth() + 1);
+      var ny = nextDate.getFullYear();
+      var nm = String(nextDate.getMonth() + 1).padStart(2, '0');
+      var nd = String(nextDate.getDate()).padStart(2, '0');
+      var nextExpected = ny + '-' + nm + '-' + nd;
+
       result.push({
         key: itemKey,
         description: g.description,
@@ -102,6 +113,7 @@ export function RecurringPage() {
         minAmount: minAmount,
         maxAmount: maxAmount,
         annualEstimate: annualEstimate,
+        nextExpected: nextExpected,
         txns: sortedTxns.reverse(),
       });
     }
@@ -115,6 +127,21 @@ export function RecurringPage() {
   var expandedSubVal = expandedSub[0];
   var setExpandedSub = expandedSub[1];
 
+  var bucketSortState = useState({ col: 'totalSpent', dir: 'desc' });
+  var bucketSort = bucketSortState[0];
+  var setBucketSort = bucketSortState[1];
+
+  var itemSortState = useState({ col: 'date', dir: 'desc' });
+  var itemSort = itemSortState[0];
+  var setItemSort = itemSortState[1];
+
+  function toggleSort(setCur, col, defaultDir) {
+    setCur(function(prev) {
+      if (prev.col === col) return { col: col, dir: prev.dir === 'asc' ? 'desc' : 'asc' };
+      return { col: col, dir: defaultDir || 'desc' };
+    });
+  }
+
   /* Group recurring items into subcategory buckets */
   var subBuckets = useMemo(function() {
     var buckets = {};
@@ -127,8 +154,41 @@ export function RecurringPage() {
       buckets[sub].totalAnnual += r.annualEstimate;
       buckets[sub].totalSpent += r.totalAmount;
     }
-    return Object.values(buckets).sort(function(a, b) { return b.totalAnnual - a.totalAnnual; });
-  }, [recurring]);
+    var list = Object.values(buckets);
+    var dir = bucketSort.dir === 'asc' ? 1 : -1;
+    list.sort(function(a, b) {
+      var col = bucketSort.col;
+      if (col === 'name') return a.name.localeCompare(b.name) * dir;
+      if (col === 'items') return (a.items.length - b.items.length) * dir;
+      if (col === 'totalMonthly') return (a.totalMonthly - b.totalMonthly) * dir;
+      return (a.totalSpent - b.totalSpent) * dir;
+    });
+    return list;
+  }, [recurring, bucketSort]);
+
+  function sortItems(items) {
+    var dir = itemSort.dir === 'asc' ? 1 : -1;
+    var col = itemSort.col;
+    return items.slice().sort(function(a, b) {
+      if (col === 'description') return a.description.localeCompare(b.description) * dir;
+      if (col === 'account') return (a.account || '').localeCompare(b.account || '') * dir;
+      if (col === 'frequency') return a.frequency.localeCompare(b.frequency) * dir;
+      if (col === 'avgAmount') return (a.avgAmount - b.avgAmount) * dir;
+      if (col === 'totalAmount') return (a.totalAmount - b.totalAmount) * dir;
+      if (col === 'nextExpected') return a.nextExpected.localeCompare(b.nextExpected) * dir;
+      var aDate = a.txns.length > 0 ? new Date(a.txns[0].date).getTime() : 0;
+      var bDate = b.txns.length > 0 ? new Date(b.txns[0].date).getTime() : 0;
+      return (aDate - bDate) * dir;
+    });
+  }
+
+  function sortArrow(state, key) {
+    return (
+      <span className={styles.sortArrow} style={{ opacity: state.col === key ? 1 : 0 }}>
+        {state.dir === 'asc' ? '\u25B2' : '\u25BC'}
+      </span>
+    );
+  }
 
   var totalMonthly = 0;
   var totalAnnual = 0;
@@ -185,20 +245,24 @@ export function RecurringPage() {
           <table className={styles.table}>
             <thead>
               <tr>
-                <th>Subcategory</th>
-                <th style={{ textAlign: 'center' }}>Items</th>
-                <th style={{ textAlign: 'right' }}>Avg Monthly</th>
-                <th style={{ textAlign: 'right' }}>Total Spent</th>
+                <th className={styles.sortableTh} onClick={function() { toggleSort(setBucketSort, 'name', 'asc'); }}>
+                  Subcategory{sortArrow(bucketSort, 'name')}
+                </th>
+                <th className={styles.sortableTh} style={{ textAlign: 'center' }} onClick={function() { toggleSort(setBucketSort, 'items', 'desc'); }}>
+                  Items{sortArrow(bucketSort, 'items')}
+                </th>
+                <th className={styles.sortableTh} style={{ textAlign: 'right' }} onClick={function() { toggleSort(setBucketSort, 'totalMonthly', 'desc'); }}>
+                  Avg Monthly{sortArrow(bucketSort, 'totalMonthly')}
+                </th>
+                <th className={styles.sortableTh} style={{ textAlign: 'right' }} onClick={function() { toggleSort(setBucketSort, 'totalSpent', 'desc'); }}>
+                  Total Spent{sortArrow(bucketSort, 'totalSpent')}
+                </th>
               </tr>
             </thead>
             <tbody>
               {subBuckets.map(function(bucket) {
                 var isOpen = expandedSubVal === bucket.name;
-                var sortedItems = bucket.items.slice().sort(function(a, b) {
-                  var aDate = a.txns.length > 0 ? new Date(a.txns[0].date) : 0;
-                  var bDate = b.txns.length > 0 ? new Date(b.txns[0].date) : 0;
-                  return bDate - aDate;
-                });
+                var sortedItems = sortItems(bucket.items);
                 return (
                   <Fragment key={bucket.name}>
                     <tr style={{ cursor: 'pointer' }} onClick={function() { setExpandedSub(isOpen ? null : bucket.name); }}>
@@ -224,12 +288,27 @@ export function RecurringPage() {
                           <table className={styles.table} style={{ margin: 0 }}>
                             <thead>
                               <tr style={{ background: 'var(--color-surface-alt, #f8f8f8)' }}>
-                                <th style={{ paddingLeft: 32 }}>Payment</th>
-                                <th>Last Charged</th>
-                                <th>Account</th>
-                                <th style={{ textAlign: 'center' }}>Frequency</th>
-                                <th style={{ textAlign: 'right' }}>Avg Amount</th>
-                                <th style={{ textAlign: 'right' }}>Total Spent</th>
+                                <th className={styles.sortableTh} style={{ paddingLeft: 32 }} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'description', 'asc'); }}>
+                                  Payment{sortArrow(itemSort, 'description')}
+                                </th>
+                                <th className={styles.sortableTh} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'date', 'desc'); }}>
+                                  Last Charged{sortArrow(itemSort, 'date')}
+                                </th>
+                                <th className={styles.sortableTh} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'nextExpected', 'asc'); }}>
+                                  Next Expected{sortArrow(itemSort, 'nextExpected')}
+                                </th>
+                                <th className={styles.sortableTh} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'account', 'asc'); }}>
+                                  Account{sortArrow(itemSort, 'account')}
+                                </th>
+                                <th className={styles.sortableTh} style={{ textAlign: 'center' }} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'frequency', 'asc'); }}>
+                                  Frequency{sortArrow(itemSort, 'frequency')}
+                                </th>
+                                <th className={styles.sortableTh} style={{ textAlign: 'right' }} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'avgAmount', 'desc'); }}>
+                                  Avg Amount{sortArrow(itemSort, 'avgAmount')}
+                                </th>
+                                <th className={styles.sortableTh} style={{ textAlign: 'right' }} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'totalAmount', 'desc'); }}>
+                                  Total Spent{sortArrow(itemSort, 'totalAmount')}
+                                </th>
                                 <th style={{ textAlign: 'center' }}>Status</th>
                               </tr>
                             </thead>
@@ -242,6 +321,7 @@ export function RecurringPage() {
                                       <div className={styles.paymentName}>{r.description}</div>
                                     </td>
                                     <td className={styles.accountCell}>{r.txns.length > 0 ? r.txns[0].date : '—'}</td>
+                                    <td className={styles.accountCell}>{r.nextExpected}</td>
                                     <td className={styles.accountCell}>{r.account}</td>
                                     <td style={{ textAlign: 'center' }}>
                                       <span className={styles.freqBadge}>{freqLabel}</span>

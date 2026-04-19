@@ -100,6 +100,23 @@
   white-space: nowrap;
 }
 
+.sortableTh {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sortableTh:hover {
+  color: var(--color-text-primary);
+}
+
+.sortArrow {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 11px;
+  line-height: 1;
+  transition: opacity 0.15s;
+}
+
 .table td {
   padding: 12px 14px;
   border-bottom: var(--border-ghost);
