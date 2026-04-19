@@ -135,19 +135,41 @@ function normalizeDesc(s) {
 
 function ruleMatches(rule, t) {
   const ruleDesc = normalizeDesc(rule.description);
-  if (!ruleDesc) return false;
-  const txnDesc = normalizeDesc(t.description);
-  const txnFull = normalizeDesc(t.fullDescription);
-  if (!txnDesc && !txnFull) return false;
-  // Match if rule keyword appears anywhere in the description OR full description.
-  // Bidirectional to handle truncation and slight variations.
-  if (txnDesc) {
-    if (txnDesc.includes(ruleDesc) || ruleDesc.includes(txnDesc)) return true;
+  const hasDesc = !!ruleDesc;
+  const hasSign = rule.sign === 'positive' || rule.sign === 'negative';
+  const hasMin = rule.minAmount != null && !Number.isNaN(Number(rule.minAmount));
+  const hasMax = rule.maxAmount != null && !Number.isNaN(Number(rule.maxAmount));
+  // A rule with zero filters would match every transaction — reject to be safe.
+  if (!hasDesc && !hasSign && !hasMin && !hasMax) return false;
+
+  if (hasDesc) {
+    const txnDesc = normalizeDesc(t.description);
+    const txnFull = normalizeDesc(t.fullDescription);
+    let descMatch = false;
+    if (txnDesc && (txnDesc.includes(ruleDesc) || ruleDesc.includes(txnDesc))) descMatch = true;
+    if (!descMatch && txnFull && txnFull.includes(ruleDesc)) descMatch = true;
+    if (!descMatch) return false;
   }
-  if (txnFull) {
-    if (txnFull.includes(ruleDesc)) return true;
+
+  const amt = typeof t.amount === 'number' ? t.amount : parseFloat(t.amount);
+  if (hasSign) {
+    if (rule.sign === 'positive' && !(amt > 0)) return false;
+    if (rule.sign === 'negative' && !(amt < 0)) return false;
   }
-  return false;
+  const absAmt = Math.abs(amt);
+  if (hasMin && absAmt < Number(rule.minAmount)) return false;
+  if (hasMax && absAmt > Number(rule.maxAmount)) return false;
+
+  return true;
+}
+
+function sameFilters(a, b) {
+  return (
+    normalizeDesc(a.description) === normalizeDesc(b.description) &&
+    (a.sign || null) === (b.sign || null) &&
+    (a.minAmount != null ? Number(a.minAmount) : null) === (b.minAmount != null ? Number(b.minAmount) : null) &&
+    (a.maxAmount != null ? Number(a.maxAmount) : null) === (b.maxAmount != null ? Number(b.maxAmount) : null)
+  );
 }
 
 function applyRulesToTransactions(txns, rules) {
@@ -255,30 +277,31 @@ export function DataProvider({ children }) {
     }
   }, []);
 
-  const bulkUpdateCategory = useCallback((description, amount, newCategory) => {
-    const ruleDesc = normalizeDesc(description);
+  const bulkUpdateCategoryByRule = useCallback((ruleLike, newCategory) => {
     setAllTransactions(prev => prev.map(t => {
-      const txnDesc = normalizeDesc(t.description);
-      if (txnDesc.includes(ruleDesc) || ruleDesc.includes(txnDesc)) {
-        return { ...t, category: newCategory };
-      }
+      if (ruleMatches(ruleLike, t)) return { ...t, category: newCategory };
       return t;
     }));
   }, []);
 
-  const addCategoryRule = useCallback((description, amount, category) => {
+  const addCategoryRule = useCallback((description, amount, category, options) => {
+    const opts = options || {};
+    const ruleObj = {
+      description: description || '',
+      amount: amount != null ? Math.abs(amount) : null,
+      sign: opts.sign || null,
+      minAmount: opts.minAmount != null && opts.minAmount !== '' ? Number(opts.minAmount) : null,
+      maxAmount: opts.maxAmount != null && opts.maxAmount !== '' ? Number(opts.maxAmount) : null,
+      category,
+    };
     setCategoryRules(prev => {
-      // Replace existing rule for same vendor+amount
-      const filtered = prev.filter(r =>
-        !(r.description.toLowerCase().trim() === description.toLowerCase().trim() &&
-          (amount != null ? Math.abs(r.amount) === Math.abs(amount) : r.amount == null))
-      );
-      const next = [...filtered, { description, amount: amount != null ? Math.abs(amount) : null, category }];
+      const filtered = prev.filter(r => !sameFilters(r, ruleObj));
+      const next = [...filtered, ruleObj];
       saveCategoryRules(next);
       return next;
     });
-    bulkUpdateCategory(description, amount, category);
-  }, [bulkUpdateCategory]);
+    bulkUpdateCategoryByRule(ruleObj, category);
+  }, [bulkUpdateCategoryByRule]);
 
   const updateTransactionDate = useCallback((transactionId, newDate, fallbackKey) => {
     const key = transactionId || fallbackKey;
@@ -318,28 +341,30 @@ export function DataProvider({ children }) {
     });
   }, []);
 
-  const bulkUpdateSubcategory = useCallback((description, newSubcategory) => {
-    const ruleDesc = normalizeDesc(description);
+  const bulkUpdateSubcategoryByRule = useCallback((ruleLike, newSubcategory) => {
     setAllTransactions(prev => prev.map(t => {
-      const txnDesc = normalizeDesc(t.description);
-      if (txnDesc.includes(ruleDesc) || ruleDesc.includes(txnDesc)) {
-        return { ...t, subcategory: newSubcategory };
-      }
+      if (ruleMatches(ruleLike, t)) return { ...t, subcategory: newSubcategory };
       return t;
     }));
   }, []);
 
-  const addSubcategoryRule = useCallback((description, subcategory) => {
+  const addSubcategoryRule = useCallback((description, subcategory, options) => {
+    const opts = options || {};
+    const ruleObj = {
+      description: description || '',
+      sign: opts.sign || null,
+      minAmount: opts.minAmount != null && opts.minAmount !== '' ? Number(opts.minAmount) : null,
+      maxAmount: opts.maxAmount != null && opts.maxAmount !== '' ? Number(opts.maxAmount) : null,
+      subcategory,
+    };
     setSubcategoryRules(prev => {
-      const filtered = prev.filter(r =>
-        normalizeDesc(r.description) !== normalizeDesc(description)
-      );
-      const next = [...filtered, { description, subcategory }];
+      const filtered = prev.filter(r => !sameFilters(r, ruleObj));
+      const next = [...filtered, ruleObj];
       saveSubcategoryRules(next);
       return next;
     });
-    bulkUpdateSubcategory(description, subcategory);
-  }, [bulkUpdateSubcategory]);
+    bulkUpdateSubcategoryByRule(ruleObj, subcategory);
+  }, [bulkUpdateSubcategoryByRule]);
 
   const removeCategoryRule = useCallback((index) => {
     setCategoryRules(prev => {
@@ -357,23 +382,39 @@ export function DataProvider({ children }) {
     });
   }, []);
 
-  const updateCategoryRule = useCallback((index, newDescription, newCategory) => {
+  const updateCategoryRule = useCallback((index, newDescription, newCategory, options) => {
+    const opts = options || {};
+    const patch = {
+      description: newDescription || '',
+      category: newCategory,
+      sign: opts.sign || null,
+      minAmount: opts.minAmount != null && opts.minAmount !== '' ? Number(opts.minAmount) : null,
+      maxAmount: opts.maxAmount != null && opts.maxAmount !== '' ? Number(opts.maxAmount) : null,
+    };
     setCategoryRules(prev => {
-      const next = prev.map((r, i) => i === index ? { ...r, description: newDescription, category: newCategory } : r);
+      const next = prev.map((r, i) => i === index ? { ...r, ...patch } : r);
       saveCategoryRules(next);
       return next;
     });
-    bulkUpdateCategory(newDescription, null, newCategory);
-  }, [bulkUpdateCategory]);
+    bulkUpdateCategoryByRule(patch, newCategory);
+  }, [bulkUpdateCategoryByRule]);
 
-  const updateSubcategoryRule = useCallback((index, newDescription, newSubcategory) => {
+  const updateSubcategoryRule = useCallback((index, newDescription, newSubcategory, options) => {
+    const opts = options || {};
+    const patch = {
+      description: newDescription || '',
+      subcategory: newSubcategory,
+      sign: opts.sign || null,
+      minAmount: opts.minAmount != null && opts.minAmount !== '' ? Number(opts.minAmount) : null,
+      maxAmount: opts.maxAmount != null && opts.maxAmount !== '' ? Number(opts.maxAmount) : null,
+    };
     setSubcategoryRules(prev => {
-      const next = prev.map((r, i) => i === index ? { ...r, description: newDescription, subcategory: newSubcategory } : r);
+      const next = prev.map((r, i) => i === index ? { ...r, ...patch } : r);
       saveSubcategoryRules(next);
       return next;
     });
-    bulkUpdateSubcategory(newDescription, newSubcategory);
-  }, [bulkUpdateSubcategory]);
+    bulkUpdateSubcategoryByRule(patch, newSubcategory);
+  }, [bulkUpdateSubcategoryByRule]);
 
   const bulkUpdateCategoryByIds = useCallback((transactionIds, newCategory) => {
     const idSet = new Set(transactionIds);
@@ -492,16 +533,15 @@ export function DataProvider({ children }) {
     });
   }, []);
 
-  const getMatchCount = useCallback((description) => {
-    const ruleDesc = normalizeDesc(description);
-    if (!ruleDesc) return 0;
-    return allTransactions.filter(t => {
-      const txnDesc = normalizeDesc(t.description);
-      const txnFull = normalizeDesc(t.fullDescription);
-      if (txnDesc && (txnDesc.includes(ruleDesc) || ruleDesc.includes(txnDesc))) return true;
-      if (txnFull && txnFull.includes(ruleDesc)) return true;
-      return false;
-    }).length;
+  const getMatchCount = useCallback((description, options) => {
+    const opts = options || {};
+    const ruleLike = {
+      description: description || '',
+      sign: opts.sign || null,
+      minAmount: opts.minAmount != null && opts.minAmount !== '' ? Number(opts.minAmount) : null,
+      maxAmount: opts.maxAmount != null && opts.maxAmount !== '' ? Number(opts.maxAmount) : null,
+    };
+    return allTransactions.filter(t => ruleMatches(ruleLike, t)).length;
   }, [allTransactions]);
 
   const toggleHideTransaction = useCallback((transactionId) => {
