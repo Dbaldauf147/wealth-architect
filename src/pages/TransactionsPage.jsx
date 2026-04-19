@@ -596,6 +596,7 @@ export function TransactionsPage() {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
   const [bulkCategorySearch, setBulkCategorySearch] = useState('');
+  const [noSubOnly, setNoSubOnly] = useState(false);
   const [bulkSubOpen, setBulkSubOpen] = useState(false);
   const [bulkSubSearch, setBulkSubSearch] = useState('');
   const bulkSubRef = useRef(null);
@@ -753,6 +754,9 @@ export function TransactionsPage() {
         matchText(t.account, cf.account)
       );
     }
+    if (noSubOnly) {
+      list = list.filter(t => !t.subcategory);
+    }
     const sorted = [...list].sort((a, b) => {
       let cmp = 0;
       switch (sortCol) {
@@ -769,7 +773,7 @@ export function TransactionsPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return sorted;
-  }, [transactions, activeAccount, searchQuery, includedCategories, includedSubcategories, selectedMonth, columnFilters, sortCol, sortDir, transactionNotes]);
+  }, [transactions, activeAccount, searchQuery, includedCategories, includedSubcategories, selectedMonth, columnFilters, sortCol, sortDir, transactionNotes, noSubOnly]);
 
   const paginated = useMemo(
     () => filtered.slice(0, (page + 1) * PAGE_SIZE),
@@ -1248,6 +1252,14 @@ export function TransactionsPage() {
           >
             <span className="material-symbols-outlined">{showAccounts ? 'visibility' : 'visibility_off'}</span>
             {showAccounts ? 'Hide' : 'Show'} Accounts
+          </button>
+          <button
+            className={styles.exportBtn}
+            onClick={() => { setNoSubOnly(v => !v); setPage(0); }}
+            style={noSubOnly ? { background: 'rgba(0, 88, 190, 0.1)', color: 'var(--color-secondary, #0058be)', borderColor: 'var(--color-secondary, #0058be)' } : undefined}
+          >
+            <span className="material-symbols-outlined">filter_list</span>
+            {noSubOnly ? 'Show All' : 'No Subcategory'}
           </button>
           <div style={{ position: 'relative' }} ref={columnPickerRef}>
             <button
