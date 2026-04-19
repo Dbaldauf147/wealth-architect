@@ -224,32 +224,35 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
     onMouseLeave: () => setHoverSeg(null),
   };
 
-  /* Custom segment tooltip — category + amount + month */
+  /* Custom segment tooltip — category + amount + month, anchored next to the hovered bar */
   function renderSegTooltip() {
     if (!hoverSeg) return null;
-    const { mi, ci, x, y } = hoverSeg;
+    const { mi, ci, x, y, xRight } = hoverSeg;
     const m = months[mi];
     const cat = topCategories[ci];
     const val = (m && cat) ? (m.byCategory[cat] || 0) : 0;
     const label = `${cat} — ${fmt(val)}`;
     const sub = m ? `${m.label} ${m.year}` : '';
-    const boxW = Math.max(110, label.length * 6.2, sub.length * 6.2);
-    const boxH = 38;
-    // Clamp within chart bounds so tooltip never leaks outside
-    let tx = x - boxW / 2;
+    const boxW = Math.max(120, label.length * 6.4, sub.length * 6.4);
+    const boxH = 40;
+    // Position to the right of the bar; flip to the left if it would overflow.
+    const anchorRight = xRight != null ? xRight : x;
+    const anchorLeft = xRight != null ? (2 * x - xRight) : x;
+    let tx = anchorRight + 10;
+    if (tx + boxW > width - 4) tx = anchorLeft - boxW - 10;
     if (tx < 4) tx = 4;
-    if (tx + boxW > width - 4) tx = width - 4 - boxW;
-    let ty = y - boxH - 10;
-    if (ty < 2) ty = y + 12;
+    let ty = y - boxH / 2;
+    if (ty < 2) ty = 2;
+    if (ty + boxH > height - 2) ty = height - 2 - boxH;
     return (
       <g style={{ pointerEvents: 'none' }}>
         <rect x={tx} y={ty} width={boxW} height={boxH} rx={6}
-          fill="var(--color-text-primary)" opacity={0.92} />
-        <circle cx={tx + 10} cy={ty + 13} r={4} fill={pieColor(ci)} />
-        <text x={tx + 18} y={ty + 16} fontSize={10.5} fontWeight={700} fill="#fff" fontFamily="var(--font-headline)">
+          fill="var(--color-text-primary)" opacity={0.94} />
+        <circle cx={tx + 10} cy={ty + 14} r={4} fill={pieColor(ci)} />
+        <text x={tx + 18} y={ty + 17} fontSize={11} fontWeight={700} fill="#fff" fontFamily="var(--font-headline)">
           {label}
         </text>
-        <text x={tx + 10} y={ty + 30} fontSize={9.5} fill="rgba(255,255,255,0.7)">
+        <text x={tx + 10} y={ty + 31} fontSize={9.5} fill="rgba(255,255,255,0.7)">
           {sub}
         </text>
       </g>
@@ -282,8 +285,10 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                 <rect key={ci} x={cx - barW / 2} y={y} width={barW} height={Math.max(barH, 0)}
                   rx={isTop ? 4 : 0} fill={pieColor(ci)}
                   opacity={hoverSeg && !isHovered ? 0.5 : 0.95}
+                  stroke={isHovered ? 'var(--color-text-primary)' : 'none'}
+                  strokeWidth={isHovered ? 2 : 0}
                   style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
-                  onMouseEnter={() => setHoverSeg({ mi, ci, x: cx, y: y + barH / 2 })}
+                  onMouseEnter={() => setHoverSeg({ mi, ci, x: cx, y: y + barH / 2, xRight: cx + barW / 2 })}
                 />
               ))}
               {/* Per-segment amount labels — visible only for the hovered month so they don't clutter the chart */}
@@ -341,14 +346,17 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                 const barH = (val / niceMax) * chartH;
                 const bx = groupStart + ci * singleW + 0.5;
                 const by = yPos(val);
+                const w = Math.max(singleW - 1, 2);
                 const isHovered = hoverSeg && hoverSeg.mi === mi && hoverSeg.ci === ci;
                 return (
                   <rect key={ci} x={bx} y={by}
-                    width={Math.max(singleW - 1, 2)} height={Math.max(barH, 0)}
+                    width={w} height={Math.max(barH, 0)}
                     rx={3} fill={pieColor(ci)}
                     opacity={hoverSeg && !isHovered ? 0.5 : 0.95}
+                    stroke={isHovered ? 'var(--color-text-primary)' : 'none'}
+                    strokeWidth={isHovered ? 2 : 0}
                     style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
-                    onMouseEnter={() => setHoverSeg({ mi, ci, x: bx + singleW / 2, y: by })}
+                    onMouseEnter={() => setHoverSeg({ mi, ci, x: bx + singleW / 2, y: by + Math.max(barH, 0) / 2, xRight: bx + w })}
                   />
                 );
               })}
