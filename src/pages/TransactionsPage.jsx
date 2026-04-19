@@ -739,12 +739,15 @@ export function TransactionsPage() {
   }, [transactions]);
 
   /* Per-category spend totals for Pareto 80/20 bucketing.
-     Expense-only (skip positives) and respects the current account / month / search scope
-     so the chip totals match the view the user is looking at. Category/subcategory filters
-     are deliberately NOT applied — that would hide the very chips this view ranks. */
+     Uses |sum of signed amounts| per category to match the Spending Over Time chart
+     and analytics elsewhere — offsetting flows (refunds, transfers in/out) cancel
+     out instead of double-counting gross movement. Respects the current
+     account / month / search scope so the chip totals match the view the user is
+     looking at. Category/subcategory filters are deliberately NOT applied —
+     that would hide the very chips this view ranks. */
   const categoryTotals = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const map = new Map();
+    const signed = new Map();
     for (const t of (transactions || [])) {
       if (activeAccount !== 'all' && t.account !== activeAccount) continue;
       if (selectedMonth) {
@@ -759,11 +762,11 @@ export function TransactionsPage() {
           .map(v => String(v || '').toLowerCase());
         if (!hay.some(h => h.includes(q))) continue;
       }
-      const amt = Number(t.amount) || 0;
-      if (amt >= 0) continue;
       const cat = t.category || 'Uncategorized';
-      map.set(cat, (map.get(cat) || 0) + Math.abs(amt));
+      signed.set(cat, (signed.get(cat) || 0) + (Number(t.amount) || 0));
     }
+    const map = new Map();
+    for (const [k, v] of signed) map.set(k, Math.abs(v));
     return map;
   }, [transactions, activeAccount, selectedMonth, searchQuery]);
 
