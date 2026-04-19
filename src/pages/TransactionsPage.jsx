@@ -739,15 +739,14 @@ export function TransactionsPage() {
   }, [transactions]);
 
   /* Per-category spend totals for Pareto 80/20 bucketing.
-     Uses |sum of signed amounts| per category to match the Spending Over Time chart
-     and analytics elsewhere — offsetting flows (refunds, transfers in/out) cancel
-     out instead of double-counting gross movement. Respects the current
-     account / month / search scope so the chip totals match the view the user is
-     looking at. Category/subcategory filters are deliberately NOT applied —
-     that would hide the very chips this view ranks. */
+     Matches the pie chart's drilldown convention: for each category, sum the |net signed|
+     over its subcategories whose net is negative. Equivalent to "true spend per category
+     after refunds/transfers within each subcategory cancel out". A category with mostly
+     income/refund subs will read low, so the bucket ranking surfaces real expense drivers.
+     Respects the current account / month / search scope. */
   const categoryTotals = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const signed = new Map();
+    const subSigned = new Map(); // key = `${cat}\u0001${sub}`
     for (const t of (transactions || [])) {
       if (activeAccount !== 'all' && t.account !== activeAccount) continue;
       if (selectedMonth) {
@@ -763,10 +762,16 @@ export function TransactionsPage() {
         if (!hay.some(h => h.includes(q))) continue;
       }
       const cat = t.category || 'Uncategorized';
-      signed.set(cat, (signed.get(cat) || 0) + (Number(t.amount) || 0));
+      const sub = t.subcategory || 'Uncategorized';
+      const k = `${cat}\u0001${sub}`;
+      subSigned.set(k, (subSigned.get(k) || 0) + (Number(t.amount) || 0));
     }
     const map = new Map();
-    for (const [k, v] of signed) map.set(k, Math.abs(v));
+    for (const [k, v] of subSigned) {
+      if (v >= 0) continue; // only count subs that net negative (true expense subs)
+      const cat = k.split('\u0001')[0];
+      map.set(cat, (map.get(cat) || 0) + Math.abs(v));
+    }
     return map;
   }, [transactions, activeAccount, selectedMonth, searchQuery]);
 
@@ -1454,8 +1459,14 @@ export function TransactionsPage() {
             <div
               key={cat}
               className={styles.bucketChip}
-              draggable
-              onDragStart={() => setDraggedCategory(cat)}
+              draggable="true"
+              onDragStart={e => {
+                setDraggedCategory(cat);
+                if (e.dataTransfer) {
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('text/plain', cat);
+                }
+              }}
               onDragEnd={() => setDraggedCategory(null)}
               onClick={() => { toggleCategoryFilter(cat); setPage(0); }}
               style={{
@@ -1463,13 +1474,12 @@ export function TransactionsPage() {
                 color: selected ? color : 'var(--color-text-tertiary)',
                 borderColor: selected ? color + '30' : 'transparent',
                 opacity: selected ? 1 : 0.5,
-                cursor: 'pointer',
               }}
             >
-              <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{getCategoryIcon(cat)}</span>
-              {cat}
+              <span className="material-symbols-outlined" style={{ fontSize: 13, pointerEvents: 'none' }}>{getCategoryIcon(cat)}</span>
+              <span style={{ pointerEvents: 'none' }}>{cat}</span>
               {pareto8020View && (
-                <span style={{ fontSize: 10.5, opacity: 0.75, marginLeft: 4 }}>
+                <span style={{ fontSize: 10.5, opacity: 0.75, marginLeft: 4, pointerEvents: 'none' }}>
                   {fmt(categoryTotals.get(cat) || 0)}
                 </span>
               )}
