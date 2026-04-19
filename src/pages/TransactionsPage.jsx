@@ -266,22 +266,36 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
           const cx = xCenter(mi);
           let yOffset = 0;
           const totalVal = topCategories.reduce((s, cat) => s + (m.byCategory[cat] || 0), 0);
+          const hoverInThisMonth = hoverSeg && hoverSeg.mi === mi;
+          const segs = topCategories.map((cat, ci) => {
+            const val = m.byCategory[cat] || 0;
+            const barH = (val / niceMax) * chartH;
+            const y = pad.top + chartH - yOffset - barH;
+            yOffset += barH;
+            const isTop = ci === topCategories.length - 1 || topCategories.slice(ci + 1).every(c => (m.byCategory[c] || 0) === 0);
+            const isHovered = hoverSeg && hoverSeg.mi === mi && hoverSeg.ci === ci;
+            return { cat, ci, val, barH, y, isTop, isHovered };
+          });
           return (
             <g key={mi} className="chart-bar-group" style={{ transition: 'opacity 0.15s' }}>
-              {topCategories.map((cat, ci) => {
-                const val = m.byCategory[cat] || 0;
-                const barH = (val / niceMax) * chartH;
-                const y = pad.top + chartH - yOffset - barH;
-                yOffset += barH;
-                const isTop = ci === topCategories.length - 1 || topCategories.slice(ci + 1).every(c => (m.byCategory[c] || 0) === 0);
-                const isHovered = hoverSeg && hoverSeg.mi === mi && hoverSeg.ci === ci;
+              {segs.map(({ cat, ci, val, barH, y, isTop, isHovered }) => (
+                <rect key={ci} x={cx - barW / 2} y={y} width={barW} height={Math.max(barH, 0)}
+                  rx={isTop ? 4 : 0} fill={pieColor(ci)}
+                  opacity={hoverSeg && !isHovered ? 0.5 : 0.95}
+                  style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
+                  onMouseEnter={() => setHoverSeg({ mi, ci, x: cx, y: y + barH / 2 })}
+                />
+              ))}
+              {/* Per-segment amount labels — visible only for the hovered month so they don't clutter the chart */}
+              {hoverInThisMonth && segs.map(({ ci, val, barH, y }) => {
+                if (val <= 0 || barH < 10) return null;
+                const label = val >= 1000 ? `$${(val / 1000).toFixed(1)}k` : `$${Math.round(val)}`;
                 return (
-                  <rect key={ci} x={cx - barW / 2} y={y} width={barW} height={Math.max(barH, 0)}
-                    rx={isTop ? 4 : 0} fill={pieColor(ci)}
-                    opacity={hoverSeg && !isHovered ? 0.5 : 0.95}
-                    style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
-                    onMouseEnter={() => setHoverSeg({ mi, ci, x: cx, y: y + barH / 2 })}
-                  />
+                  <text key={`lbl-${ci}`} x={cx} y={y + barH / 2 + 3} textAnchor="middle"
+                    fontSize={9.5} fontWeight={700} fill="#fff" fontFamily="var(--font-headline)"
+                    style={{ pointerEvents: 'none', paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.35)', strokeWidth: 2, strokeLinejoin: 'round' }}>
+                    {label}
+                  </text>
                 );
               })}
               {/* Total label above bar */}
