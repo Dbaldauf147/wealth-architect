@@ -19,6 +19,7 @@ function fmtDate(s) {
 
 var STATUS_KEY = 'wa-recurring-status';
 var SUBCAT_STATUS_KEY = 'wa-recurring-subcat-status';
+var FREQ_OVERRIDE_KEY = 'wa-recurring-freq-override';
 
 function loadStatuses() {
   try { return JSON.parse(localStorage.getItem(STATUS_KEY) || '{}'); } catch { return {}; }
@@ -34,6 +35,14 @@ function loadSubcatStatuses() {
 
 function saveSubcatStatuses(map) {
   localStorage.setItem(SUBCAT_STATUS_KEY, JSON.stringify(map));
+}
+
+function loadFreqOverrides() {
+  try { return JSON.parse(localStorage.getItem(FREQ_OVERRIDE_KEY) || '{}'); } catch { return {}; }
+}
+
+function saveFreqOverrides(map) {
+  localStorage.setItem(FREQ_OVERRIDE_KEY, JSON.stringify(map));
 }
 
 export function RecurringPage() {
@@ -57,6 +66,25 @@ export function RecurringPage() {
   var subcatStatusState = useState(loadSubcatStatuses);
   var subcatStatuses = subcatStatusState[0];
   var setSubcatStatuses = subcatStatusState[1];
+
+  var freqOverrideState = useState(loadFreqOverrides);
+  var freqOverrides = freqOverrideState[0];
+  var setFreqOverrides = freqOverrideState[1];
+
+  function cycleFrequency(itemKey) {
+    // Cycle: auto -> monthly -> quarterly -> annual -> auto
+    var order = [undefined, 'monthly', 'quarterly', 'annual'];
+    setFreqOverrides(function(prev) {
+      var next = Object.assign({}, prev);
+      var current = next[itemKey];
+      var idx = order.indexOf(current);
+      var nextVal = order[(idx + 1) % order.length];
+      if (nextVal === undefined) delete next[itemKey];
+      else next[itemKey] = nextVal;
+      saveFreqOverrides(next);
+      return next;
+    });
+  }
 
   function toggleSubcatStatus(name) {
     setSubcatStatuses(function(prev) {
@@ -103,17 +131,21 @@ export function RecurringPage() {
 
       var itemKey = g.description.toLowerCase();
 
-      // Determine frequency
+      // Determine frequency (auto-detected from transaction spacing)
       var sortedTxns = g.txns.slice().sort(function(a, b) { return new Date(a.date) - new Date(b.date); });
-      var frequency = 'monthly';
+      var autoFreq = 'monthly';
       if (sortedTxns.length >= 2) {
         var firstDate = new Date(sortedTxns[0].date);
         var lastDate = new Date(sortedTxns[sortedTxns.length - 1].date);
         var totalDays = (lastDate - firstDate) / (1000 * 60 * 60 * 24);
         var avgDaysBetween = totalDays / (sortedTxns.length - 1);
-        if (avgDaysBetween > 180) frequency = 'annual';
-        else if (avgDaysBetween > 60) frequency = 'quarterly';
+        if (avgDaysBetween > 180) autoFreq = 'annual';
+        else if (avgDaysBetween > 60) autoFreq = 'quarterly';
       }
+      // Allow per-item user override (annual fees with one charge can't be auto-detected)
+      var overrideFreq = freqOverrides[itemKey];
+      var frequency = overrideFreq || autoFreq;
+      var freqOverridden = !!overrideFreq;
 
       var annualEstimate = frequency === 'annual' ? avgAmount : frequency === 'quarterly' ? avgAmount * 4 : avgAmount * 12;
 
@@ -139,6 +171,7 @@ export function RecurringPage() {
         occurrences: g.txns.length,
         monthCount: monthCount,
         frequency: frequency,
+        freqOverridden: freqOverridden,
         isFixed: isFixed,
         minAmount: minAmount,
         maxAmount: maxAmount,
@@ -151,7 +184,7 @@ export function RecurringPage() {
     // Sort by average amount, largest first
     result.sort(function(a, b) { return b.avgAmount - a.avgAmount; });
     return result;
-  }, [transactions]);
+  }, [transactions, freqOverrides]);
 
   var expandedSub = useState(null);
   var expandedSubVal = expandedSub[0];
@@ -416,8 +449,18 @@ export function RecurringPage() {
                                       <div className={styles.paymentName} style={{ textDecoration: itemCancelled ? 'line-through' : 'none' }}>{r.description}</div>
                                     </td>
                                     <td className={styles.accountCell}>{r.account}</td>
-                                    <td style={{ textAlign: 'center' }}>
-                                      <span className={styles.freqBadge}>{freqLabel}</span>
+                                    <td style={{ textAlign: 'center' }} onClick={function(e) { e.stopPropagation(); }}>
+                                      <button
+                                        type="button"
+                                        onClick={function() { cycleFrequency(r.key); }}
+                                        title={r.freqOverridden
+                                          ? 'Manual override: ' + freqLabel + '. Click to cycle (Monthly → Quarterly → Annual → Auto).'
+                                          : 'Auto-detected: ' + freqLabel + '. Click to override.'}
+                                        className={styles.freqBadge}
+                                        style={{ border: r.freqOverridden ? '1px solid var(--color-secondary, #0058be)' : 'none', cursor: 'pointer', padding: '2px 8px' }}
+                                      >
+                                        {freqLabel}{r.freqOverridden ? '*' : ''}
+                                      </button>
                                     </td>
                                     <td style={{ textAlign: 'center' }}>
                                       <span className={styles.freqBadge}>{r.occurrences}</span>
