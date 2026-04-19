@@ -10,7 +10,15 @@ function fmtShort(n) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.abs(n));
 }
 
+function fmtDate(s) {
+  if (!s) return '—';
+  var d = new Date(s);
+  if (isNaN(d)) return s;
+  return (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear();
+}
+
 var STATUS_KEY = 'wa-recurring-status';
+var SUBCAT_STATUS_KEY = 'wa-recurring-subcat-status';
 
 function loadStatuses() {
   try { return JSON.parse(localStorage.getItem(STATUS_KEY) || '{}'); } catch { return {}; }
@@ -18,6 +26,14 @@ function loadStatuses() {
 
 function saveStatuses(map) {
   localStorage.setItem(STATUS_KEY, JSON.stringify(map));
+}
+
+function loadSubcatStatuses() {
+  try { return JSON.parse(localStorage.getItem(SUBCAT_STATUS_KEY) || '{}'); } catch { return {}; }
+}
+
+function saveSubcatStatuses(map) {
+  localStorage.setItem(SUBCAT_STATUS_KEY, JSON.stringify(map));
 }
 
 export function RecurringPage() {
@@ -34,6 +50,20 @@ export function RecurringPage() {
       if (next[key] === status) { delete next[key]; } // toggle off
       else { next[key] = status; }
       saveStatuses(next);
+      return next;
+    });
+  }
+
+  var subcatStatusState = useState(loadSubcatStatuses);
+  var subcatStatuses = subcatStatusState[0];
+  var setSubcatStatuses = subcatStatusState[1];
+
+  function toggleSubcatStatus(name) {
+    setSubcatStatuses(function(prev) {
+      var next = Object.assign({}, prev);
+      if (next[name] === 'cancelled') delete next[name]; // back to active (default)
+      else next[name] = 'cancelled';
+      saveSubcatStatuses(next);
       return next;
     });
   }
@@ -257,17 +287,20 @@ export function RecurringPage() {
                 <th className={styles.sortableTh} style={{ textAlign: 'right' }} onClick={function() { toggleSort(setBucketSort, 'totalSpent', 'desc'); }}>
                   Total Spent{sortArrow(bucketSort, 'totalSpent')}
                 </th>
+                <th style={{ textAlign: 'center' }}>Status</th>
               </tr>
             </thead>
             <tbody>
               {subBuckets.map(function(bucket) {
                 var isOpen = expandedSubVal === bucket.name;
                 var sortedItems = sortItems(bucket.items);
+                var subStatus = subcatStatuses[bucket.name];
+                var isCancelled = subStatus === 'cancelled';
                 return (
                   <Fragment key={bucket.name}>
-                    <tr style={{ cursor: 'pointer' }} onClick={function() { setExpandedSub(isOpen ? null : bucket.name); }}>
+                    <tr style={{ cursor: 'pointer', opacity: isCancelled ? 0.5 : 1 }} onClick={function() { setExpandedSub(isOpen ? null : bucket.name); }}>
                       <td>
-                        <div className={styles.paymentName}>
+                        <div className={styles.paymentName} style={{ textDecoration: isCancelled ? 'line-through' : 'none' }}>
                           <span className={styles.expandArrow}>{isOpen ? '\u25BE' : '\u25B8'}</span>
                           <span className={styles.categoryBadge}>{bucket.name}</span>
                         </div>
@@ -281,10 +314,21 @@ export function RecurringPage() {
                       <td style={{ textAlign: 'right' }}>
                         <div className={styles.amountMain}>{fmt(bucket.totalSpent)}</div>
                       </td>
+                      <td style={{ textAlign: 'center' }} onClick={function(e) { e.stopPropagation(); }}>
+                        <button
+                          type="button"
+                          onClick={function() { toggleSubcatStatus(bucket.name); }}
+                          className={isCancelled ? styles.statusBtnGetridActive : styles.statusBtnKeepActive}
+                          style={{ padding: '3px 9px', fontSize: 10, fontWeight: 700, borderRadius: 'var(--radius-sm)', cursor: 'pointer' }}
+                          title={isCancelled ? 'Marked as cancelled. Click to mark active.' : 'Active. Click to mark cancelled.'}
+                        >
+                          {isCancelled ? 'Cancelled' : 'Active'}
+                        </button>
+                      </td>
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan="4" style={{ padding: 0 }}>
+                        <td colSpan="5" style={{ padding: 0 }}>
                           <table className={styles.table} style={{ margin: 0 }}>
                             <thead>
                               <tr style={{ background: 'var(--color-surface-alt, #f8f8f8)' }}>
@@ -320,8 +364,8 @@ export function RecurringPage() {
                                     <td style={{ paddingLeft: 32 }}>
                                       <div className={styles.paymentName}>{r.description}</div>
                                     </td>
-                                    <td className={styles.accountCell}>{r.txns.length > 0 ? r.txns[0].date : '—'}</td>
-                                    <td className={styles.accountCell}>{r.nextExpected}</td>
+                                    <td className={styles.accountCell}>{r.txns.length > 0 ? fmtDate(r.txns[0].date) : '—'}</td>
+                                    <td className={styles.accountCell}>{fmtDate(r.nextExpected)}</td>
                                     <td className={styles.accountCell}>{r.account}</td>
                                     <td style={{ textAlign: 'center' }}>
                                       <span className={styles.freqBadge}>{freqLabel}</span>
@@ -359,6 +403,7 @@ export function RecurringPage() {
                 <td colSpan="2" style={{ fontWeight: 700 }}>Total</td>
                 <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(totalMonthly)}</td>
                 <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(totalSpentAll)}</td>
+                <td />
               </tr>
             </tfoot>
           </table>

@@ -67,11 +67,13 @@ import { BudgetsPage } from './pages/BudgetsPage';
 import { RecurringPage } from './pages/RecurringPage';
 import { CashFlowPage } from './pages/CashFlowPage';
 import { CardPromosPage } from './pages/CardPromosPage';
+import { TrendsPage } from './pages/TrendsPage';
 
 const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: 'dashboard' },
   { id: 'transactions', label: 'Transactions', icon: 'receipt_long' },
   { id: 'cashflow', label: 'Cash Flow', icon: 'payments' },
+  { id: 'trends', label: 'Spending Trends', icon: 'trending_up' },
   { id: 'budgets', label: 'Budgets', icon: 'savings' },
   { id: 'recurring', label: 'Recurring', icon: 'autorenew' },
   { id: 'assets', label: 'Assets & Liabilities', icon: 'account_balance' },
@@ -114,6 +116,7 @@ export function App() {
     switch (view) {
       case 'transactions': return <TransactionsPage />;
       case 'cashflow': return <CashFlowPage />;
+      case 'trends': return <TrendsPage />;
       case 'budgets': return <BudgetsPage />;
       case 'recurring': return <RecurringPage />;
       case 'assets': return <AssetsPage />;
