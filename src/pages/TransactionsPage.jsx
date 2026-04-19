@@ -279,6 +279,8 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
             const isHovered = hoverSeg && hoverSeg.mi === mi && hoverSeg.ci === ci;
             return { cat, ci, val, barH, y, isTop, isHovered };
           });
+          // Find topmost segment to use for hit-zone hover anchor
+          const topSeg = segs.filter(s => s.val > 0).slice(-1)[0];
           return (
             <g key={mi} className="chart-bar-group" style={{ transition: 'opacity 0.15s' }}>
               {segs.map(({ cat, ci, val, barH, y, isTop, isHovered }) => (
@@ -291,14 +293,39 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                   onMouseEnter={() => setHoverSeg({ mi, ci, x: cx, y: y + barH / 2, xRight: cx + barW / 2 })}
                 />
               ))}
-              {/* Per-segment amount labels — visible only for the hovered month so they don't clutter the chart */}
+              {/* Wide invisible hit zone over the whole month column so hovering anywhere
+                  reveals the breakdown — even between bars or over thin segments. Falls back
+                  to the topmost non-empty segment for the tooltip anchor. */}
+              {topSeg && (
+                <rect x={cx - slotW / 2} y={pad.top} width={slotW} height={chartH}
+                  fill="transparent" pointerEvents="all"
+                  onMouseEnter={() => {
+                    if (hoverSeg && hoverSeg.mi === mi) return; // already hovering a specific segment
+                    setHoverSeg({ mi, ci: topSeg.ci, x: cx, y: topSeg.y + topSeg.barH / 2, xRight: cx + barW / 2 });
+                  }}
+                />
+              )}
+              {/* Per-segment amount labels — visible only for the hovered month, drawn for
+                  any segment with at least a sliver of height so small subs still get a value. */}
               {hoverInThisMonth && segs.map(({ ci, val, barH, y }) => {
-                if (val <= 0 || barH < 10) return null;
+                if (val <= 0) return null;
                 const label = val >= 1000 ? `$${(val / 1000).toFixed(1)}k` : `$${Math.round(val)}`;
+                // If the segment is too short to fit text inside, render the label to the right of the bar.
+                const fitsInside = barH >= 11;
+                const tx = fitsInside ? cx : (cx + barW / 2 + 4);
+                const ty = fitsInside ? (y + barH / 2 + 3) : (y + barH / 2 + 3);
+                const anchor = fitsInside ? 'middle' : 'start';
                 return (
-                  <text key={`lbl-${ci}`} x={cx} y={y + barH / 2 + 3} textAnchor="middle"
-                    fontSize={9.5} fontWeight={700} fill="#fff" fontFamily="var(--font-headline)"
-                    style={{ pointerEvents: 'none', paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.35)', strokeWidth: 2, strokeLinejoin: 'round' }}>
+                  <text key={`lbl-${ci}`} x={tx} y={ty} textAnchor={anchor}
+                    fontSize={9.5} fontWeight={700}
+                    fill={fitsInside ? '#fff' : 'var(--color-text-primary)'} fontFamily="var(--font-headline)"
+                    style={{
+                      pointerEvents: 'none',
+                      paintOrder: 'stroke',
+                      stroke: fitsInside ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.85)',
+                      strokeWidth: 2,
+                      strokeLinejoin: 'round',
+                    }}>
                     {label}
                   </text>
                 );
