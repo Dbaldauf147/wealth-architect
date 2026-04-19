@@ -41,36 +41,38 @@ export function RecurringPage() {
   var recurring = useMemo(function() {
     if (!transactions || transactions.length === 0) return [];
 
-    // Group by description + exact amount (same name AND same dollar amount)
+    // Group subscriptions by description
     var groups = {};
     for (var i = 0; i < transactions.length; i++) {
       var t = transactions[i];
-      if (t.amount >= 0) continue; // skip income
       var sub = (t.subcategory || '').toLowerCase();
       if (sub !== 'subscriptions') continue;
       var desc = (t.description || '').trim();
       if (!desc) continue;
-      var amt = Math.abs(t.amount).toFixed(2);
-      var key = desc.toLowerCase() + '|' + amt;
+      var key = desc.toLowerCase();
       if (!groups[key]) {
-        groups[key] = { description: desc, category: t.category || 'Uncategorized', fixedAmount: Math.abs(t.amount), months: {}, account: t.account || '', txns: [] };
+        groups[key] = { description: desc, category: t.category || 'Uncategorized', months: {}, account: t.account || '', txns: [] };
       }
       groups[key].txns.push({ date: t.date, amount: t.amount, account: t.account, description: t.description });
       var month = t.month || 'Unknown';
       groups[key].months[month] = (groups[key].months[month] || 0) + 1;
     }
 
-    // Filter: must appear 2+ times with the same amount
     var result = [];
     var entries = Object.values(groups);
     for (var j = 0; j < entries.length; j++) {
       var g = entries[j];
-      if (g.txns.length < 2) continue;
       var monthCount = Object.keys(g.months).length;
+      var amounts = g.txns.map(function(tx) { return Math.abs(tx.amount); });
+      var totalAmt = amounts.reduce(function(s, a) { return s + a; }, 0);
+      var avgAmount = totalAmt / amounts.length;
+      var minAmount = Math.min.apply(null, amounts);
+      var maxAmount = Math.max.apply(null, amounts);
+      var isFixed = minAmount === maxAmount;
 
-      var itemKey = g.description.toLowerCase() + '|' + g.fixedAmount.toFixed(2);
+      var itemKey = g.description.toLowerCase();
 
-      // Determine frequency: look at average days between transactions
+      // Determine frequency
       var sortedTxns = g.txns.slice().sort(function(a, b) { return new Date(a.date) - new Date(b.date); });
       var frequency = 'monthly';
       if (sortedTxns.length >= 2) {
@@ -82,21 +84,21 @@ export function RecurringPage() {
         else if (avgDaysBetween > 60) frequency = 'quarterly';
       }
 
-      var annualEstimate = frequency === 'annual' ? g.fixedAmount : frequency === 'quarterly' ? g.fixedAmount * 4 : g.fixedAmount * 12;
+      var annualEstimate = frequency === 'annual' ? avgAmount : frequency === 'quarterly' ? avgAmount * 4 : avgAmount * 12;
 
       result.push({
         key: itemKey,
         description: g.description,
         category: g.category,
         account: g.account,
-        avgAmount: g.fixedAmount,
-        totalAmount: g.fixedAmount * g.txns.length,
+        avgAmount: avgAmount,
+        totalAmount: totalAmt,
         occurrences: g.txns.length,
         monthCount: monthCount,
         frequency: frequency,
-        isFixed: true,
-        minAmount: g.fixedAmount,
-        maxAmount: g.fixedAmount,
+        isFixed: isFixed,
+        minAmount: minAmount,
+        maxAmount: maxAmount,
         annualEstimate: annualEstimate,
         txns: sortedTxns.reverse(),
       });
