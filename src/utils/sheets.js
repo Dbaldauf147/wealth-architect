@@ -1,7 +1,10 @@
-const API_KEY = 'AIzaSyAL_5YuoXQgwLRkIb5RG1XHzoAcYqDN5mA';
-const SHEET_ID = '1G9dU4_Lt0vVHeH3UzwDUUc-fFs6rAy7d9THKYtOebCY';
+const API_KEY = import.meta.env.VITE_SHEETS_API_KEY;
+const SHEET_ID = import.meta.env.VITE_SHEETS_SHEET_ID;
 
 async function fetchSheet(tabName, range) {
+  if (!API_KEY || !SHEET_ID) {
+    throw new Error('Missing VITE_SHEETS_API_KEY or VITE_SHEETS_SHEET_ID — set them in .env (and in Vercel env vars for deployments).');
+  }
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(tabName)}!${range}?key=${API_KEY}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Sheets API error: ${res.status}`);
