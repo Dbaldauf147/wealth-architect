@@ -209,6 +209,7 @@ export function RecurringPage() {
       if (col === 'frequency') return a.frequency.localeCompare(b.frequency) * dir;
       if (col === 'avgAmount') return (a.avgAmount - b.avgAmount) * dir;
       if (col === 'totalAmount') return (a.totalAmount - b.totalAmount) * dir;
+      if (col === 'occurrences') return (a.occurrences - b.occurrences) * dir;
       if (col === 'nextExpected') return a.nextExpected.localeCompare(b.nextExpected) * dir;
       var aDate = a.txns.length > 0 ? new Date(a.txns[0].date).getTime() : 0;
       var bDate = b.txns.length > 0 ? new Date(b.txns[0].date).getTime() : 0;
@@ -351,6 +352,9 @@ export function RecurringPage() {
                                 <th className={styles.sortableTh} style={{ textAlign: 'center' }} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'frequency', 'asc'); }}>
                                   Frequency{sortArrow(itemSort, 'frequency')}
                                 </th>
+                                <th className={styles.sortableTh} style={{ textAlign: 'center' }} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'occurrences', 'desc'); }}>
+                                  Charges{sortArrow(itemSort, 'occurrences')}
+                                </th>
                                 <th className={styles.sortableTh} style={{ textAlign: 'right' }} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'avgAmount', 'desc'); }}>
                                   Avg Amount{sortArrow(itemSort, 'avgAmount')}
                                 </th>
@@ -373,6 +377,9 @@ export function RecurringPage() {
                                     <td className={styles.accountCell}>{r.account}</td>
                                     <td style={{ textAlign: 'center' }}>
                                       <span className={styles.freqBadge}>{freqLabel}</span>
+                                    </td>
+                                    <td style={{ textAlign: 'center' }}>
+                                      <span className={styles.freqBadge}>{r.occurrences}</span>
                                     </td>
                                     <td style={{ textAlign: 'right' }}>
                                       <div className={styles.amountMain}>{fmt(r.avgAmount)}</div>
