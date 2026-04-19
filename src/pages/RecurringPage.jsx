@@ -111,9 +111,23 @@ export function RecurringPage() {
     return result;
   }, [transactions]);
 
-  var expandedIdx = useState(null);
-  var expanded = expandedIdx[0];
-  var setExpanded = expandedIdx[1];
+  var expandedSub = useState(null);
+  var expandedSubVal = expandedSub[0];
+  var setExpandedSub = expandedSub[1];
+
+  /* Group recurring items into subcategory buckets */
+  var subBuckets = useMemo(function() {
+    var buckets = {};
+    for (var i = 0; i < recurring.length; i++) {
+      var r = recurring[i];
+      var sub = r.subcategory || r.category || 'Other';
+      if (!buckets[sub]) buckets[sub] = { name: sub, items: [], totalMonthly: 0, totalAnnual: 0 };
+      buckets[sub].items.push(r);
+      buckets[sub].totalMonthly += r.avgAmount;
+      buckets[sub].totalAnnual += r.annualEstimate;
+    }
+    return Object.values(buckets).sort(function(a, b) { return b.totalAnnual - a.totalAnnual; });
+  }, [recurring]);
 
   var totalMonthly = 0;
   var totalAnnual = 0;
@@ -168,104 +182,93 @@ export function RecurringPage() {
           <table className={styles.table}>
             <thead>
               <tr>
-                <th>Payment</th>
-                <th>Category</th>
                 <th>Subcategory</th>
-                <th>Account</th>
-                <th style={{ textAlign: 'center' }}>Frequency</th>
-                <th style={{ textAlign: 'right' }}>Avg Amount</th>
+                <th style={{ textAlign: 'center' }}>Items</th>
+                <th style={{ textAlign: 'right' }}>Avg Monthly</th>
                 <th style={{ textAlign: 'right' }}>Annual Est.</th>
-                <th style={{ textAlign: 'center' }}>Status</th>
               </tr>
             </thead>
             <tbody>
-              {['monthly', 'quarterly', 'annual'].map(function(freq) {
-                var items = recurring.filter(function(r) { return r.frequency === freq; });
-                if (items.length === 0) return null;
-                var freqLabel = freq === 'monthly' ? 'Monthly' : freq === 'quarterly' ? 'Quarterly' : 'Annual';
-                var freqTotal = 0;
-                for (var fi = 0; fi < items.length; fi++) freqTotal += items[fi].avgAmount;
-                var freqAnnual = freq === 'annual' ? freqTotal : freq === 'quarterly' ? freqTotal * 4 : freqTotal * 12;
+              {subBuckets.map(function(bucket) {
+                var isOpen = expandedSubVal === bucket.name;
                 return (
-                  <Fragment key={freq}>
-                    <tr className={styles.sectionHeaderRow}>
-                      <td colSpan="6">
-                        <span className={styles.sectionHeaderLabel}>{freqLabel}</span>
-                        <span className={styles.sectionHeaderCount}>{items.length} payment{items.length !== 1 ? 's' : ''}</span>
-                      </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <span className={styles.sectionHeaderAmount}>{fmtShort(freqAnnual)}/yr</span>
-                      </td>
-                      <td></td>
-                    </tr>
-                    {items.map(function(r) {
-                var i = recurring.indexOf(r);
-                var isOpen = expanded === i;
-                return (
-                  <Fragment key={i}>
-                    <tr style={{ cursor: 'pointer' }} onClick={function() { setExpanded(isOpen ? null : i); }}>
+                  <Fragment key={bucket.name}>
+                    <tr style={{ cursor: 'pointer' }} onClick={function() { setExpandedSub(isOpen ? null : bucket.name); }}>
                       <td>
                         <div className={styles.paymentName}>
                           <span className={styles.expandArrow}>{isOpen ? '\u25BE' : '\u25B8'}</span>
-                          {r.description}
+                          <span className={styles.categoryBadge}>{bucket.name}</span>
                         </div>
                       </td>
-                      <td>
-                        <span className={styles.categoryBadge}>{r.category}</span>
-                      </td>
-                      <td>
-                        <span className={styles.categoryBadge} style={{ opacity: r.subcategory ? 1 : 0.4 }}>{r.subcategory || '—'}</span>
-                      </td>
-                      <td className={styles.accountCell}>{r.account}</td>
                       <td style={{ textAlign: 'center' }}>
-                        <span className={styles.freqBadge}>{r.monthCount} months</span>
+                        <span className={styles.freqBadge}>{bucket.items.length}</span>
                       </td>
                       <td style={{ textAlign: 'right' }}>
-                        <div className={styles.amountMain}>{fmt(r.avgAmount)}</div>
-                        {!r.isFixed && (
-                          <div className={styles.amountRange}>{fmt(r.minAmount)} – {fmt(r.maxAmount)}</div>
-                        )}
+                        <div className={styles.amountMain}>{fmt(bucket.totalMonthly)}</div>
                       </td>
                       <td style={{ textAlign: 'right' }}>
-                        <div className={styles.annualAmount}>{fmtShort(r.annualEstimate)}</div>
-                      </td>
-                      <td style={{ textAlign: 'center' }} onClick={function(e) { e.stopPropagation(); }}>
-                        <div className={styles.statusBtns}>
-                          <button className={statuses[r.key] === 'keep' ? styles.statusBtnKeepActive : styles.statusBtnKeep} onClick={function() { setStatus(r.key, 'keep'); }} title="Keep">Keep</button>
-                          <button className={statuses[r.key] === 'nomore' ? styles.statusBtnNomoreActive : styles.statusBtnNomore} onClick={function() { setStatus(r.key, 'nomore'); }} title="No More">No More</button>
-                          <button className={statuses[r.key] === 'getrid' ? styles.statusBtnGetridActive : styles.statusBtnGetrid} onClick={function() { setStatus(r.key, 'getrid'); }} title="Get Rid Of">Get Rid</button>
-                        </div>
+                        <div className={styles.annualAmount}>{fmtShort(bucket.totalAnnual)}</div>
                       </td>
                     </tr>
-                    {isOpen && r.txns.map(function(t, ti) {
-                      return (
-                        <tr key={'txn-' + ti} className={styles.txnDetailRow}>
-                          <td colSpan="3" style={{ paddingLeft: 40 }}>
-                            <span className={styles.txnDate}>{t.date}</span>
-                          </td>
-                          <td>{t.account}</td>
-                          <td></td>
-                          <td style={{ textAlign: 'right' }}>
-                            <span className={styles.txnAmount}>{fmt(t.amount)}</span>
-                          </td>
-                          <td></td>
-                          <td></td>
-                        </tr>
-                      );
-                    })}
-                  </Fragment>
-                );
-              })}
+                    {isOpen && (
+                      <tr>
+                        <td colSpan="4" style={{ padding: 0 }}>
+                          <table className={styles.table} style={{ margin: 0 }}>
+                            <thead>
+                              <tr style={{ background: 'var(--color-surface-alt, #f8f8f8)' }}>
+                                <th style={{ paddingLeft: 32 }}>Payment</th>
+                                <th>Account</th>
+                                <th style={{ textAlign: 'center' }}>Frequency</th>
+                                <th style={{ textAlign: 'right' }}>Avg Amount</th>
+                                <th style={{ textAlign: 'right' }}>Annual Est.</th>
+                                <th style={{ textAlign: 'center' }}>Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {bucket.items.map(function(r) {
+                                var freqLabel = r.frequency === 'annual' ? 'Annual' : r.frequency === 'quarterly' ? 'Quarterly' : 'Monthly';
+                                return (
+                                  <tr key={r.key}>
+                                    <td style={{ paddingLeft: 32 }}>
+                                      <div className={styles.paymentName}>{r.description}</div>
+                                    </td>
+                                    <td className={styles.accountCell}>{r.account}</td>
+                                    <td style={{ textAlign: 'center' }}>
+                                      <span className={styles.freqBadge}>{freqLabel}</span>
+                                    </td>
+                                    <td style={{ textAlign: 'right' }}>
+                                      <div className={styles.amountMain}>{fmt(r.avgAmount)}</div>
+                                      {!r.isFixed && (
+                                        <div className={styles.amountRange}>{fmt(r.minAmount)} – {fmt(r.maxAmount)}</div>
+                                      )}
+                                    </td>
+                                    <td style={{ textAlign: 'right' }}>
+                                      <div className={styles.annualAmount}>{fmtShort(r.annualEstimate)}</div>
+                                    </td>
+                                    <td style={{ textAlign: 'center' }} onClick={function(e) { e.stopPropagation(); }}>
+                                      <div className={styles.statusBtns}>
+                                        <button className={statuses[r.key] === 'keep' ? styles.statusBtnKeepActive : styles.statusBtnKeep} onClick={function() { setStatus(r.key, 'keep'); }} title="Keep">Keep</button>
+                                        <button className={statuses[r.key] === 'nomore' ? styles.statusBtnNomoreActive : styles.statusBtnNomore} onClick={function() { setStatus(r.key, 'nomore'); }} title="No More">No More</button>
+                                        <button className={statuses[r.key] === 'getrid' ? styles.statusBtnGetridActive : styles.statusBtnGetrid} onClick={function() { setStatus(r.key, 'getrid'); }} title="Get Rid Of">Get Rid</button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </td>
+                      </tr>
+                    )}
                   </Fragment>
                 );
               })}
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan="4" style={{ fontWeight: 700 }}>Total</td>
+                <td colSpan="2" style={{ fontWeight: 700 }}>Total</td>
                 <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(totalMonthly)}</td>
                 <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtShort(totalAnnual)}</td>
-                <td></td>
               </tr>
             </tfoot>
           </table>
