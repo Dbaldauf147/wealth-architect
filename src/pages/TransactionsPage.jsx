@@ -692,18 +692,18 @@ export function TransactionsPage() {
     return [...new Set(cats)].sort();
   }, [transactions]);
 
-  /* Per-category totals for Pareto 80/20 bucketing.
-     Uses abs(sum of signed amounts) to match analytics.byCategory elsewhere in the app:
-     offsetting flows (transfers, refunds) cancel out, so e.g. a Misc category with
-     +$100k in and −$100k out nets near zero rather than showing $200k of gross movement. */
+  /* Per-category spend totals for Pareto 80/20 bucketing.
+     Expense-only: skips positive amounts (income/refunds/transfers in) and sums |negatives|,
+     matching CardsPage.spendByCategory so the 80/20 chip amounts line up with
+     "spend" shown elsewhere in the app. */
   const categoryTotals = useMemo(() => {
-    const signed = new Map();
-    for (const t of (transactions || [])) {
-      const cat = t.category || 'Uncategorized';
-      signed.set(cat, (signed.get(cat) || 0) + (Number(t.amount) || 0));
-    }
     const map = new Map();
-    for (const [k, v] of signed) map.set(k, Math.abs(v));
+    for (const t of (transactions || [])) {
+      const amt = Number(t.amount) || 0;
+      if (amt >= 0) continue;
+      const cat = t.category || 'Uncategorized';
+      map.set(cat, (map.get(cat) || 0) + Math.abs(amt));
+    }
     return map;
   }, [transactions]);
 
