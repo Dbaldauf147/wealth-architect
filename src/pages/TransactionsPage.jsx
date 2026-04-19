@@ -692,14 +692,18 @@ export function TransactionsPage() {
     return [...new Set(cats)].sort();
   }, [transactions]);
 
-  /* Per-category totals (abs of amount) for Pareto 80/20 bucketing */
+  /* Per-category totals for Pareto 80/20 bucketing.
+     Uses abs(sum of signed amounts) to match analytics.byCategory elsewhere in the app:
+     offsetting flows (transfers, refunds) cancel out, so e.g. a Misc category with
+     +$100k in and −$100k out nets near zero rather than showing $200k of gross movement. */
   const categoryTotals = useMemo(() => {
-    const map = new Map();
+    const signed = new Map();
     for (const t of (transactions || [])) {
       const cat = t.category || 'Uncategorized';
-      const amt = Math.abs(Number(t.amount) || 0);
-      map.set(cat, (map.get(cat) || 0) + amt);
+      signed.set(cat, (signed.get(cat) || 0) + (Number(t.amount) || 0));
     }
+    const map = new Map();
+    for (const [k, v] of signed) map.set(k, Math.abs(v));
     return map;
   }, [transactions]);
 
