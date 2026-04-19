@@ -178,11 +178,12 @@ export function RecurringPage() {
     for (var i = 0; i < recurring.length; i++) {
       var r = recurring[i];
       var sub = r.subcategory || r.category || 'Other';
-      if (!buckets[sub]) buckets[sub] = { name: sub, items: [], totalMonthly: 0, totalAnnual: 0, totalSpent: 0, lastChargedTs: 0, nextExpected: '' };
+      if (!buckets[sub]) buckets[sub] = { name: sub, items: [], totalMonthly: 0, totalAnnual: 0, totalSpent: 0, lastChargedTs: 0, nextExpected: '', freqCounts: { monthly: 0, quarterly: 0, annual: 0 } };
       buckets[sub].items.push(r);
       buckets[sub].totalMonthly += r.avgAmount;
       buckets[sub].totalAnnual += r.annualEstimate;
       buckets[sub].totalSpent += r.totalAmount;
+      if (r.frequency) buckets[sub].freqCounts[r.frequency] = (buckets[sub].freqCounts[r.frequency] || 0) + 1;
       // Last Charged: most recent date across all items in the bucket
       if (r.txns.length > 0) {
         var lastTs = new Date(r.txns[0].date).getTime();
@@ -199,6 +200,14 @@ export function RecurringPage() {
       }
     }
     var list = Object.values(buckets);
+    // Compute a single frequency per bucket: dominant if all items agree, else 'mixed'.
+    for (var k = 0; k < list.length; k++) {
+      var b = list[k];
+      var freqs = Object.keys(b.freqCounts).filter(function(f) { return b.freqCounts[f] > 0; });
+      if (freqs.length === 0) b.frequency = '';
+      else if (freqs.length === 1) b.frequency = freqs[0];
+      else b.frequency = 'mixed';
+    }
     var dir = bucketSort.dir === 'asc' ? 1 : -1;
     list.sort(function(a, b) {
       // Cancelled buckets always sink to the bottom regardless of column sort.
@@ -211,6 +220,7 @@ export function RecurringPage() {
       if (col === 'totalMonthly') return (a.totalMonthly - b.totalMonthly) * dir;
       if (col === 'lastCharged') return ((a.lastChargedTs || 0) - (b.lastChargedTs || 0)) * dir;
       if (col === 'nextExpected') return (a.nextExpected || '').localeCompare(b.nextExpected || '') * dir;
+      if (col === 'frequency') return (a.frequency || '').localeCompare(b.frequency || '') * dir;
       return (a.totalSpent - b.totalSpent) * dir;
     });
     return list;
@@ -306,6 +316,9 @@ export function RecurringPage() {
                 <th className={styles.sortableTh} style={{ textAlign: 'center' }} onClick={function() { toggleSort(setBucketSort, 'items', 'desc'); }}>
                   Items{sortArrow(bucketSort, 'items')}
                 </th>
+                <th className={styles.sortableTh} style={{ textAlign: 'center' }} onClick={function() { toggleSort(setBucketSort, 'frequency', 'asc'); }}>
+                  Frequency{sortArrow(bucketSort, 'frequency')}
+                </th>
                 <th className={styles.sortableTh} onClick={function() { toggleSort(setBucketSort, 'lastCharged', 'desc'); }}>
                   Last Charged{sortArrow(bucketSort, 'lastCharged')}
                 </th>
@@ -339,6 +352,13 @@ export function RecurringPage() {
                       <td style={{ textAlign: 'center' }}>
                         <span className={styles.freqBadge}>{bucket.items.length}</span>
                       </td>
+                      <td style={{ textAlign: 'center' }}>
+                        {bucket.frequency ? (
+                          <span className={styles.freqBadge}>
+                            {bucket.frequency === 'mixed' ? 'Mixed' : bucket.frequency.charAt(0).toUpperCase() + bucket.frequency.slice(1)}
+                          </span>
+                        ) : '—'}
+                      </td>
                       <td className={styles.accountCell}>{bucket.lastCharged ? fmtDate(bucket.lastCharged) : '—'}</td>
                       <td className={styles.accountCell}>{bucket.nextExpected ? fmtDate(bucket.nextExpected) : '—'}</td>
                       <td style={{ textAlign: 'right' }}>
@@ -361,7 +381,7 @@ export function RecurringPage() {
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan="7" style={{ padding: 0 }}>
+                        <td colSpan="8" style={{ padding: 0 }}>
                           <table className={styles.table} style={{ margin: 0 }}>
                             <thead>
                               <tr style={{ background: 'var(--color-surface-alt, #f8f8f8)' }}>
@@ -433,7 +453,7 @@ export function RecurringPage() {
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan="4" style={{ fontWeight: 700 }}>Total</td>
+                <td colSpan="5" style={{ fontWeight: 700 }}>Total</td>
                 <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(totalMonthly)}</td>
                 <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(totalSpentAll)}</td>
                 <td />
