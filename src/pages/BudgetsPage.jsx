@@ -65,6 +65,55 @@ function fmt(n) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
 }
 
+// Inline mini line chart with a shaded ±25% normal-range band and dashed avg line.
+function RangeSparkline({ series, low, high, avg }) {
+  const w = 180;
+  const h = 56;
+  const padX = 4;
+  const padY = 4;
+  if (!series || series.length === 0) return null;
+  const allVals = [...series.map(s => s.value), high, avg, low].filter(v => v > 0);
+  const max = allVals.length ? Math.max(...allVals) * 1.15 : 1;
+  const min = 0;
+  const range = max - min || 1;
+  const yPos = v => padY + (h - 2 * padY) * (1 - (v - min) / range);
+  const xStep = (w - 2 * padX) / Math.max(series.length - 1, 1);
+  const xPos = i => padX + i * xStep;
+  const path = series.map((s, i) => `${i === 0 ? 'M' : 'L'} ${xPos(i)} ${yPos(s.value)}`).join(' ');
+  const yHigh = yPos(high);
+  const yLow = yPos(low);
+  const yAvg = yPos(avg);
+  return (
+    <svg width={w} height={h} style={{ display: 'block' }}>
+      {/* Normal range band */}
+      {avg > 0 && (
+        <rect x={padX} y={yHigh} width={w - 2 * padX} height={Math.max(yLow - yHigh, 1)}
+          fill="#16a34a" opacity={0.12} rx={2} />
+      )}
+      {/* Average line */}
+      {avg > 0 && (
+        <line x1={padX} y1={yAvg} x2={w - padX} y2={yAvg}
+          stroke="#16a34a" strokeWidth={1} strokeDasharray="3 3" opacity={0.7} />
+      )}
+      {/* Spend line */}
+      <path d={path} fill="none" stroke="var(--color-text-secondary)" strokeWidth={1.6}
+        strokeLinecap="round" strokeLinejoin="round" />
+      {/* Dots — current month gets accented */}
+      {series.map((s, i) => {
+        const above = avg > 0 && s.value > high;
+        const below = avg > 0 && s.value < low && s.value > 0;
+        const dotColor = s.isCurrent ? (above ? '#ba1a1a' : below ? '#e8a317' : '#16a34a') : 'var(--color-text-secondary)';
+        return (
+          <circle key={i} cx={xPos(i)} cy={yPos(s.value)}
+            r={s.isCurrent ? 3.5 : 2.5} fill={dotColor}>
+            <title>{`${s.label}: $${Math.round(s.value).toLocaleString()}`}</title>
+          </circle>
+        );
+      })}
+    </svg>
+  );
+}
+
 export function BudgetsPage() {
   const { analytics, transactions } = useData();
   const { budgets, loading, addBudget, updateBudget, deleteBudget, addSubBudget, updateSubBudget, deleteSubBudget } = useBudgets();
@@ -236,11 +285,21 @@ export function BudgetsPage() {
     if (rangeCats.size === 0 || !transactions || transactions.length === 0) return [];
     const now = new Date();
     const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    // 3 prior complete months
+    // 3 prior complete months for the baseline
     const baselineKeys = [];
     for (let i = 1; i <= 3; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       baselineKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
+    // 6-month chart series: 5 prior + current
+    const chartKeys = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      chartKeys.push({
+        key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+        label: d.toLocaleString('en-US', { month: 'short' }),
+        isCurrent: i === 0,
+      });
     }
     // Aggregate (category, subcategory, monthKey) → spend (expense-only)
     const byCatSubMonth = new Map();
@@ -274,7 +333,8 @@ export function BudgetsPage() {
         else if (current === 0) status = 'no-spend';
         else if (current > high) status = 'over';
         else if (current < low) status = 'under';
-        subs.push({ sub, avg, low, high, current, baselineMonths: present.length, status });
+        const series = chartKeys.map(k => ({ ...k, value: monthMap.get(k.key) || 0 }));
+        subs.push({ sub, avg, low, high, current, baselineMonths: present.length, status, series });
       }
       subs.sort((a, b) => b.avg - a.avg);
       result.push({ cat, subs });
@@ -535,10 +595,11 @@ export function BudgetsPage() {
                         <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>Normal Range</th>
                         <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>This Month</th>
                         <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'center' }}>Status</th>
+                        <th style={{ padding: '6px 8px', fontWeight: 600 }}>6-mo Trend</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {subs.map(({ sub, avg, low, high, current, baselineMonths, status }) => {
+                      {subs.map(({ sub, avg, low, high, current, baselineMonths, status, series }) => {
                         const statusStyles = {
                           'normal':   { bg: 'rgba(0,150,104,0.08)', fg: '#16a34a', label: 'In range' },
                           'over':     { bg: 'rgba(186,26,26,0.08)', fg: '#ba1a1a', label: 'Above' },
@@ -568,6 +629,9 @@ export function BudgetsPage() {
                               <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 700, background: statusStyles.bg, color: statusStyles.fg }}>
                                 {statusStyles.label}
                               </span>
+                            </td>
+                            <td style={{ padding: '8px' }}>
+                              <RangeSparkline series={series} low={low} high={high} avg={avg} />
                             </td>
                           </tr>
                         );
