@@ -278,6 +278,7 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
     return (
       <svg {...svgProps}>
         {bands}{grid}{baseline}
+        {xLabels}
         {months.map((m, mi) => {
           const cx = xCenter(mi);
           let yOffset = 0;
@@ -302,10 +303,12 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
               {topSeg && (
                 <rect x={cx - slotW / 2} y={pad.top} width={slotW} height={chartH}
                   fill="transparent" pointerEvents="all"
+                  style={{ cursor: 'pointer' }}
                   onMouseEnter={() => {
                     if (hoverSeg && hoverSeg.mi === mi) return;
                     setHoverSeg({ mi, ci: topSeg.ci, x: cx, y: topSeg.y + topSeg.barH / 2, xRight: cx + barW / 2 });
                   }}
+                  onClick={() => onMonthClick && onMonthClick(m.key)}
                 />
               )}
               {segs.map(({ cat, ci, val, barH, y, isTop, isHovered }) => {
@@ -318,6 +321,7 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                     strokeWidth={isHovered ? 2 : 0}
                     style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
                     onMouseEnter={() => setHoverSeg({ mi, ci, x: cx, y: y + barH / 2, xRight: cx + barW / 2 })}
+                    onClick={() => onMonthClick && onMonthClick(m.key)}
                   />
                 );
               })}
@@ -356,7 +360,6 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
             </g>
           );
         })}
-        {xLabels}
         {renderSegTooltip()}
       </svg>
     );
@@ -370,6 +373,7 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
     return (
       <svg {...svgProps}>
         {bands}{grid}{baseline}
+        {xLabels}
         {months.map((m, mi) => {
           const cx = xCenter(mi);
           const groupStart = cx - groupW / 2;
@@ -378,7 +382,9 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
           const monthHit = (
             <rect key={`hit-${mi}`} x={cx - slotW / 2} y={pad.top} width={slotW} height={chartH}
               fill="transparent" pointerEvents="all"
+              style={{ cursor: 'pointer' }}
               onMouseEnter={() => setHoverSeg({ mi, ci: 0, x: cx, y: pad.top + chartH / 2 })}
+              onClick={() => onMonthClick && onMonthClick(m.key)}
             />
           );
           return (
@@ -401,6 +407,7 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                     strokeWidth={isHovered ? 2 : 0}
                     style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
                     onMouseEnter={() => setHoverSeg({ mi, ci, x: bx + singleW / 2, y: by + Math.max(barH, 0) / 2, xRight: bx + w })}
+                    onClick={() => onMonthClick && onMonthClick(m.key)}
                   />
                 );
               })}
@@ -422,7 +429,6 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
             </g>
           );
         })}
-        {xLabels}
         {renderSegTooltip()}
       </svg>
     );
