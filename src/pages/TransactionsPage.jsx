@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useData } from '../contexts/DataContext';
 import styles from './TransactionsPage.module.css';
 
@@ -59,6 +59,15 @@ const PIE_PALETTE = [
   '#0d9488', '#c026d3', '#84cc16', '#6366f1', '#f97316',
 ];
 
+/* Preset swatches shown in the category color picker */
+const COLOR_PICKER_PRESETS = [
+  '#0058be', '#2563eb', '#0891b2', '#0d9488', '#059669',
+  '#16a34a', '#65a30d', '#84cc16', '#e8a317', '#f59e0b',
+  '#f97316', '#ea580c', '#dc2626', '#b91c1c', '#db2777',
+  '#d946ef', '#c026d3', '#9333ea', '#7c3aed', '#6366f1',
+  '#475569', '#1f2937', '#000000',
+];
+
 /* Deterministic color for a category name — same category → same color across bar & pie */
 function pieColor(name) {
   if (typeof name !== 'string') return PIE_PALETTE[(name | 0) % PIE_PALETTE.length];
@@ -93,7 +102,7 @@ function smoothPath(points) {
   return d;
 }
 
-function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 280, mode = 'stacked', onMonthClick, selectedMonth }) {
+function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 280, mode = 'stacked', onMonthClick, selectedMonth, colorFor = pieColor }) {
   const [hoverIdx, setHoverIdx] = useState(null);
   const [hoverSeg, setHoverSeg] = useState(null); // { mi, ci, x, y }
   if (!months.length) return null;
@@ -252,7 +261,7 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
       <g style={{ pointerEvents: 'none' }}>
         <rect x={tx} y={ty} width={boxW} height={boxH} rx={6}
           fill="var(--color-text-primary)" opacity={0.94} />
-        <circle cx={tx + 10} cy={ty + 14} r={4} fill={pieColor(cat)} />
+        <circle cx={tx + 10} cy={ty + 14} r={4} fill={colorFor(cat)} />
         <text x={tx + 18} y={ty + 17} fontSize={11} fontWeight={700} fill="#fff" fontFamily="var(--font-headline)">
           {label}
         </text>
@@ -303,7 +312,7 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                 const sameCat = hoverSeg && hoverSeg.ci === ci;
                 return (
                   <rect key={ci} x={cx - barW / 2} y={y} width={barW} height={Math.max(barH, 0)}
-                    rx={isTop ? 4 : 0} fill={pieColor(cat)}
+                    rx={isTop ? 4 : 0} fill={colorFor(cat)}
                     opacity={hoverSeg && !sameCat ? 0.25 : 0.95}
                     stroke={isHovered ? 'var(--color-text-primary)' : 'none'}
                     strokeWidth={isHovered ? 2 : 0}
@@ -386,7 +395,7 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                 return (
                   <rect key={ci} x={bx} y={by}
                     width={w} height={Math.max(barH, 0)}
-                    rx={3} fill={pieColor(cat)}
+                    rx={3} fill={colorFor(cat)}
                     opacity={hoverSeg && !sameCat ? 0.25 : 0.95}
                     stroke={isHovered ? 'var(--color-text-primary)' : 'none'}
                     strokeWidth={isHovered ? 2 : 0}
@@ -430,18 +439,18 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
           const dim = hoverSeg && hoverSeg.ci !== ci;
           return (
             <g key={ci} opacity={dim ? 0.3 : 1} style={{ transition: 'opacity 0.12s' }}>
-              <path d={d} fill="none" stroke={pieColor(cat)} strokeWidth={2.5}
+              <path d={d} fill="none" stroke={colorFor(cat)} strokeWidth={2.5}
                 strokeLinecap="round" strokeLinejoin="round" opacity={0.85} />
               {points.map((p, pi) => {
                 const isHovered = hoverSeg && hoverSeg.mi === pi && hoverSeg.ci === ci;
                 return (
                   <g key={pi}>
-                    <circle cx={p.x} cy={p.y} r={10} fill={pieColor(cat)} opacity={0}
+                    <circle cx={p.x} cy={p.y} r={10} fill={colorFor(cat)} opacity={0}
                       style={{ cursor: 'pointer' }}
                       onMouseEnter={() => setHoverSeg({ mi: pi, ci, x: p.x, y: p.y })}
                     />
                     <circle cx={p.x} cy={p.y} r={isHovered ? 5.5 : 4}
-                      fill="#fff" stroke={pieColor(cat)} strokeWidth={isHovered ? 2.5 : 2}
+                      fill="#fff" stroke={colorFor(cat)} strokeWidth={isHovered ? 2.5 : 2}
                       style={{ transition: 'r 0.12s' }}
                     />
                   </g>
@@ -472,23 +481,23 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
             <g key={ci} opacity={dim ? 0.25 : 1} style={{ transition: 'opacity 0.12s' }}>
               <defs>
                 <linearGradient id={`area-grad-${ci}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={pieColor(cat)} stopOpacity={0.35} />
-                  <stop offset="100%" stopColor={pieColor(cat)} stopOpacity={0.05} />
+                  <stop offset="0%" stopColor={colorFor(cat)} stopOpacity={0.35} />
+                  <stop offset="100%" stopColor={colorFor(cat)} stopOpacity={0.05} />
                 </linearGradient>
               </defs>
               <path d={areaD} fill={`url(#area-grad-${ci})`} />
-              <path d={lineD} fill="none" stroke={pieColor(cat)} strokeWidth={2.5}
+              <path d={lineD} fill="none" stroke={colorFor(cat)} strokeWidth={2.5}
                 strokeLinecap="round" strokeLinejoin="round" opacity={0.85} />
               {points.map((p, pi) => {
                 const isHovered = hoverSeg && hoverSeg.mi === pi && hoverSeg.ci === ci;
                 return (
                   <g key={pi}>
-                    <circle cx={p.x} cy={p.y} r={10} fill={pieColor(cat)} opacity={0}
+                    <circle cx={p.x} cy={p.y} r={10} fill={colorFor(cat)} opacity={0}
                       style={{ cursor: 'pointer' }}
                       onMouseEnter={() => setHoverSeg({ mi: pi, ci, x: p.x, y: p.y })}
                     />
                     {isHovered && (
-                      <circle cx={p.x} cy={p.y} r={5} fill="#fff" stroke={pieColor(cat)} strokeWidth={2.5} />
+                      <circle cx={p.x} cy={p.y} r={5} fill="#fff" stroke={colorFor(cat)} strokeWidth={2.5} />
                     )}
                   </g>
                 );
@@ -505,7 +514,7 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
   return null;
 }
 
-function PieChart({ entries, total, size = 160, onSliceClick, highlightedNames }) {
+function PieChart({ entries, total, size = 160, onSliceClick, highlightedNames, colorFor = pieColor }) {
   const [hoverIdx, setHoverIdx] = useState(null);
   if (!entries.length || total === 0) return null;
   const cx = size / 2;
@@ -530,7 +539,7 @@ function PieChart({ entries, total, size = 160, onSliceClick, highlightedNames }
     const yi2 = cy + inner * Math.sin(endAngle);
     const largeArc = angle > Math.PI ? 1 : 0;
     const d = `M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} L ${xi2} ${yi2} A ${inner} ${inner} 0 ${largeArc} 0 ${xi1} ${yi1} Z`;
-    return { d, color: pieColor(e.name), name: e.name, pct, value: e.value, midAngle };
+    return { d, color: colorFor(e.name), name: e.name, pct, value: e.value, midAngle };
   });
   const hovered = hoverIdx != null ? slices[hoverIdx] : null;
   return (
@@ -820,6 +829,29 @@ export function TransactionsPage() {
     try { return new Set(JSON.parse(localStorage.getItem('chartHiddenSubs') || '[]')); }
     catch { return new Set(); }
   });
+
+  /* Per-category / per-subcategory color overrides */
+  const [categoryColors, setCategoryColors] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('categoryColors') || '{}'); }
+    catch { return {}; }
+  });
+  const colorFor = useCallback(
+    name => (categoryColors[name]) || pieColor(name),
+    [categoryColors],
+  );
+  function setCategoryColor(name, hex) {
+    const next = { ...categoryColors, [name]: hex };
+    setCategoryColors(next);
+    localStorage.setItem('categoryColors', JSON.stringify(next));
+  }
+  function resetCategoryColor(name) {
+    const next = { ...categoryColors };
+    delete next[name];
+    setCategoryColors(next);
+    localStorage.setItem('categoryColors', JSON.stringify(next));
+  }
+  const [colorPicker, setColorPicker] = useState(null); // { name, x, y } | null
+  const colorPickerRef = useRef(null);
 
   /* Saved filter views — name -> snapshot of all filter state */
   const [savedViews, setSavedViews] = useState(() => {
@@ -1238,6 +1270,17 @@ export function TransactionsPage() {
     if (viewsOpen) document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [viewsOpen]);
+
+  /* Close color picker on outside click */
+  useEffect(() => {
+    function handleClick(e) {
+      if (colorPickerRef.current && !colorPickerRef.current.contains(e.target)) {
+        setColorPicker(null);
+      }
+    }
+    if (colorPicker) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [colorPicker]);
 
   /* Close dropdown / confirm on outside click */
   useEffect(() => {
@@ -2192,8 +2235,19 @@ export function TransactionsPage() {
                       onClick={() => { toggleCategoryFilter(cat); setPage(0); }}
                       style={{ cursor: 'pointer', opacity: active ? 1 : 0.4 }}
                     >
-                      <span className={styles.barLegendDot} style={{ background: pieColor(cat) }} />
+                      <span className={styles.barLegendDot} style={{ background: colorFor(cat) }} />
                       <span className={styles.barLegendName}>{cat}</span>
+                      <button
+                        type="button"
+                        className={styles.legendColorBtn}
+                        title={`Change color for ${cat}`}
+                        onClick={e => {
+                          e.stopPropagation();
+                          const r = e.currentTarget.getBoundingClientRect();
+                          setColorPicker({ name: cat, x: r.left, y: r.bottom + 4 });
+                        }}
+                        style={{ background: colorFor(cat) }}
+                      />
                       <button
                         type="button"
                         className={styles.legendHideBtn}
@@ -2267,6 +2321,7 @@ export function TransactionsPage() {
             height={300}
             mode={chartMode}
             selectedMonth={selectedMonth}
+            colorFor={colorFor}
             onMonthClick={key => {
               setSelectedMonth(prev => prev === key ? null : key);
               setPage(0);
@@ -2935,6 +2990,7 @@ export function TransactionsPage() {
                   entries={pieData.entries}
                   total={pieData.total}
                   size={160}
+                  colorFor={colorFor}
                   highlightedNames={pieData.drillDown ? includedSubcategories : includedCategories}
                   onSliceClick={name => {
                     if (pieData.drillDown) {
@@ -2988,9 +3044,20 @@ export function TransactionsPage() {
                         setPage(0);
                       }}
                     >
-                      <span className={styles.pieLegendDot} style={{ background: pieColor(e.name) }} />
+                      <span className={styles.pieLegendDot} style={{ background: colorFor(e.name) }} />
                       <span className={styles.pieLegendName}>{e.name}</span>
                       <span className={styles.pieLegendPct}>{Math.round((e.value / pieData.total) * 100)}%</span>
+                      <button
+                        type="button"
+                        className={styles.legendColorBtn}
+                        title={`Change color for ${e.name}`}
+                        onClick={ev => {
+                          ev.stopPropagation();
+                          const r = ev.currentTarget.getBoundingClientRect();
+                          setColorPicker({ name: e.name, x: r.left, y: r.bottom + 4 });
+                        }}
+                        style={{ background: colorFor(e.name) }}
+                      />
                       <button
                         type="button"
                         className={styles.legendHideBtn}
@@ -3396,6 +3463,53 @@ export function TransactionsPage() {
         <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check_circle</span>
         Saved!
       </div>
+
+      {/* Color picker popover */}
+      {colorPicker && (
+        <div
+          ref={colorPickerRef}
+          className={styles.colorPickerPopover}
+          style={{ left: colorPicker.x, top: colorPicker.y }}
+        >
+          <div className={styles.colorPickerLabel}>{colorPicker.name}</div>
+          <div className={styles.colorPickerSwatches}>
+            {COLOR_PICKER_PRESETS.map(hex => (
+              <button
+                key={hex}
+                type="button"
+                className={styles.colorPickerSwatch}
+                style={{ background: hex }}
+                title={hex}
+                onClick={() => {
+                  setCategoryColor(colorPicker.name, hex);
+                  setColorPicker(null);
+                }}
+              />
+            ))}
+          </div>
+          <div className={styles.colorPickerRow}>
+            <label className={styles.colorPickerCustom}>
+              <span>Custom</span>
+              <input
+                type="color"
+                value={colorFor(colorPicker.name)}
+                onChange={e => setCategoryColor(colorPicker.name, e.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className={styles.colorPickerReset}
+              onClick={() => {
+                resetCategoryColor(colorPicker.name);
+                setColorPicker(null);
+              }}
+              disabled={!categoryColors[colorPicker.name]}
+            >
+              Reset
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

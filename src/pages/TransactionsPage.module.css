@@ -923,8 +923,121 @@
 }
 
 .barLegendItem:hover .legendHideBtn,
-.pieLegendItem:hover .legendHideBtn {
+.pieLegendItem:hover .legendHideBtn,
+.barLegendItem:hover .legendColorBtn,
+.pieLegendItem:hover .legendColorBtn {
   opacity: 1;
+}
+
+.legendColorBtn {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+  padding: 0;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.legendColorBtn:hover {
+  transform: scale(1.2);
+}
+
+.colorPickerPopover {
+  position: fixed;
+  z-index: 50;
+  width: 232px;
+  background: var(--color-surface);
+  border: 1px solid var(--border-ghost);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.colorPickerLabel {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.colorPickerSwatches {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+}
+
+.colorPickerSwatch {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  padding: 0;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.colorPickerSwatch:hover {
+  transform: scale(1.1);
+  box-shadow: 0 0 0 2px var(--color-surface), 0 0 0 3px var(--color-text-primary);
+}
+
+.colorPickerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--border-ghost);
+  padding-top: 8px;
+}
+
+.colorPickerCustom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.colorPickerCustom input[type="color"] {
+  width: 28px;
+  height: 22px;
+  border: 1px solid var(--border-ghost);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  background: transparent;
+}
+
+.colorPickerReset {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-ghost);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.colorPickerReset:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.colorPickerReset:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-surface-alt);
 }
 
 .legendHideBtn:hover {
