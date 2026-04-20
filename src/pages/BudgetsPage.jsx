@@ -595,10 +595,13 @@ export function BudgetsPage() {
             { key: 'no-data',  label: 'No Baseline',  bg: 'var(--color-surface-alt)', fg: 'var(--color-text-tertiary)', icon: 'help',          blurb: 'Not enough prior-month history to compare' },
           ];
           // Sort within each bucket by absolute deviation from avg desc (biggest movers first)
+          // Always show the four primary buckets (over / normal / under / no-data), even when
+          // empty, so the user sees the structure. Hide 'no-spend' unless it has rows.
+          const ALWAYS_SHOW = new Set(['over', 'normal', 'under', 'no-data']);
           const grouped = buckets.map(b => ({
             ...b,
             items: flat.filter(f => f.status === b.key).sort((a, c) => Math.abs(c.current - c.avg) - Math.abs(a.current - a.avg)),
-          })).filter(b => b.items.length > 0);
+          })).filter(b => ALWAYS_SHOW.has(b.key) || b.items.length > 0);
 
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -610,6 +613,11 @@ export function BudgetsPage() {
                     <span style={{ fontSize: 11, fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: 'rgba(255,255,255,0.6)', color: b.fg }}>{b.items.length}</span>
                     <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginLeft: 'auto' }}>{b.blurb}</span>
                   </div>
+                  {b.items.length === 0 ? (
+                    <div style={{ padding: '14px', fontSize: 12, color: 'var(--color-text-tertiary)', fontStyle: 'italic', textAlign: 'center' }}>
+                      No subcategories in this bucket right now.
+                    </div>
+                  ) : (
                   <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                       <thead>
@@ -660,6 +668,7 @@ export function BudgetsPage() {
                       </tbody>
                     </table>
                   </div>
+                  )}
                 </div>
               ))}
             </div>
