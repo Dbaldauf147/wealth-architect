@@ -625,7 +625,7 @@ const ALL_CATEGORIES = [
 ];
 
 const SUBCATEGORIES = {
-  'Food & Drink': ['Restaurants', 'Groceries', 'Coffee', 'Fast Food', 'Alcohol & Bars', 'Delivery'],
+  'Food & Drink': ['Restaurants', 'Groceries', 'Fast Food', 'Alcohol & Bars', 'Delivery'],
   'Shopping': ['Clothing', 'Electronics', 'Home Goods', 'Online Shopping', 'Sporting Goods', 'Books'],
   'Travel': ['Flights', 'Hotels', 'Car Rental', 'Vacation', 'Luggage & Travel Gear'],
   'Entertainment': ['Streaming', 'Movies & TV', 'Music', 'Games', 'Events & Concerts', 'Sports'],
