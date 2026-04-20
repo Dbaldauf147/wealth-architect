@@ -803,6 +803,36 @@ export function TransactionsPage() {
     });
   }
 
+  /* Categories/subcategories hidden from bar + pie charts (and Pareto chip totals) */
+  const [chartHiddenCats, setChartHiddenCats] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('chartHiddenCats') || '[]')); }
+    catch { return new Set(); }
+  });
+  const [chartHiddenSubs, setChartHiddenSubs] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('chartHiddenSubs') || '[]')); }
+    catch { return new Set(); }
+  });
+  function hideFromCharts(name, isSub) {
+    const setter = isSub ? setChartHiddenSubs : setChartHiddenCats;
+    const key = isSub ? 'chartHiddenSubs' : 'chartHiddenCats';
+    setter(prev => {
+      const next = new Set(prev);
+      next.add(name);
+      localStorage.setItem(key, JSON.stringify([...next]));
+      return next;
+    });
+  }
+  function unhideFromCharts(name, isSub) {
+    const setter = isSub ? setChartHiddenSubs : setChartHiddenCats;
+    const key = isSub ? 'chartHiddenSubs' : 'chartHiddenCats';
+    setter(prev => {
+      const next = new Set(prev);
+      next.delete(name);
+      localStorage.setItem(key, JSON.stringify([...next]));
+      return next;
+    });
+  }
+
   /* Filtered + sorted transactions */
   const filtered = useMemo(() => {
     let list = transactions || [];
@@ -914,12 +944,19 @@ export function TransactionsPage() {
 
   /* Bar chart data — by category (or subcategory when single category filtered) over time */
   const barChartData = useMemo(() => {
-    const source = filtered.filter(t => t.date && t.amount !== 0);
+    let source = filtered.filter(t => t.date && t.amount !== 0);
+    // Exclude categories the user has hidden from charts
+    source = source.filter(t => !chartHiddenCats.has(t.category || 'Uncategorized'));
     if (!source.length) return { months: [], topCategories: [], maxTotal: 0, drillDown: false, parent: null, visibleKeys: new Set() };
 
     // Detect single-category drill-down (same logic as pie chart)
     const visibleCats = [...new Set(source.map(t => t.category || 'Uncategorized'))];
     const drillDown = visibleCats.length === 1;
+    // When drilled into a single category, also exclude hidden subcategories
+    if (drillDown) {
+      source = source.filter(t => !chartHiddenSubs.has(t.subcategory || 'Uncategorized'));
+      if (!source.length) return { months: [], topCategories: [], maxTotal: 0, drillDown: false, parent: null, visibleKeys: new Set() };
+    }
 
     // Aggregate by month + (category or subcategory).
     // Sum signed amounts so refunds/reimbursements net against expenses,
@@ -989,7 +1026,7 @@ export function TransactionsPage() {
     });
 
     return { months, topCategories, maxTotal, drillDown, parent: drillDown ? visibleCats[0] : null, totalMonths: allKeys.length, visibleKeys: new Set(recentKeys) };
-  }, [filtered, chartMonthCount]);
+  }, [filtered, chartMonthCount, chartHiddenCats, chartHiddenSubs]);
 
   /* Per-category spend totals for Pareto 80/20 bucketing.
      Mirrors the Subcategories pie convention exactly so chip totals always agree with
@@ -1020,6 +1057,8 @@ export function TransactionsPage() {
       }
       const cat = t.category || 'Uncategorized';
       const sub = t.subcategory || 'Uncategorized';
+      if (chartHiddenCats.has(cat)) continue;
+      if (chartHiddenSubs.has(sub)) continue;
       const k = `${cat}\u0001${sub}`;
       subSigned.set(k, (subSigned.get(k) || 0) + (Number(t.amount) || 0));
     }
@@ -1031,16 +1070,17 @@ export function TransactionsPage() {
       map.set(cat, (map.get(cat) || 0) + Math.abs(v));
     }
     return map;
-  }, [transactions, activeAccount, selectedMonth, searchQuery, barChartData.visibleKeys]);
+  }, [transactions, activeAccount, selectedMonth, searchQuery, barChartData.visibleKeys, chartHiddenCats, chartHiddenSubs]);
 
   /* Pie chart data — scoped to the same months visible in the spending chart */
   const pieData = useMemo(() => {
     const chartKeys = barChartData.visibleKeys;
     // Only expenses in the category breakdown — ignore income entirely.
     // Refunds/reimbursements (positive) against an expense category still net.
-    const source = filtered.filter(t => {
+    let source = filtered.filter(t => {
       if (t.amount === 0 || !t.date) return false;
       if ((t.category || '') === 'Income') return false;
+      if (chartHiddenCats.has(t.category || 'Uncategorized')) return false;
       if (!chartKeys || chartKeys.size === 0) return true;
       const d = new Date(t.date);
       if (isNaN(d)) return false;
@@ -1049,6 +1089,9 @@ export function TransactionsPage() {
     });
     const visibleCats = [...new Set(source.map(t => t.category || 'Uncategorized'))];
     const drillDown = visibleCats.length === 1;
+    if (drillDown) {
+      source = source.filter(t => !chartHiddenSubs.has(t.subcategory || 'Uncategorized'));
+    }
     // Sum signed amounts per category, then keep only categories whose net is a true expense (negative overall)
     const signed = {};
     for (const t of source) {
@@ -1064,7 +1107,7 @@ export function TransactionsPage() {
       .sort((a, b) => b.value - a.value);
     const total = entries.reduce((s, e) => s + e.value, 0);
     return { entries, total, drillDown, parent: drillDown ? visibleCats[0] : null };
-  }, [filtered, barChartData.visibleKeys]);
+  }, [filtered, barChartData.visibleKeys, chartHiddenCats, chartHiddenSubs]);
 
   /* All subcategories available for selected transactions */
   const bulkSubOptions = useMemo(() => {
@@ -1943,6 +1986,7 @@ export function TransactionsPage() {
               <div className={styles.barLegend}>
                 {barChartData.topCategories.map((cat, i) => {
                   const active = includedCategories.size === 0 || includedCategories.has(cat);
+                  const isSub = barChartData.drillDown;
                   return (
                     <div
                       key={cat}
@@ -1952,6 +1996,14 @@ export function TransactionsPage() {
                     >
                       <span className={styles.barLegendDot} style={{ background: pieColor(i) }} />
                       <span className={styles.barLegendName}>{cat}</span>
+                      <button
+                        type="button"
+                        className={styles.legendHideBtn}
+                        title={`Hide ${cat} from charts`}
+                        onClick={e => { e.stopPropagation(); hideFromCharts(cat, isSub); }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 12 }}>visibility_off</span>
+                      </button>
                     </div>
                   );
                 })}
@@ -1980,6 +2032,35 @@ export function TransactionsPage() {
               </div>
             </div>
           </div>
+          {(chartHiddenCats.size > 0 || chartHiddenSubs.size > 0) && (
+            <div className={styles.chartHiddenStrip}>
+              <span className={styles.chartHiddenLabel}>Hidden from charts:</span>
+              {[...chartHiddenCats].sort().map(name => (
+                <button
+                  key={`cat-${name}`}
+                  type="button"
+                  className={styles.chartHiddenChip}
+                  onClick={() => unhideFromCharts(name, false)}
+                  title={`Show ${name} in charts`}
+                >
+                  {name}
+                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>close</span>
+                </button>
+              ))}
+              {[...chartHiddenSubs].sort().map(name => (
+                <button
+                  key={`sub-${name}`}
+                  type="button"
+                  className={styles.chartHiddenChip}
+                  onClick={() => unhideFromCharts(name, true)}
+                  title={`Show ${name} in charts`}
+                >
+                  {name}
+                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>close</span>
+                </button>
+              ))}
+            </div>
+          )}
           <SpendingChart
             months={barChartData.months}
             topCategories={barChartData.topCategories}
@@ -2712,6 +2793,14 @@ export function TransactionsPage() {
                       <span className={styles.pieLegendDot} style={{ background: pieColor(i) }} />
                       <span className={styles.pieLegendName}>{e.name}</span>
                       <span className={styles.pieLegendPct}>{Math.round((e.value / pieData.total) * 100)}%</span>
+                      <button
+                        type="button"
+                        className={styles.legendHideBtn}
+                        title={`Hide ${e.name} from charts`}
+                        onClick={ev => { ev.stopPropagation(); hideFromCharts(e.name, pieData.drillDown); }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 12 }}>visibility_off</span>
+                      </button>
                     </div>
                   );
                 })}
