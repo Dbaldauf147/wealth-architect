@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Fragment } from 'react';
 import { useData } from '../contexts/DataContext';
 import { useBudgets } from '../hooks/useBudgets';
 import { BudgetCard } from '../components/BudgetCard';
@@ -261,6 +261,9 @@ export function BudgetsPage() {
     try { return new Set(JSON.parse(localStorage.getItem(RANGE_KEY) || '[]')); }
     catch { return new Set(); }
   });
+  // Track which row in the buckets is expanded to show its underlying transactions.
+  // Encoded as `${kind}|${cat}|${sub}` to support both category-rollup and subcategory rows.
+  const [expandedRangeRow, setExpandedRangeRow] = useState(null);
   function toggleRangeCat(cat) {
     setRangeCats(prev => {
       const next = new Set(prev);
@@ -714,44 +717,117 @@ export function BudgetsPage() {
                           const deltaPct = avg > 0 ? (delta / avg) * 100 : 0;
                           const deltaColor = status === 'over' ? '#ba1a1a' : status === 'under' ? '#e8a317' : 'var(--color-text-tertiary)';
                           const isCat = kind === 'category';
+                          const rowKey = `${kind}|${cat}|${sub}`;
+                          const isExpanded = expandedRangeRow === rowKey;
+                          // Collect matching transactions for the last 6 months when expanded
+                          let matchingTxns = [];
+                          if (isExpanded) {
+                            const cutoff = new Date();
+                            cutoff.setMonth(cutoff.getMonth() - 5);
+                            cutoff.setDate(1);
+                            cutoff.setHours(0, 0, 0, 0);
+                            matchingTxns = (transactions || [])
+                              .filter(t => {
+                                if (t.category !== cat) return false;
+                                if (!isCat && (t.subcategory || 'Uncategorized') !== sub) return false;
+                                const amt = Number(t.amount) || 0;
+                                if (amt >= 0) return false;
+                                if (!t.date) return false;
+                                const d = new Date(t.date);
+                                if (isNaN(d) || d < cutoff) return false;
+                                return true;
+                              })
+                              .sort((a, c) => new Date(c.date) - new Date(a.date));
+                          }
                           return (
-                            <tr key={`${kind}|${cat}|${sub}`} style={{ borderTop: '1px solid var(--border-ghost)', background: isCat ? 'rgba(0,0,0,0.015)' : undefined }}>
-                              <td style={{ padding: '8px 14px', fontWeight: isCat ? 800 : 600 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                  {isCat && (
-                                    <span title="Category total — sum of all subcategories"
-                                          style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 3, background: 'var(--color-secondary, #0058be)', color: '#fff', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                                      Cat
-                                    </span>
+                            <Fragment key={rowKey}>
+                              <tr
+                                onClick={() => setExpandedRangeRow(prev => prev === rowKey ? null : rowKey)}
+                                style={{ borderTop: '1px solid var(--border-ghost)', background: isExpanded ? 'rgba(0,88,190,0.04)' : (isCat ? 'rgba(0,0,0,0.015)' : undefined), cursor: 'pointer' }}
+                                title="Click to view matching transactions"
+                              >
+                                <td style={{ padding: '8px 14px', fontWeight: isCat ? 800 : 600 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{isExpanded ? '\u25BE' : '\u25B8'}</span>
+                                    {isCat && (
+                                      <span title="Category total — sum of all subcategories"
+                                            style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 3, background: 'var(--color-secondary, #0058be)', color: '#fff', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                        Cat
+                                      </span>
+                                    )}
+                                    <span>{sub}</span>
+                                    {baselineMonths < 3 && baselineMonths > 0 && (
+                                      <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>({baselineMonths}mo)</span>
+                                    )}
+                                  </div>
+                                  {!isCat && (
+                                    <div style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--color-text-tertiary)', marginTop: 1, paddingLeft: 17 }}>{cat}</div>
                                   )}
-                                  <span>{sub}</span>
-                                  {baselineMonths < 3 && baselineMonths > 0 && (
-                                    <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>({baselineMonths}mo)</span>
-                                  )}
-                                </div>
-                                {!isCat && (
-                                  <div style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--color-text-tertiary)', marginTop: 1 }}>{cat}</div>
-                                )}
-                              </td>
-                              <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                                {avg > 0 ? fmt(avg) : '—'}
-                              </td>
-                              <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-tertiary)' }}>
-                                {avg > 0 ? `${fmt(low)} – ${fmt(high)}` : '—'}
-                              </td>
-                              <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700,
-                                           color: status === 'over' ? '#ba1a1a' : status === 'under' ? '#e8a317' : 'var(--color-text-primary)' }}>
-                                {fmt(current)}
-                              </td>
-                              <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: deltaColor, fontWeight: 700 }}>
-                                {avg > 0
-                                  ? `${delta >= 0 ? '+' : '−'}${fmt(Math.abs(delta))} (${delta >= 0 ? '+' : '−'}${Math.abs(Math.round(deltaPct))}%)`
-                                  : '—'}
-                              </td>
-                              <td style={{ padding: '8px' }}>
-                                <RangeSparkline series={series} low={low} high={high} avg={avg} />
-                              </td>
-                            </tr>
+                                </td>
+                                <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                                  {avg > 0 ? fmt(avg) : '—'}
+                                </td>
+                                <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-tertiary)' }}>
+                                  {avg > 0 ? `${fmt(low)} – ${fmt(high)}` : '—'}
+                                </td>
+                                <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700,
+                                             color: status === 'over' ? '#ba1a1a' : status === 'under' ? '#e8a317' : 'var(--color-text-primary)' }}>
+                                  {fmt(current)}
+                                </td>
+                                <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: deltaColor, fontWeight: 700 }}>
+                                  {avg > 0
+                                    ? `${delta >= 0 ? '+' : '−'}${fmt(Math.abs(delta))} (${delta >= 0 ? '+' : '−'}${Math.abs(Math.round(deltaPct))}%)`
+                                    : '—'}
+                                </td>
+                                <td style={{ padding: '8px' }}>
+                                  <RangeSparkline series={series} low={low} high={high} avg={avg} />
+                                </td>
+                              </tr>
+                              {isExpanded && (
+                                <tr style={{ background: 'var(--color-surface-alt, #f7f7f7)' }}>
+                                  <td colSpan={6} style={{ padding: '10px 14px 14px 28px' }}>
+                                    <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 6, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                                      {matchingTxns.length} {matchingTxns.length === 1 ? 'transaction' : 'transactions'} · last 6 months · {isCat ? `all subcategories of ${cat}` : `${cat} · ${sub}`}
+                                    </div>
+                                    {matchingTxns.length === 0 ? (
+                                      <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>No matching transactions in the last 6 months.</div>
+                                    ) : (
+                                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                                        <thead>
+                                          <tr style={{ color: 'var(--color-text-tertiary)', textAlign: 'left' }}>
+                                            <th style={{ padding: '4px 8px', fontWeight: 600, width: 90 }}>Date</th>
+                                            <th style={{ padding: '4px 8px', fontWeight: 600 }}>Merchant</th>
+                                            {isCat && <th style={{ padding: '4px 8px', fontWeight: 600, width: 140 }}>Subcategory</th>}
+                                            <th style={{ padding: '4px 8px', fontWeight: 600, width: 110 }}>Account</th>
+                                            <th style={{ padding: '4px 8px', fontWeight: 600, textAlign: 'right', width: 90 }}>Amount</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {matchingTxns.slice(0, 200).map((t, i) => {
+                                            const d = new Date(t.date);
+                                            const dateLabel = isNaN(d) ? t.date : `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
+                                            return (
+                                              <tr key={t.transactionId || `${t.date}|${t.description}|${t.amount}|${i}`} style={{ borderTop: '1px solid var(--border-ghost)' }}>
+                                                <td style={{ padding: '4px 8px', color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>{dateLabel}</td>
+                                                <td style={{ padding: '4px 8px' }}>{t.description || '(no merchant)'}</td>
+                                                {isCat && <td style={{ padding: '4px 8px', color: 'var(--color-text-secondary)' }}>{t.subcategory || '—'}</td>}
+                                                <td style={{ padding: '4px 8px', color: 'var(--color-text-tertiary)' }}>{t.account || ''}</td>
+                                                <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmt(Math.abs(t.amount))}</td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    )}
+                                    {matchingTxns.length > 200 && (
+                                      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 6, fontStyle: 'italic' }}>
+                                        Showing 200 of {matchingTxns.length}. Refine on the Transactions tab for the full list.
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
                           );
                         })}
                       </tbody>
