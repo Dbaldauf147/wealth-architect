@@ -731,6 +731,10 @@ export function TransactionsPage() {
     try { return new Set(JSON.parse(localStorage.getItem('organizedCategories') || '[]')); }
     catch { return new Set(); }
   });
+  const [incomeCategories, setIncomeCategories] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('incomeCategories') || '[]')); }
+    catch { return new Set(); }
+  });
   const [draggedCategory, setDraggedCategory] = useState(null);
   const [dragOverBucket, setDragOverBucket] = useState(null);
   const dropdownRef = useRef(null);
@@ -1196,6 +1200,14 @@ export function TransactionsPage() {
 
   function handleDropCategory(bucket) {
     if (!draggedCategory) return;
+    // A category lives in exactly one bucket: income, organized, or review (default).
+    setIncomeCategories(prev => {
+      const next = new Set(prev);
+      if (bucket === 'income') next.add(draggedCategory);
+      else next.delete(draggedCategory);
+      localStorage.setItem('incomeCategories', JSON.stringify([...next]));
+      return next;
+    });
     setOrganizedCategories(prev => {
       const next = new Set(prev);
       if (bucket === 'organized') next.add(draggedCategory);
@@ -1543,8 +1555,9 @@ export function TransactionsPage() {
             </>
           );
         }
-        const reviewCats = activeCategories.filter(c => !organizedCategories.has(c));
-        const organizedCats = activeCategories.filter(c => organizedCategories.has(c));
+        const incomeCats = activeCategories.filter(c => incomeCategories.has(c));
+        const reviewCats = activeCategories.filter(c => !organizedCategories.has(c) && !incomeCategories.has(c));
+        const organizedCats = activeCategories.filter(c => organizedCategories.has(c) && !incomeCategories.has(c));
         return (
           <>
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
@@ -1567,6 +1580,43 @@ export function TransactionsPage() {
                 <span className="material-symbols-outlined" style={{ fontSize: 14 }}>stacked_bar_chart</span>
                 80/20 view {pareto8020View ? 'on' : 'off'}
               </button>
+            </div>
+            <div
+              className={`${styles.bucket} ${dragOverBucket === 'income' ? styles.bucketActive : ''}`}
+              onDragOver={e => { e.preventDefault(); setDragOverBucket('income'); }}
+              onDragLeave={() => setDragOverBucket(null)}
+              onDrop={() => handleDropCategory('income')}
+              style={{ marginBottom: 12 }}
+            >
+              <div className={styles.bucketHeader}>
+                <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#2563eb' }}>trending_up</span>
+                <span className={styles.bucketTitle}>Income & Investments</span>
+                <span className={styles.bucketCount}>{incomeCats.length}</span>
+                {(() => {
+                  const allSelected = incomeCats.length > 0 && incomeCats.every(c => includedCategories.has(c));
+                  return (
+                    <button
+                      className={styles.categoryFilterClear}
+                      style={{ marginLeft: 'auto', padding: 0, fontSize: 9 }}
+                      onClick={() => {
+                        setIncludedCategories(prev => {
+                          const next = new Set(prev);
+                          if (allSelected) { for (const c of incomeCats) next.delete(c); }
+                          else { for (const c of incomeCats) next.add(c); }
+                          return next;
+                        });
+                        setPage(0);
+                      }}
+                      type="button"
+                    >
+                      {allSelected ? 'Deselect All' : 'Select All'}
+                    </button>
+                  );
+                })()}
+              </div>
+              <div className={styles.bucketItems}>
+                {renderBucketBody(incomeCats, 'Drag revenue, investment, or transfer-style categories here to keep them out of the spending review.')}
+              </div>
             </div>
             <div className={styles.bucketGrid}>
               <div
