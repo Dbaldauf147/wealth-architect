@@ -204,6 +204,85 @@ export function BudgetsPage() {
     return months;
   }, [transactions, budgets, chartMonths]);
 
+  // ──────────────────────────────────────────────
+  // Normal Range Tracker — 3-month subcategory avg ± 25%
+  // ──────────────────────────────────────────────
+  const RANGE_KEY = 'wa-budget-range-cats';
+  const [rangeCats, setRangeCats] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(RANGE_KEY) || '[]')); }
+    catch { return new Set(); }
+  });
+  function toggleRangeCat(cat) {
+    setRangeCats(prev => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat); else next.add(cat);
+      localStorage.setItem(RANGE_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  }
+
+  // All categories available from the data, sorted
+  const allCategoriesForRange = useMemo(() => {
+    const set = new Set();
+    for (const t of (transactions || [])) {
+      if ((t.category || '') === 'Income') continue;
+      if (t.category) set.add(t.category);
+    }
+    return [...set].sort();
+  }, [transactions]);
+
+  // Compute per-subcategory range data for the selected categories
+  const rangeData = useMemo(() => {
+    if (rangeCats.size === 0 || !transactions || transactions.length === 0) return [];
+    const now = new Date();
+    const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    // 3 prior complete months
+    const baselineKeys = [];
+    for (let i = 1; i <= 3; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      baselineKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
+    // Aggregate (category, subcategory, monthKey) → spend (expense-only)
+    const byCatSubMonth = new Map();
+    for (const t of transactions) {
+      if (!t.category || !rangeCats.has(t.category)) continue;
+      const amt = Number(t.amount) || 0;
+      if (amt >= 0) continue;
+      if (!t.date) continue;
+      const d = new Date(t.date);
+      if (isNaN(d)) continue;
+      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const sub = t.subcategory || 'Uncategorized';
+      if (!byCatSubMonth.has(t.category)) byCatSubMonth.set(t.category, new Map());
+      const subMap = byCatSubMonth.get(t.category);
+      if (!subMap.has(sub)) subMap.set(sub, new Map());
+      const monthMap = subMap.get(sub);
+      monthMap.set(monthKey, (monthMap.get(monthKey) || 0) + Math.abs(amt));
+    }
+    const result = [];
+    for (const [cat, subMap] of byCatSubMonth) {
+      const subs = [];
+      for (const [sub, monthMap] of subMap) {
+        const baselineVals = baselineKeys.map(k => monthMap.get(k) || 0);
+        const present = baselineVals.filter(v => v > 0);
+        const avg = present.length > 0 ? present.reduce((s, v) => s + v, 0) / present.length : 0;
+        const low = avg * 0.75;
+        const high = avg * 1.25;
+        const current = monthMap.get(currentKey) || 0;
+        let status = 'normal';
+        if (avg === 0) status = 'no-data';
+        else if (current === 0) status = 'no-spend';
+        else if (current > high) status = 'over';
+        else if (current < low) status = 'under';
+        subs.push({ sub, avg, low, high, current, baselineMonths: present.length, status });
+      }
+      subs.sort((a, b) => b.avg - a.avg);
+      result.push({ cat, subs });
+    }
+    result.sort((a, b) => a.cat.localeCompare(b.cat));
+    return result;
+  }, [rangeCats, transactions]);
+
   // New budget form
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
@@ -396,6 +475,111 @@ export function BudgetsPage() {
           )}
         </div>
       )}
+
+      {/* Normal Range Tracker */}
+      <div className={styles.chartCard}>
+        <div className={styles.chartHeader}>
+          <div className={styles.chartTitle}>Normal Range Tracker</div>
+          <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+            3-month average · ±25% normal band · this month vs band
+          </div>
+        </div>
+        <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {allCategoriesForRange.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>No categories in your data yet.</div>
+          ) : (
+            allCategoriesForRange.map(cat => {
+              const on = rangeCats.has(cat);
+              return (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => toggleRangeCat(cat)}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: 999,
+                    fontSize: 11.5,
+                    fontWeight: 600,
+                    border: '1px solid',
+                    borderColor: on ? 'var(--color-secondary, #0058be)' : 'var(--border-ghost)',
+                    background: on ? 'rgba(0,88,190,0.08)' : 'var(--color-surface)',
+                    color: on ? 'var(--color-secondary, #0058be)' : 'var(--color-text-tertiary)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {cat}
+                </button>
+              );
+            })
+          )}
+        </div>
+        {rangeCats.size === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', padding: '8px 0' }}>
+            Pick one or more categories above to see their subcategories' normal spending range.
+          </div>
+        ) : rangeData.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', padding: '8px 0' }}>
+            No expense data in the selected categories.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {rangeData.map(({ cat, subs }) => (
+              <div key={cat}>
+                <div style={{ fontFamily: 'var(--font-headline)', fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{cat}</div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ color: 'var(--color-text-tertiary)', textAlign: 'left' }}>
+                        <th style={{ padding: '6px 8px', fontWeight: 600 }}>Subcategory</th>
+                        <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>3mo Avg</th>
+                        <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>Normal Range</th>
+                        <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>This Month</th>
+                        <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'center' }}>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {subs.map(({ sub, avg, low, high, current, baselineMonths, status }) => {
+                        const statusStyles = {
+                          'normal':   { bg: 'rgba(0,150,104,0.08)', fg: '#16a34a', label: 'In range' },
+                          'over':     { bg: 'rgba(186,26,26,0.08)', fg: '#ba1a1a', label: 'Above' },
+                          'under':    { bg: 'rgba(232,163,23,0.08)', fg: '#e8a317', label: 'Below' },
+                          'no-data':  { bg: 'var(--color-surface-alt)', fg: 'var(--color-text-tertiary)', label: 'No baseline' },
+                          'no-spend': { bg: 'var(--color-surface-alt)', fg: 'var(--color-text-tertiary)', label: 'No spend yet' },
+                        }[status];
+                        return (
+                          <tr key={sub} style={{ borderTop: '1px solid var(--border-ghost)' }}>
+                            <td style={{ padding: '8px', fontWeight: 600 }}>
+                              {sub}
+                              {baselineMonths < 3 && baselineMonths > 0 && (
+                                <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--color-text-tertiary)' }}>({baselineMonths}mo)</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                              {avg > 0 ? fmt(avg) : '—'}
+                            </td>
+                            <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-tertiary)' }}>
+                              {avg > 0 ? `${fmt(low)} – ${fmt(high)}` : '—'}
+                            </td>
+                            <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700,
+                                         color: status === 'over' ? '#ba1a1a' : status === 'under' ? '#e8a317' : 'var(--color-text-primary)' }}>
+                              {fmt(current)}
+                            </td>
+                            <td style={{ padding: '8px', textAlign: 'center' }}>
+                              <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 700, background: statusStyles.bg, color: statusStyles.fg }}>
+                                {statusStyles.label}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Budgets */}
       <div>
