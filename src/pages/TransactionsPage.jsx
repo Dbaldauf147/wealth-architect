@@ -3291,9 +3291,19 @@ export function TransactionsPage() {
         const catCount = catHasAnyFilter ? getMatchCount(editingRule.catPattern, catOpts) : 0;
         const subCount = subHasAnyFilter ? getMatchCount(editingRule.subPattern, subOpts) : 0;
         const subOptions = (() => {
+          const forCat = editingRule.catTarget;
           const allSubs = new Set();
-          for (const cat in SUBCATEGORIES) (SUBCATEGORIES[cat] || []).forEach(s => allSubs.add(s));
-          (transactions || []).forEach(t => { if (t.subcategory) allSubs.add(t.subcategory); });
+          if (forCat) {
+            // Restrict to subs that belong to the rule's target category, so we
+            // don't offer "Rent" as a subcategory under "Food & Drink", etc.
+            (SUBCATEGORIES[forCat] || []).forEach(s => allSubs.add(s));
+            (transactions || []).forEach(t => {
+              if ((t.category || '') === forCat && t.subcategory) allSubs.add(t.subcategory);
+            });
+          } else {
+            for (const cat in SUBCATEGORIES) (SUBCATEGORIES[cat] || []).forEach(s => allSubs.add(s));
+            (transactions || []).forEach(t => { if (t.subcategory) allSubs.add(t.subcategory); });
+          }
           return [...allSubs].sort();
         })();
         const inputStyle = {
