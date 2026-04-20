@@ -301,8 +301,9 @@ export function BudgetsPage() {
         isCurrent: i === 0,
       });
     }
-    // Aggregate (category, subcategory, monthKey) → spend (expense-only)
+    // Aggregate (category, subcategory, monthKey) AND (category, monthKey) → spend (expense-only)
     const byCatSubMonth = new Map();
+    const byCatMonth = new Map();
     for (const t of transactions) {
       if (!t.category || !rangeCats.has(t.category)) continue;
       const amt = Number(t.amount) || 0;
@@ -317,27 +318,37 @@ export function BudgetsPage() {
       if (!subMap.has(sub)) subMap.set(sub, new Map());
       const monthMap = subMap.get(sub);
       monthMap.set(monthKey, (monthMap.get(monthKey) || 0) + Math.abs(amt));
+      if (!byCatMonth.has(t.category)) byCatMonth.set(t.category, new Map());
+      const catMonthMap = byCatMonth.get(t.category);
+      catMonthMap.set(monthKey, (catMonthMap.get(monthKey) || 0) + Math.abs(amt));
+    }
+    function statusFor(avg, current, low, high) {
+      if (avg === 0) return 'no-data';
+      if (current === 0) return 'no-spend';
+      if (current > high) return 'over';
+      if (current < low) return 'under';
+      return 'normal';
+    }
+    function bandsFor(monthMap) {
+      const baselineVals = baselineKeys.map(k => monthMap.get(k) || 0);
+      const present = baselineVals.filter(v => v > 0);
+      const avg = present.length > 0 ? present.reduce((s, v) => s + v, 0) / present.length : 0;
+      const low = avg * 0.75;
+      const high = avg * 1.25;
+      const current = monthMap.get(currentKey) || 0;
+      const series = chartKeys.map(k => ({ ...k, value: monthMap.get(k.key) || 0 }));
+      return { avg, low, high, current, baselineMonths: present.length, status: statusFor(avg, current, low, high), series };
     }
     const result = [];
     for (const [cat, subMap] of byCatSubMonth) {
+      // Category-level rollup row
+      const catBands = bandsFor(byCatMonth.get(cat));
       const subs = [];
       for (const [sub, monthMap] of subMap) {
-        const baselineVals = baselineKeys.map(k => monthMap.get(k) || 0);
-        const present = baselineVals.filter(v => v > 0);
-        const avg = present.length > 0 ? present.reduce((s, v) => s + v, 0) / present.length : 0;
-        const low = avg * 0.75;
-        const high = avg * 1.25;
-        const current = monthMap.get(currentKey) || 0;
-        let status = 'normal';
-        if (avg === 0) status = 'no-data';
-        else if (current === 0) status = 'no-spend';
-        else if (current > high) status = 'over';
-        else if (current < low) status = 'under';
-        const series = chartKeys.map(k => ({ ...k, value: monthMap.get(k.key) || 0 }));
-        subs.push({ sub, avg, low, high, current, baselineMonths: present.length, status, series });
+        subs.push({ sub, ...bandsFor(monthMap) });
       }
       subs.sort((a, b) => b.avg - a.avg);
-      result.push({ cat, subs });
+      result.push({ cat, catBands, subs });
     }
     result.sort((a, b) => a.cat.localeCompare(b.cat));
     return result;
@@ -582,10 +593,12 @@ export function BudgetsPage() {
             No expense data in the selected categories.
           </div>
         ) : (() => {
-          // Flatten subs across selected categories and bucket by status
+          // Flatten across selected categories. Both the category-level rollup AND its
+          // subcategories appear as independent rows, each bucketed by its own status.
           const flat = [];
-          for (const { cat, subs } of rangeData) {
-            for (const s of subs) flat.push({ ...s, cat });
+          for (const { cat, catBands, subs } of rangeData) {
+            flat.push({ kind: 'category', cat, sub: cat, ...catBands });
+            for (const s of subs) flat.push({ kind: 'sub', cat, ...s });
           }
           const buckets = [
             { key: 'over',     label: 'Above Range',  bg: 'rgba(186,26,26,0.06)',  fg: '#ba1a1a', icon: 'trending_up',   blurb: 'Spending more than the normal band' },
@@ -594,13 +607,16 @@ export function BudgetsPage() {
             { key: 'no-spend', label: 'No Spend Yet', bg: 'var(--color-surface-alt)', fg: 'var(--color-text-tertiary)', icon: 'pause_circle',  blurb: 'Has a baseline but nothing this month yet' },
             { key: 'no-data',  label: 'No Baseline',  bg: 'var(--color-surface-alt)', fg: 'var(--color-text-tertiary)', icon: 'help',          blurb: 'Not enough prior-month history to compare' },
           ];
-          // Sort within each bucket by absolute deviation from avg desc (biggest movers first)
+          // Sort within each bucket: categories first, then subcategories, biggest movers first.
           // Always show the four primary buckets (over / normal / under / no-data), even when
           // empty, so the user sees the structure. Hide 'no-spend' unless it has rows.
           const ALWAYS_SHOW = new Set(['over', 'normal', 'under', 'no-data']);
           const grouped = buckets.map(b => ({
             ...b,
-            items: flat.filter(f => f.status === b.key).sort((a, c) => Math.abs(c.current - c.avg) - Math.abs(a.current - a.avg)),
+            items: flat.filter(f => f.status === b.key).sort((a, c) => {
+              if (a.kind !== c.kind) return a.kind === 'category' ? -1 : 1;
+              return Math.abs(c.current - c.avg) - Math.abs(a.current - a.avg);
+            }),
           })).filter(b => ALWAYS_SHOW.has(b.key) || b.items.length > 0);
 
           return (
@@ -631,18 +647,29 @@ export function BudgetsPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {b.items.map(({ sub, cat, avg, low, high, current, baselineMonths, status, series }) => {
+                        {b.items.map(({ kind, sub, cat, avg, low, high, current, baselineMonths, status, series }) => {
                           const delta = current - avg;
                           const deltaPct = avg > 0 ? (delta / avg) * 100 : 0;
                           const deltaColor = status === 'over' ? '#ba1a1a' : status === 'under' ? '#e8a317' : 'var(--color-text-tertiary)';
+                          const isCat = kind === 'category';
                           return (
-                            <tr key={`${cat}|${sub}`} style={{ borderTop: '1px solid var(--border-ghost)' }}>
-                              <td style={{ padding: '8px 14px', fontWeight: 600 }}>
-                                {sub}
-                                {baselineMonths < 3 && baselineMonths > 0 && (
-                                  <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--color-text-tertiary)' }}>({baselineMonths}mo)</span>
+                            <tr key={`${kind}|${cat}|${sub}`} style={{ borderTop: '1px solid var(--border-ghost)', background: isCat ? 'rgba(0,0,0,0.015)' : undefined }}>
+                              <td style={{ padding: '8px 14px', fontWeight: isCat ? 800 : 600 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  {isCat && (
+                                    <span title="Category total — sum of all subcategories"
+                                          style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 3, background: 'var(--color-secondary, #0058be)', color: '#fff', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                      Cat
+                                    </span>
+                                  )}
+                                  <span>{sub}</span>
+                                  {baselineMonths < 3 && baselineMonths > 0 && (
+                                    <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>({baselineMonths}mo)</span>
+                                  )}
+                                </div>
+                                {!isCat && (
+                                  <div style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--color-text-tertiary)', marginTop: 1 }}>{cat}</div>
                                 )}
-                                <div style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--color-text-tertiary)', marginTop: 1 }}>{cat}</div>
                               </td>
                               <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                                 {avg > 0 ? fmt(avg) : '—'}
