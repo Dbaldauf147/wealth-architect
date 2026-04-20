@@ -658,12 +658,11 @@ export function BudgetsPage() {
             No expense data in the selected categories.
           </div>
         ) : (() => {
-          // Flatten across selected categories. Both the category-level rollup AND its
-          // subcategories appear as independent rows, each bucketed by its own status.
+          // Flatten to category rollups only — buckets are by category status. Subcategory
+          // detail is still available by clicking a row to expand its transactions.
           const flat = [];
-          for (const { cat, catBands, subs } of rangeData) {
+          for (const { cat, catBands } of rangeData) {
             flat.push({ kind: 'category', cat, sub: cat, ...catBands });
-            for (const s of subs) flat.push({ kind: 'sub', cat, ...s });
           }
           const buckets = [
             { key: 'over',     label: 'Above Range',  bg: 'rgba(186,26,26,0.06)',  fg: '#ba1a1a', icon: 'trending_up',   blurb: 'Spending more than the normal band' },
@@ -746,23 +745,14 @@ export function BudgetsPage() {
                                 style={{ borderTop: '1px solid var(--border-ghost)', background: isExpanded ? 'rgba(0,88,190,0.04)' : (isCat ? 'rgba(0,0,0,0.015)' : undefined), cursor: 'pointer' }}
                                 title="Click to view matching transactions"
                               >
-                                <td style={{ padding: '8px 14px', fontWeight: isCat ? 800 : 600 }}>
+                                <td style={{ padding: '8px 14px', fontWeight: 700 }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                     <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{isExpanded ? '\u25BE' : '\u25B8'}</span>
-                                    {isCat && (
-                                      <span title="Category total — sum of all subcategories"
-                                            style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 3, background: 'var(--color-secondary, #0058be)', color: '#fff', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                                        Cat
-                                      </span>
-                                    )}
-                                    <span>{sub}</span>
+                                    <span>{cat}</span>
                                     {baselineMonths < 3 && baselineMonths > 0 && (
                                       <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>({baselineMonths}mo)</span>
                                     )}
                                   </div>
-                                  {!isCat && (
-                                    <div style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--color-text-tertiary)', marginTop: 1, paddingLeft: 17 }}>{cat}</div>
-                                  )}
                                 </td>
                                 <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                                   {avg > 0 ? fmt(avg) : '—'}
