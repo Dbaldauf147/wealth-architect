@@ -52,12 +52,15 @@ function autoUsedForPromo(promo, transactions) {
   let sum = 0;
   for (const t of transactions) {
     const amt = Number(t.amount) || 0;
-    if (amt >= 0) continue; // expenses only
+    if (amt === 0) continue;
     if (start) {
       const d = new Date(t.date);
       if (isNaN(d) || d < start) continue;
     }
     if (!transactionMatchesPromo(t, promo)) continue;
+    // Sum absolute value so the rule works for either direction:
+    // - tag the original travel CHARGE (negative) → tracks redeemable spend
+    // - tag the statement CREDIT (positive)       → tracks actual redemption
     sum += Math.abs(amt);
   }
   return sum;
@@ -333,7 +336,7 @@ export function CardPromosPage() {
                         <LabeledInput label="Or Merchant contains" value={editDraft.matchDescription} onChange={v => setEditDraft({ ...editDraft, matchDescription: v })} />
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 8 }}>
-                        If any match field is set, "used" auto-sums matching expense transactions in the current cycle (manual "Used $" is ignored). Multiple fields are OR'd. "Merchant contains" matches anywhere in the transaction's merchant text — use a single distinctive word (e.g. <code>mta</code>, <code>citibike</code>, <code>uber</code>), not the promo's label.
+                        If any match field is set, "used" auto-sums the absolute value of matching transactions in the current cycle (manual "Used $" is ignored). Sign doesn't matter — tag the original travel charge (negative) to track redeemable spend, or tag the statement credit (positive) to track actual redemption. Multiple match fields are OR'd. "Merchant contains" matches anywhere in the transaction's merchant text.
                       </div>
                       <LabeledInput label="Notes" value={editDraft.notes} onChange={v => setEditDraft({ ...editDraft, notes: v })} />
                       <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
