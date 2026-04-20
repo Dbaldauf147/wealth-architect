@@ -283,16 +283,19 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
           const topSeg = segs.filter(s => s.val > 0).slice(-1)[0];
           return (
             <g key={mi} className="chart-bar-group" style={{ transition: 'opacity 0.15s' }}>
-              {segs.map(({ cat, ci, val, barH, y, isTop, isHovered }) => (
-                <rect key={ci} x={cx - barW / 2} y={y} width={barW} height={Math.max(barH, 0)}
-                  rx={isTop ? 4 : 0} fill={pieColor(ci)}
-                  opacity={hoverSeg && !isHovered ? 0.5 : 0.95}
-                  stroke={isHovered ? 'var(--color-text-primary)' : 'none'}
-                  strokeWidth={isHovered ? 2 : 0}
-                  style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
-                  onMouseEnter={() => setHoverSeg({ mi, ci, x: cx, y: y + barH / 2, xRight: cx + barW / 2 })}
-                />
-              ))}
+              {segs.map(({ cat, ci, val, barH, y, isTop, isHovered }) => {
+                const sameCat = hoverSeg && hoverSeg.ci === ci;
+                return (
+                  <rect key={ci} x={cx - barW / 2} y={y} width={barW} height={Math.max(barH, 0)}
+                    rx={isTop ? 4 : 0} fill={pieColor(ci)}
+                    opacity={hoverSeg && !sameCat ? 0.25 : 0.95}
+                    stroke={isHovered ? 'var(--color-text-primary)' : 'none'}
+                    strokeWidth={isHovered ? 2 : 0}
+                    style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
+                    onMouseEnter={() => setHoverSeg({ mi, ci, x: cx, y: y + barH / 2, xRight: cx + barW / 2 })}
+                  />
+                );
+              })}
               {/* Wide invisible hit zone over the whole month column so hovering anywhere
                   reveals the breakdown — even between bars or over thin segments. Falls back
                   to the topmost non-empty segment for the tooltip anchor. */}
@@ -375,11 +378,12 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                 const by = yPos(val);
                 const w = Math.max(singleW - 1, 2);
                 const isHovered = hoverSeg && hoverSeg.mi === mi && hoverSeg.ci === ci;
+                const sameCat = hoverSeg && hoverSeg.ci === ci;
                 return (
                   <rect key={ci} x={bx} y={by}
                     width={w} height={Math.max(barH, 0)}
                     rx={3} fill={pieColor(ci)}
-                    opacity={hoverSeg && !isHovered ? 0.5 : 0.95}
+                    opacity={hoverSeg && !sameCat ? 0.25 : 0.95}
                     stroke={isHovered ? 'var(--color-text-primary)' : 'none'}
                     strokeWidth={isHovered ? 2 : 0}
                     style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
