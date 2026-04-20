@@ -59,8 +59,12 @@ const PIE_PALETTE = [
   '#0d9488', '#c026d3', '#84cc16', '#6366f1', '#f97316',
 ];
 
-function pieColor(index) {
-  return PIE_PALETTE[index % PIE_PALETTE.length];
+/* Deterministic color for a category name — same category → same color across bar & pie */
+function pieColor(name) {
+  if (typeof name !== 'string') return PIE_PALETTE[(name | 0) % PIE_PALETTE.length];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return PIE_PALETTE[Math.abs(hash) % PIE_PALETTE.length];
 }
 
 const CHART_MODES = [
@@ -248,7 +252,7 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
       <g style={{ pointerEvents: 'none' }}>
         <rect x={tx} y={ty} width={boxW} height={boxH} rx={6}
           fill="var(--color-text-primary)" opacity={0.94} />
-        <circle cx={tx + 10} cy={ty + 14} r={4} fill={pieColor(ci)} />
+        <circle cx={tx + 10} cy={ty + 14} r={4} fill={pieColor(cat)} />
         <text x={tx + 18} y={ty + 17} fontSize={11} fontWeight={700} fill="#fff" fontFamily="var(--font-headline)">
           {label}
         </text>
@@ -283,11 +287,23 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
           const topSeg = segs.filter(s => s.val > 0).slice(-1)[0];
           return (
             <g key={mi} className="chart-bar-group" style={{ transition: 'opacity 0.15s' }}>
+              {/* Wide invisible hit zone — rendered FIRST so it sits behind the segments.
+                  Individual segment rects (drawn after) receive their own hover events; the
+                  hit zone only fires when the cursor is over empty column space. */}
+              {topSeg && (
+                <rect x={cx - slotW / 2} y={pad.top} width={slotW} height={chartH}
+                  fill="transparent" pointerEvents="all"
+                  onMouseEnter={() => {
+                    if (hoverSeg && hoverSeg.mi === mi) return;
+                    setHoverSeg({ mi, ci: topSeg.ci, x: cx, y: topSeg.y + topSeg.barH / 2, xRight: cx + barW / 2 });
+                  }}
+                />
+              )}
               {segs.map(({ cat, ci, val, barH, y, isTop, isHovered }) => {
                 const sameCat = hoverSeg && hoverSeg.ci === ci;
                 return (
                   <rect key={ci} x={cx - barW / 2} y={y} width={barW} height={Math.max(barH, 0)}
-                    rx={isTop ? 4 : 0} fill={pieColor(ci)}
+                    rx={isTop ? 4 : 0} fill={pieColor(cat)}
                     opacity={hoverSeg && !sameCat ? 0.25 : 0.95}
                     stroke={isHovered ? 'var(--color-text-primary)' : 'none'}
                     strokeWidth={isHovered ? 2 : 0}
@@ -296,18 +312,6 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                   />
                 );
               })}
-              {/* Wide invisible hit zone over the whole month column so hovering anywhere
-                  reveals the breakdown — even between bars or over thin segments. Falls back
-                  to the topmost non-empty segment for the tooltip anchor. */}
-              {topSeg && (
-                <rect x={cx - slotW / 2} y={pad.top} width={slotW} height={chartH}
-                  fill="transparent" pointerEvents="all"
-                  onMouseEnter={() => {
-                    if (hoverSeg && hoverSeg.mi === mi) return; // already hovering a specific segment
-                    setHoverSeg({ mi, ci: topSeg.ci, x: cx, y: topSeg.y + topSeg.barH / 2, xRight: cx + barW / 2 });
-                  }}
-                />
-              )}
               {/* Per-segment amount labels — visible only for the hovered month, drawn for
                   any segment with at least a sliver of height so small subs still get a value. */}
               {hoverInThisMonth && segs.map(({ ci, val, barH, y }) => {
@@ -382,7 +386,7 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                 return (
                   <rect key={ci} x={bx} y={by}
                     width={w} height={Math.max(barH, 0)}
-                    rx={3} fill={pieColor(ci)}
+                    rx={3} fill={pieColor(cat)}
                     opacity={hoverSeg && !sameCat ? 0.25 : 0.95}
                     stroke={isHovered ? 'var(--color-text-primary)' : 'none'}
                     strokeWidth={isHovered ? 2 : 0}
@@ -426,18 +430,18 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
           const dim = hoverSeg && hoverSeg.ci !== ci;
           return (
             <g key={ci} opacity={dim ? 0.3 : 1} style={{ transition: 'opacity 0.12s' }}>
-              <path d={d} fill="none" stroke={pieColor(ci)} strokeWidth={2.5}
+              <path d={d} fill="none" stroke={pieColor(cat)} strokeWidth={2.5}
                 strokeLinecap="round" strokeLinejoin="round" opacity={0.85} />
               {points.map((p, pi) => {
                 const isHovered = hoverSeg && hoverSeg.mi === pi && hoverSeg.ci === ci;
                 return (
                   <g key={pi}>
-                    <circle cx={p.x} cy={p.y} r={10} fill={pieColor(ci)} opacity={0}
+                    <circle cx={p.x} cy={p.y} r={10} fill={pieColor(cat)} opacity={0}
                       style={{ cursor: 'pointer' }}
                       onMouseEnter={() => setHoverSeg({ mi: pi, ci, x: p.x, y: p.y })}
                     />
                     <circle cx={p.x} cy={p.y} r={isHovered ? 5.5 : 4}
-                      fill="#fff" stroke={pieColor(ci)} strokeWidth={isHovered ? 2.5 : 2}
+                      fill="#fff" stroke={pieColor(cat)} strokeWidth={isHovered ? 2.5 : 2}
                       style={{ transition: 'r 0.12s' }}
                     />
                   </g>
@@ -468,23 +472,23 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
             <g key={ci} opacity={dim ? 0.25 : 1} style={{ transition: 'opacity 0.12s' }}>
               <defs>
                 <linearGradient id={`area-grad-${ci}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={pieColor(ci)} stopOpacity={0.35} />
-                  <stop offset="100%" stopColor={pieColor(ci)} stopOpacity={0.05} />
+                  <stop offset="0%" stopColor={pieColor(cat)} stopOpacity={0.35} />
+                  <stop offset="100%" stopColor={pieColor(cat)} stopOpacity={0.05} />
                 </linearGradient>
               </defs>
               <path d={areaD} fill={`url(#area-grad-${ci})`} />
-              <path d={lineD} fill="none" stroke={pieColor(ci)} strokeWidth={2.5}
+              <path d={lineD} fill="none" stroke={pieColor(cat)} strokeWidth={2.5}
                 strokeLinecap="round" strokeLinejoin="round" opacity={0.85} />
               {points.map((p, pi) => {
                 const isHovered = hoverSeg && hoverSeg.mi === pi && hoverSeg.ci === ci;
                 return (
                   <g key={pi}>
-                    <circle cx={p.x} cy={p.y} r={10} fill={pieColor(ci)} opacity={0}
+                    <circle cx={p.x} cy={p.y} r={10} fill={pieColor(cat)} opacity={0}
                       style={{ cursor: 'pointer' }}
                       onMouseEnter={() => setHoverSeg({ mi: pi, ci, x: p.x, y: p.y })}
                     />
                     {isHovered && (
-                      <circle cx={p.x} cy={p.y} r={5} fill="#fff" stroke={pieColor(ci)} strokeWidth={2.5} />
+                      <circle cx={p.x} cy={p.y} r={5} fill="#fff" stroke={pieColor(cat)} strokeWidth={2.5} />
                     )}
                   </g>
                 );
@@ -526,7 +530,7 @@ function PieChart({ entries, total, size = 160, onSliceClick, highlightedNames }
     const yi2 = cy + inner * Math.sin(endAngle);
     const largeArc = angle > Math.PI ? 1 : 0;
     const d = `M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} L ${xi2} ${yi2} A ${inner} ${inner} 0 ${largeArc} 0 ${xi1} ${yi1} Z`;
-    return { d, color: pieColor(i), name: e.name, pct, value: e.value, midAngle };
+    return { d, color: pieColor(e.name), name: e.name, pct, value: e.value, midAngle };
   });
   const hovered = hoverIdx != null ? slices[hoverIdx] : null;
   return (
@@ -816,6 +820,16 @@ export function TransactionsPage() {
     try { return new Set(JSON.parse(localStorage.getItem('chartHiddenSubs') || '[]')); }
     catch { return new Set(); }
   });
+
+  /* Saved filter views — name -> snapshot of all filter state */
+  const [savedViews, setSavedViews] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('savedTxnViews') || '{}'); }
+    catch { return {}; }
+  });
+  const [viewsOpen, setViewsOpen] = useState(false);
+  const [viewNameInput, setViewNameInput] = useState('');
+  const [activeViewName, setActiveViewName] = useState(() => localStorage.getItem('activeTxnView') || '');
+  const viewsRef = useRef(null);
   function hideFromCharts(name, isSub) {
     const setter = isSub ? setChartHiddenSubs : setChartHiddenCats;
     const key = isSub ? 'chartHiddenSubs' : 'chartHiddenCats';
@@ -835,6 +849,76 @@ export function TransactionsPage() {
       localStorage.setItem(key, JSON.stringify([...next]));
       return next;
     });
+  }
+
+  /* Saved views — capture / apply / persist */
+  function captureView() {
+    return {
+      activeAccount,
+      includedCategories: [...includedCategories],
+      includedSubcategories: [...includedSubcategories],
+      selectedMonth,
+      searchQuery,
+      columnFilters: { ...columnFilters },
+      noSubOnly,
+      chartHiddenCats: [...chartHiddenCats],
+      chartHiddenSubs: [...chartHiddenSubs],
+    };
+  }
+  function applyView(view) {
+    if (!view) return;
+    setActiveAccount(view.activeAccount ?? 'all');
+    setIncludedCategories(new Set(view.includedCategories || []));
+    setIncludedSubcategories(new Set(view.includedSubcategories || []));
+    setSelectedMonth(view.selectedMonth ?? null);
+    setSearchQuery(view.searchQuery ?? '');
+    setColumnFilters(view.columnFilters || {
+      merchant: '', description: '', category: '', subcategory: '',
+      amount: '', date: '', notes: '', institution: '', account: '',
+    });
+    setNoSubOnly(!!view.noSubOnly);
+    const hc = new Set(view.chartHiddenCats || []);
+    const hs = new Set(view.chartHiddenSubs || []);
+    setChartHiddenCats(hc);
+    setChartHiddenSubs(hs);
+    localStorage.setItem('chartHiddenCats', JSON.stringify([...hc]));
+    localStorage.setItem('chartHiddenSubs', JSON.stringify([...hs]));
+    setPage(0);
+  }
+  function saveView(name) {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return;
+    const next = { ...savedViews, [trimmed]: captureView() };
+    setSavedViews(next);
+    localStorage.setItem('savedTxnViews', JSON.stringify(next));
+    setActiveViewName(trimmed);
+    localStorage.setItem('activeTxnView', trimmed);
+    setViewNameInput('');
+  }
+  function deleteView(name) {
+    const next = { ...savedViews };
+    delete next[name];
+    setSavedViews(next);
+    localStorage.setItem('savedTxnViews', JSON.stringify(next));
+    if (activeViewName === name) {
+      setActiveViewName('');
+      localStorage.removeItem('activeTxnView');
+    }
+  }
+  function clearAllFilters() {
+    setActiveAccount('all');
+    setIncludedCategories(new Set());
+    setIncludedSubcategories(new Set());
+    setSelectedMonth(null);
+    setSearchQuery('');
+    setColumnFilters({
+      merchant: '', description: '', category: '', subcategory: '',
+      amount: '', date: '', notes: '', institution: '', account: '',
+    });
+    setNoSubOnly(false);
+    setActiveViewName('');
+    localStorage.removeItem('activeTxnView');
+    setPage(0);
   }
 
   /* Filtered + sorted transactions */
@@ -1143,6 +1227,17 @@ export function TransactionsPage() {
     if (editingSubId !== null) document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [editingSubId]);
+
+  /* Close views dropdown on outside click */
+  useEffect(() => {
+    function handleClick(e) {
+      if (viewsRef.current && !viewsRef.current.contains(e.target)) {
+        setViewsOpen(false);
+      }
+    }
+    if (viewsOpen) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [viewsOpen]);
 
   /* Close dropdown / confirm on outside click */
   useEffect(() => {
@@ -1743,15 +1838,15 @@ export function TransactionsPage() {
         );
       })()}
 
-      {/* Search */}
-      <div style={{ marginBottom: 16 }}>
+      {/* Search + Views */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
         <input
           type="text"
           placeholder="Search transactions..."
           value={searchQuery}
           onChange={e => { setSearchQuery(e.target.value); setPage(0); }}
           style={{
-            width: '100%',
+            flex: '1 1 260px',
             maxWidth: 400,
             padding: '10px 14px',
             borderRadius: 10,
@@ -1761,6 +1856,105 @@ export function TransactionsPage() {
             outline: 'none',
           }}
         />
+        <div ref={viewsRef} className={styles.viewsWrap}>
+          <button
+            type="button"
+            className={styles.viewsBtn}
+            onClick={() => setViewsOpen(o => !o)}
+            title="Saved views"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>bookmark</span>
+            <span>{activeViewName || 'Views'}</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, opacity: 0.6 }}>
+              {viewsOpen ? 'expand_less' : 'expand_more'}
+            </span>
+          </button>
+          {viewsOpen && (
+            <div className={styles.viewsDropdown}>
+              <div className={styles.viewsSection}>
+                <div className={styles.viewsSectionLabel}>Save current as</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    type="text"
+                    value={viewNameInput}
+                    onChange={e => setViewNameInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { saveView(viewNameInput); } }}
+                    placeholder="View name..."
+                    className={styles.viewsInput}
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    className={styles.viewsSaveBtn}
+                    onClick={() => saveView(viewNameInput)}
+                    disabled={!viewNameInput.trim()}
+                  >
+                    Save
+                  </button>
+                </div>
+                {activeViewName && savedViews[activeViewName] && (
+                  <button
+                    type="button"
+                    className={styles.viewsUpdateBtn}
+                    onClick={() => saveView(activeViewName)}
+                    title={`Overwrite "${activeViewName}" with current filters`}
+                  >
+                    Update "{activeViewName}"
+                  </button>
+                )}
+              </div>
+              <div className={styles.viewsDivider} />
+              <div className={styles.viewsSection}>
+                <div className={styles.viewsSectionLabel}>Saved views</div>
+                {Object.keys(savedViews).length === 0 && (
+                  <div className={styles.viewsEmpty}>No saved views yet</div>
+                )}
+                {Object.keys(savedViews).sort().map(name => (
+                  <div
+                    key={name}
+                    className={`${styles.viewsItem} ${activeViewName === name ? styles.viewsItemActive : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className={styles.viewsItemName}
+                      onClick={() => {
+                        applyView(savedViews[name]);
+                        setActiveViewName(name);
+                        localStorage.setItem('activeTxnView', name);
+                        setViewsOpen(false);
+                      }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                        {activeViewName === name ? 'check' : 'bookmark'}
+                      </span>
+                      {name}
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.viewsItemDelete}
+                      onClick={() => deleteView(name)}
+                      title={`Delete "${name}"`}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {(activeViewName || Object.keys(savedViews).length > 0) && (
+                <>
+                  <div className={styles.viewsDivider} />
+                  <button
+                    type="button"
+                    className={styles.viewsClearBtn}
+                    onClick={() => { clearAllFilters(); setViewsOpen(false); }}
+                  >
+                    Clear all filters
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Bulk action bar */}
@@ -1998,7 +2192,7 @@ export function TransactionsPage() {
                       onClick={() => { toggleCategoryFilter(cat); setPage(0); }}
                       style={{ cursor: 'pointer', opacity: active ? 1 : 0.4 }}
                     >
-                      <span className={styles.barLegendDot} style={{ background: pieColor(i) }} />
+                      <span className={styles.barLegendDot} style={{ background: pieColor(cat) }} />
                       <span className={styles.barLegendName}>{cat}</span>
                       <button
                         type="button"
@@ -2794,7 +2988,7 @@ export function TransactionsPage() {
                         setPage(0);
                       }}
                     >
-                      <span className={styles.pieLegendDot} style={{ background: pieColor(i) }} />
+                      <span className={styles.pieLegendDot} style={{ background: pieColor(e.name) }} />
                       <span className={styles.pieLegendName}>{e.name}</span>
                       <span className={styles.pieLegendPct}>{Math.round((e.value / pieData.total) * 100)}%</span>
                       <button

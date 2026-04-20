@@ -973,6 +973,212 @@
   background: rgba(0, 0, 0, 0.04);
 }
 
+/* Saved Views */
+.viewsWrap {
+  position: relative;
+}
+
+.viewsBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-ghost);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  max-width: 220px;
+}
+
+.viewsBtn > span:nth-child(2) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.viewsBtn:hover {
+  background: var(--color-surface-alt);
+  border-color: var(--color-text-tertiary);
+}
+
+.viewsDropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: 300px;
+  max-height: 420px;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--border-ghost);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 8px;
+}
+
+.viewsSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px;
+}
+
+.viewsSectionLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.viewsInput {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-ghost);
+  background: var(--color-surface-alt);
+  font-size: 13px;
+  outline: none;
+  min-width: 0;
+}
+
+.viewsInput:focus {
+  border-color: var(--color-text-tertiary);
+  background: var(--color-surface);
+}
+
+.viewsSaveBtn {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: none;
+  background: var(--color-secondary, #111);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+}
+
+.viewsSaveBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.viewsSaveBtn:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.viewsUpdateBtn {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px dashed var(--border-ghost);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: all var(--transition-fast);
+}
+
+.viewsUpdateBtn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-alt);
+}
+
+.viewsDivider {
+  height: 1px;
+  background: var(--border-ghost);
+  margin: 6px 0;
+}
+
+.viewsEmpty {
+  padding: 8px 4px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.viewsItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  transition: background var(--transition-fast);
+}
+
+.viewsItem:hover {
+  background: var(--color-surface-alt);
+}
+
+.viewsItemActive {
+  background: var(--color-surface-alt);
+}
+
+.viewsItemName {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.viewsItemName > span:last-child {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.viewsItemDelete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  border-radius: 4px;
+  cursor: pointer;
+  margin-right: 4px;
+  transition: all var(--transition-fast);
+}
+
+.viewsItemDelete:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--color-text-primary);
+}
+
+.viewsClearBtn {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.viewsClearBtn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-alt);
+}
+
 /* Recurring Card */
 .recurringCard {
   background: var(--color-surface);
