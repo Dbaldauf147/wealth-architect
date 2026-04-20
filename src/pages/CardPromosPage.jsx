@@ -330,10 +330,10 @@ export function CardPromosPage() {
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
                         <LabeledInput label="Auto-track Subcategory" value={editDraft.matchSubcategory} onChange={v => setEditDraft({ ...editDraft, matchSubcategory: v })} />
                         <LabeledInput label="Or Category" value={editDraft.matchCategory} onChange={v => setEditDraft({ ...editDraft, matchCategory: v })} />
-                        <LabeledInput label="Or Description contains" value={editDraft.matchDescription} onChange={v => setEditDraft({ ...editDraft, matchDescription: v })} />
+                        <LabeledInput label="Or Merchant contains" value={editDraft.matchDescription} onChange={v => setEditDraft({ ...editDraft, matchDescription: v })} />
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 8 }}>
-                        If any match field is set, "used" auto-sums matching expense transactions in the current cycle (manual "Used $" is ignored). Multiple fields are OR'd — a transaction qualifies if it matches any one of them. Description match uses bidirectional contains, same as auto-categorization rules.
+                        If any match field is set, "used" auto-sums matching expense transactions in the current cycle (manual "Used $" is ignored). Multiple fields are OR'd. "Merchant contains" matches anywhere in the transaction's merchant text — use a single distinctive word (e.g. <code>mta</code>, <code>citibike</code>, <code>uber</code>), not the promo's label.
                       </div>
                       <LabeledInput label="Notes" value={editDraft.notes} onChange={v => setEditDraft({ ...editDraft, notes: v })} />
                       <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
