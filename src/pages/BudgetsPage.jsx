@@ -581,68 +581,90 @@ export function BudgetsPage() {
           <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', padding: '8px 0' }}>
             No expense data in the selected categories.
           </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {rangeData.map(({ cat, subs }) => (
-              <div key={cat}>
-                <div style={{ fontFamily: 'var(--font-headline)', fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{cat}</div>
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                    <thead>
-                      <tr style={{ color: 'var(--color-text-tertiary)', textAlign: 'left' }}>
-                        <th style={{ padding: '6px 8px', fontWeight: 600 }}>Subcategory</th>
-                        <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>3mo Avg</th>
-                        <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>Normal Range</th>
-                        <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>This Month</th>
-                        <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'center' }}>Status</th>
-                        <th style={{ padding: '6px 8px', fontWeight: 600 }}>6-mo Trend</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {subs.map(({ sub, avg, low, high, current, baselineMonths, status, series }) => {
-                        const statusStyles = {
-                          'normal':   { bg: 'rgba(0,150,104,0.08)', fg: '#16a34a', label: 'In range' },
-                          'over':     { bg: 'rgba(186,26,26,0.08)', fg: '#ba1a1a', label: 'Above' },
-                          'under':    { bg: 'rgba(232,163,23,0.08)', fg: '#e8a317', label: 'Below' },
-                          'no-data':  { bg: 'var(--color-surface-alt)', fg: 'var(--color-text-tertiary)', label: 'No baseline' },
-                          'no-spend': { bg: 'var(--color-surface-alt)', fg: 'var(--color-text-tertiary)', label: 'No spend yet' },
-                        }[status];
-                        return (
-                          <tr key={sub} style={{ borderTop: '1px solid var(--border-ghost)' }}>
-                            <td style={{ padding: '8px', fontWeight: 600 }}>
-                              {sub}
-                              {baselineMonths < 3 && baselineMonths > 0 && (
-                                <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--color-text-tertiary)' }}>({baselineMonths}mo)</span>
-                              )}
-                            </td>
-                            <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                              {avg > 0 ? fmt(avg) : '—'}
-                            </td>
-                            <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-tertiary)' }}>
-                              {avg > 0 ? `${fmt(low)} – ${fmt(high)}` : '—'}
-                            </td>
-                            <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700,
-                                         color: status === 'over' ? '#ba1a1a' : status === 'under' ? '#e8a317' : 'var(--color-text-primary)' }}>
-                              {fmt(current)}
-                            </td>
-                            <td style={{ padding: '8px', textAlign: 'center' }}>
-                              <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 700, background: statusStyles.bg, color: statusStyles.fg }}>
-                                {statusStyles.label}
-                              </span>
-                            </td>
-                            <td style={{ padding: '8px' }}>
-                              <RangeSparkline series={series} low={low} high={high} avg={avg} />
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+        ) : (() => {
+          // Flatten subs across selected categories and bucket by status
+          const flat = [];
+          for (const { cat, subs } of rangeData) {
+            for (const s of subs) flat.push({ ...s, cat });
+          }
+          const buckets = [
+            { key: 'over',     label: 'Above Range',  bg: 'rgba(186,26,26,0.06)',  fg: '#ba1a1a', icon: 'trending_up',   blurb: 'Spending more than the normal band' },
+            { key: 'normal',   label: 'On Track',     bg: 'rgba(0,150,104,0.06)',  fg: '#16a34a', icon: 'check_circle',  blurb: 'Within the ±25% normal range' },
+            { key: 'under',    label: 'Under Range',  bg: 'rgba(232,163,23,0.06)', fg: '#e8a317', icon: 'trending_down', blurb: 'Spending less than the normal band' },
+            { key: 'no-spend', label: 'No Spend Yet', bg: 'var(--color-surface-alt)', fg: 'var(--color-text-tertiary)', icon: 'pause_circle',  blurb: 'Has a baseline but nothing this month yet' },
+            { key: 'no-data',  label: 'No Baseline',  bg: 'var(--color-surface-alt)', fg: 'var(--color-text-tertiary)', icon: 'help',          blurb: 'Not enough prior-month history to compare' },
+          ];
+          // Sort within each bucket by absolute deviation from avg desc (biggest movers first)
+          const grouped = buckets.map(b => ({
+            ...b,
+            items: flat.filter(f => f.status === b.key).sort((a, c) => Math.abs(c.current - c.avg) - Math.abs(a.current - a.avg)),
+          })).filter(b => b.items.length > 0);
+
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {grouped.map(b => (
+                <div key={b.key} style={{ border: `1px solid ${b.fg === 'var(--color-text-tertiary)' ? 'var(--border-ghost)' : b.fg + '33'}`, borderRadius: 10, overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: b.bg, borderBottom: '1px solid var(--border-ghost)' }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 16, color: b.fg }}>{b.icon}</span>
+                    <span style={{ fontFamily: 'var(--font-headline)', fontSize: 13, fontWeight: 700, color: b.fg }}>{b.label}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: 'rgba(255,255,255,0.6)', color: b.fg }}>{b.items.length}</span>
+                    <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginLeft: 'auto' }}>{b.blurb}</span>
+                  </div>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ color: 'var(--color-text-tertiary)', textAlign: 'left' }}>
+                          <th style={{ padding: '6px 14px', fontWeight: 600 }}>Subcategory</th>
+                          <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>3mo Avg</th>
+                          <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>Normal Range</th>
+                          <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>This Month</th>
+                          <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>Δ vs Avg</th>
+                          <th style={{ padding: '6px 8px', fontWeight: 600 }}>6-mo Trend</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {b.items.map(({ sub, cat, avg, low, high, current, baselineMonths, status, series }) => {
+                          const delta = current - avg;
+                          const deltaPct = avg > 0 ? (delta / avg) * 100 : 0;
+                          const deltaColor = status === 'over' ? '#ba1a1a' : status === 'under' ? '#e8a317' : 'var(--color-text-tertiary)';
+                          return (
+                            <tr key={`${cat}|${sub}`} style={{ borderTop: '1px solid var(--border-ghost)' }}>
+                              <td style={{ padding: '8px 14px', fontWeight: 600 }}>
+                                {sub}
+                                {baselineMonths < 3 && baselineMonths > 0 && (
+                                  <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--color-text-tertiary)' }}>({baselineMonths}mo)</span>
+                                )}
+                                <div style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--color-text-tertiary)', marginTop: 1 }}>{cat}</div>
+                              </td>
+                              <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                                {avg > 0 ? fmt(avg) : '—'}
+                              </td>
+                              <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-tertiary)' }}>
+                                {avg > 0 ? `${fmt(low)} – ${fmt(high)}` : '—'}
+                              </td>
+                              <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700,
+                                           color: status === 'over' ? '#ba1a1a' : status === 'under' ? '#e8a317' : 'var(--color-text-primary)' }}>
+                                {fmt(current)}
+                              </td>
+                              <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: deltaColor, fontWeight: 700 }}>
+                                {avg > 0
+                                  ? `${delta >= 0 ? '+' : '−'}${fmt(Math.abs(delta))} (${delta >= 0 ? '+' : '−'}${Math.abs(Math.round(deltaPct))}%)`
+                                  : '—'}
+                              </td>
+                              <td style={{ padding: '8px' }}>
+                                <RangeSparkline series={series} low={low} high={high} avg={avg} />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Budgets */}
