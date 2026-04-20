@@ -102,7 +102,7 @@ function smoothPath(points) {
   return d;
 }
 
-function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 280, mode = 'stacked', onMonthClick, selectedMonth, colorFor = pieColor }) {
+function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 280, mode = 'stacked', onMonthClick, onSegmentClick, selectedMonth, colorFor = pieColor }) {
   const [hoverIdx, setHoverIdx] = useState(null);
   const [hoverSeg, setHoverSeg] = useState(null); // { mi, ci, x, y }
   if (!months.length) return null;
@@ -321,7 +321,10 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                     strokeWidth={isHovered ? 2 : 0}
                     style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
                     onMouseEnter={() => setHoverSeg({ mi, ci, x: cx, y: y + barH / 2, xRight: cx + barW / 2 })}
-                    onClick={() => onMonthClick && onMonthClick(m.key)}
+                    onClick={() => {
+                      if (onSegmentClick) onSegmentClick(cat);
+                      else if (onMonthClick) onMonthClick(m.key);
+                    }}
                   />
                 );
               })}
@@ -407,7 +410,10 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                     strokeWidth={isHovered ? 2 : 0}
                     style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
                     onMouseEnter={() => setHoverSeg({ mi, ci, x: bx + singleW / 2, y: by + Math.max(barH, 0) / 2, xRight: bx + w })}
-                    onClick={() => onMonthClick && onMonthClick(m.key)}
+                    onClick={() => {
+                      if (onSegmentClick) onSegmentClick(cat);
+                      else if (onMonthClick) onMonthClick(m.key);
+                    }}
                   />
                 );
               })}
@@ -2330,6 +2336,23 @@ export function TransactionsPage() {
             colorFor={colorFor}
             onMonthClick={key => {
               setSelectedMonth(prev => prev === key ? null : key);
+              setPage(0);
+            }}
+            onSegmentClick={name => {
+              if (barChartData.drillDown) {
+                setIncludedSubcategories(prev => {
+                  const next = new Set(prev);
+                  if (next.has(name)) next.delete(name); else next.add(name);
+                  return next;
+                });
+              } else {
+                setIncludedSubcategories(new Set());
+                setIncludedCategories(prev => {
+                  const next = new Set(prev);
+                  if (next.has(name)) next.delete(name); else next.add(name);
+                  return next;
+                });
+              }
               setPage(0);
             }}
           />
