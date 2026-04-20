@@ -270,14 +270,46 @@ export function BudgetsPage() {
     });
   }
 
-  // All categories available from the data, sorted
+  // All categories available from the data, sorted, with their bucketing status so the
+  // selection pills can be grouped by Above / On Track / Under / No Baseline.
   const allCategoriesForRange = useMemo(() => {
-    const set = new Set();
-    for (const t of (transactions || [])) {
-      if ((t.category || '') === 'Income') continue;
-      if (t.category) set.add(t.category);
+    if (!transactions || transactions.length === 0) return [];
+    const now = new Date();
+    const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const baselineKeys = [];
+    for (let i = 1; i <= 3; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      baselineKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
     }
-    return [...set].sort();
+    const byCatMonth = new Map();
+    for (const t of transactions) {
+      if (!t.category || t.category === 'Income') continue;
+      const amt = Number(t.amount) || 0;
+      if (amt >= 0) continue;
+      if (!t.date) continue;
+      const d = new Date(t.date);
+      if (isNaN(d)) continue;
+      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (!byCatMonth.has(t.category)) byCatMonth.set(t.category, new Map());
+      const m = byCatMonth.get(t.category);
+      m.set(monthKey, (m.get(monthKey) || 0) + Math.abs(amt));
+    }
+    const result = [];
+    for (const [cat, monthMap] of byCatMonth) {
+      const baselineVals = baselineKeys.map(k => monthMap.get(k) || 0);
+      const present = baselineVals.filter(v => v > 0);
+      const avg = present.length > 0 ? present.reduce((s, v) => s + v, 0) / present.length : 0;
+      const low = avg * 0.75;
+      const high = avg * 1.25;
+      const current = monthMap.get(currentKey) || 0;
+      let status = 'normal';
+      if (avg === 0) status = 'no-data';
+      else if (current === 0) status = 'no-spend';
+      else if (current > high) status = 'over';
+      else if (current < low) status = 'under';
+      result.push({ name: cat, status });
+    }
+    return result.sort((a, b) => a.name.localeCompare(b.name));
   }, [transactions]);
 
   // Compute per-subcategory range data for the selected categories
@@ -555,34 +587,64 @@ export function BudgetsPage() {
             3-month average · ±25% normal band · this month vs band
           </div>
         </div>
-        <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        <div style={{ marginBottom: 12 }}>
           {allCategoriesForRange.length === 0 ? (
             <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>No categories in your data yet.</div>
-          ) : (
-            allCategoriesForRange.map(cat => {
-              const on = rangeCats.has(cat);
+          ) : (() => {
+            const pillBuckets = [
+              { key: 'over',     label: 'Above Range',  fg: '#ba1a1a', bg: 'rgba(186,26,26,0.08)',  borderOn: '#ba1a1a' },
+              { key: 'normal',   label: 'On Track',     fg: '#16a34a', bg: 'rgba(0,150,104,0.08)',  borderOn: '#16a34a' },
+              { key: 'under',    label: 'Under Range',  fg: '#e8a317', bg: 'rgba(232,163,23,0.08)', borderOn: '#e8a317' },
+              { key: 'no-data',  label: 'No Baseline',  fg: 'var(--color-text-tertiary)', bg: 'var(--color-surface-alt)', borderOn: 'var(--color-text-tertiary)' },
+            ];
+            const byStatus = pillBuckets.map(b => ({
+              ...b,
+              cats: allCategoriesForRange.filter(c => c.status === b.key || (b.key === 'no-data' && c.status === 'no-spend')),
+            }));
+            const renderPill = (c, b) => {
+              const on = rangeCats.has(c.name);
               return (
                 <button
-                  key={cat}
+                  key={c.name}
                   type="button"
-                  onClick={() => toggleRangeCat(cat)}
+                  onClick={() => toggleRangeCat(c.name)}
+                  title={`${b.label} — click to ${on ? 'remove from' : 'add to'} the tracker`}
                   style={{
                     padding: '4px 10px',
                     borderRadius: 999,
                     fontSize: 11.5,
                     fontWeight: 600,
                     border: '1px solid',
-                    borderColor: on ? 'var(--color-secondary, #0058be)' : 'var(--border-ghost)',
-                    background: on ? 'rgba(0,88,190,0.08)' : 'var(--color-surface)',
-                    color: on ? 'var(--color-secondary, #0058be)' : 'var(--color-text-tertiary)',
+                    borderColor: on ? b.borderOn : 'var(--border-ghost)',
+                    background: on ? b.bg : 'var(--color-surface)',
+                    color: on ? b.fg : 'var(--color-text-tertiary)',
                     cursor: 'pointer',
                   }}
                 >
-                  {cat}
+                  {c.name}
                 </button>
               );
-            })
-          )}
+            };
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {byStatus.map(b => (
+                  <div key={b.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    <div style={{ minWidth: 110, paddingTop: 4 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: b.bg, color: b.fg, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        {b.label}
+                      </span>
+                      <span style={{ marginLeft: 6, fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{b.cats.length}</span>
+                    </div>
+                    <div style={{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {b.cats.length === 0
+                        ? <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontStyle: 'italic', paddingTop: 4 }}>—</span>
+                        : b.cats.map(c => renderPill(c, b))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
         {rangeCats.size === 0 ? (
           <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', padding: '8px 0' }}>
