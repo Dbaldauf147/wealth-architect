@@ -8,6 +8,27 @@ function fmt(n) {
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+function csvEscape(v) {
+  if (v == null) return '';
+  const s = String(v);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function downloadCsv(rows, headers, filename) {
+  const lines = [headers.join(',')];
+  for (const r of rows) lines.push(headers.map(h => csvEscape(r[h])).join(','));
+  const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 function smoothPath(points) {
   if (points.length < 2) return '';
   if (points.length === 2) return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
@@ -182,6 +203,7 @@ export function CashFlowPage() {
 
   const revenueBreakdown = useMemo(() => {
     if (!transactions) return null;
+    const monthFilter = drilldown ? drilldown.monthKey : null;
     const bySub = {};
     let total = 0;
     for (const t of transactions) {
@@ -192,8 +214,12 @@ export function CashFlowPage() {
       const d = new Date(t.date);
       if (isNaN(d)) continue;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      const allKeys = data.months.map(m => m.key);
-      if (!allKeys.includes(key)) continue;
+      if (monthFilter) {
+        if (key !== monthFilter) continue;
+      } else {
+        const allKeys = data.months.map(m => m.key);
+        if (!allKeys.includes(key)) continue;
+      }
       const label = t.subcategory || t.category || 'Other';
       if (!bySub[label]) bySub[label] = { total: 0, count: 0, txns: [] };
       bySub[label].total += t.amount;
@@ -210,8 +236,39 @@ export function CashFlowPage() {
         txns: v.txns.sort((a, b) => b.amount - a.amount),
       }))
       .sort((a, b) => b.total - a.total);
-    return { rows, total };
-  }, [transactions, data.months]);
+    return { rows, total, monthFilter };
+  }, [transactions, data.months, drilldown]);
+
+  function exportMonthCsv(monthKey) {
+    if (!transactions || !monthKey) return;
+    const [yy, mm] = monthKey.split('-');
+    const rows = transactions
+      .filter(t => {
+        if (!t.date) return false;
+        const d = new Date(t.date);
+        if (isNaN(d)) return false;
+        const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        return k === monthKey;
+      })
+      .map(t => ({
+        Date: t.date,
+        Description: t.description || t.fullDescription || '',
+        Category: t.category || '',
+        Subcategory: t.subcategory || '',
+        Amount: t.amount,
+        Account: t.account || '',
+        Institution: t.institution || '',
+        Notes: t.notes || '',
+      }))
+      .sort((a, b) => String(b.Date || '').localeCompare(String(a.Date || '')));
+    if (rows.length === 0) return;
+    const monthName = MONTH_SHORT[parseInt(mm, 10) - 1].toLowerCase();
+    downloadCsv(
+      rows,
+      ['Date', 'Description', 'Category', 'Subcategory', 'Amount', 'Account', 'Institution', 'Notes'],
+      `cashflow-${monthName}-${yy}.csv`,
+    );
+  }
 
   if (loading) {
     return <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>Loading...</div>;
@@ -475,17 +532,38 @@ export function CashFlowPage() {
       </div>
 
       {/* Revenue Breakdown by Source */}
-      {revenueBreakdown && revenueBreakdown.rows.length > 0 && (
+      {revenueBreakdown && (revenueBreakdown.rows.length > 0 || revenueBreakdown.monthFilter) && (
         <div style={{ background: 'var(--color-surface)', border: `2px solid ${incomeColor}33`, borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: incomeColor }}>
-              Revenue Breakdown by Source
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: incomeColor }}>
+                Revenue Breakdown by Source
+                {revenueBreakdown.monthFilter && (() => {
+                  const [fy, fm] = revenueBreakdown.monthFilter.split('-');
+                  return ` · ${MONTH_SHORT[parseInt(fm, 10) - 1]} ${fy}`;
+                })()}
+              </div>
+              <div style={{ fontFamily: 'var(--font-headline)', fontSize: 22, fontWeight: 700, color: incomeColor, marginTop: 4 }}>
+                {fmt(revenueBreakdown.total)} total
+              </div>
             </div>
-            <div style={{ fontFamily: 'var(--font-headline)', fontSize: 22, fontWeight: 700, color: incomeColor, marginTop: 4 }}>
-              {fmt(revenueBreakdown.total)} total
-            </div>
+            {revenueBreakdown.monthFilter && (
+              <button
+                onClick={() => setDrilldown(null)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 10px', border: '1px solid var(--border-ghost)', background: 'var(--color-surface-alt)', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)' }}
+                title="Show all months"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                Clear month filter
+              </button>
+            )}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {revenueBreakdown.rows.length === 0 && (
+              <div style={{ textAlign: 'center', padding: 24, color: 'var(--color-text-tertiary)', fontSize: 13 }}>
+                No revenue this month.
+              </div>
+            )}
             {revenueBreakdown.rows.map(r => {
               const isExpanded = expandedRevCats.has(r.name);
               return (
@@ -550,13 +628,23 @@ export function CashFlowPage() {
                   {fmt(drilldownData.total)} total
                 </div>
               </div>
-              <button
-                onClick={() => setDrilldown(null)}
-                style={{ width: 32, height: 32, border: 'none', background: 'var(--color-surface-alt)', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                title="Close"
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  onClick={() => exportMonthCsv(drilldownData.monthKey)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', border: '1px solid var(--border-ghost)', background: 'var(--color-surface-alt)', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)' }}
+                  title={`Export all ${monthName} ${y} transactions to CSV`}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>download</span>
+                  Export CSV
+                </button>
+                <button
+                  onClick={() => setDrilldown(null)}
+                  style={{ width: 32, height: 32, border: 'none', background: 'var(--color-surface-alt)', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  title="Close"
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
+                </button>
+              </div>
             </div>
             {drilldownData.rows.length === 0 ? (
               <div style={{ textAlign: 'center', padding: 24, color: 'var(--color-text-tertiary)', fontSize: 13 }}>No transactions</div>
