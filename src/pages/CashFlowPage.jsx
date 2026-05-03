@@ -8,6 +8,16 @@ function fmt(n) {
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+// Categories that must never roll into the Expenses bucket on the Cashflow page,
+// even if they happen to have negative-signed transactions.
+// (Transfer, Credit Card Payment(s), Investments, Retirement are already excluded
+// elsewhere — see drilldownData / data aggregation — so they're not repeated here.)
+const NON_EXPENSE_CATS = new Set([
+  'paycheck',
+  'income',
+  'tax refund/payment',
+]);
+
 function csvEscape(v) {
   if (v == null) return '';
   const s = String(v);
@@ -71,7 +81,7 @@ export function CashFlowPage() {
       if (k !== monthKey) continue;
       if (kind === 'income' && t.amount <= 0) continue;
       if (kind === 'expenses' && t.amount >= 0) continue;
-      if (kind === 'expenses' && tCat === 'paycheck') continue;
+      if (kind === 'expenses' && NON_EXPENSE_CATS.has(tCat)) continue;
       const cat = t.category || 'Uncategorized';
       const sub = t.subcategory || '';
       if (!byCat[cat]) byCat[cat] = { total: 0, count: 0, subs: {}, txns: [] };
@@ -146,7 +156,7 @@ export function CashFlowPage() {
         const subLabel = t.subcategory || t.category || 'Other';
         buckets[key].incomeSubs[subLabel] = (buckets[key].incomeSubs[subLabel] || 0) + t.amount;
       } else {
-        if (cat === 'paycheck') continue;
+        if (NON_EXPENSE_CATS.has(cat)) continue;
         buckets[key].expenses += Math.abs(t.amount);
       }
     }
@@ -257,7 +267,7 @@ export function CashFlowPage() {
         if (kind === 'income' && t.amount <= 0) return false;
         if (kind === 'expenses') {
           if (t.amount >= 0) return false;
-          if (tCat === 'paycheck') return false;
+          if (NON_EXPENSE_CATS.has(tCat)) return false;
         }
         return true;
       })
