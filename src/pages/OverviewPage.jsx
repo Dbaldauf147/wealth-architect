@@ -24,6 +24,11 @@ function relativeTime(date) {
 
 const DONUT_COLORS = ['#0058be', '#009668', '#e8a317', '#94a3b8', '#7c3aed', '#e11d48', '#06b6d4', '#f97316'];
 
+function loadAccountNicknames() {
+  // Same key the Assets page writes to.
+  try { return JSON.parse(localStorage.getItem('wa-account-nicknames')) || {}; } catch { return {}; }
+}
+
 export function OverviewPage() {
   const { balances, analytics, transactions, loading, error, lastSync } = useData();
   const [chartPeriod, setChartPeriod] = useState('6M');
@@ -158,6 +163,8 @@ export function OverviewPage() {
   })();
 
   // Resolve real assets/liabilities for breakdown rows
+  const accountNicknames = loadAccountNicknames();
+  const displayAccount = (name) => accountNicknames[name] || name;
   const assetRows = (balances?.assets || []).slice().sort((a, b) => b.balance - a.balance);
   const liabilityRows = (balances?.liabilities || []).slice().sort((a, b) => b.balance - a.balance);
   const assetTotal = balances?.totalAssets || assetRows.reduce((s, a) => s + a.balance, 0);
@@ -218,7 +225,10 @@ export function OverviewPage() {
                   {assetRows.length === 0 && <div className={styles.snapshotEmpty}>No linked assets</div>}
                   {assetRows.map(a => (
                     <div key={a.name} className={styles.snapshotRow}>
-                      <span className={styles.snapshotRowName}>{a.name}</span>
+                      <span className={styles.snapshotRowName}>
+                        <span className={styles.snapshotRowDisplay}>{displayAccount(a.name)}</span>
+                        {accountNicknames[a.name] && <span className={styles.snapshotRowOriginal}>{a.name}</span>}
+                      </span>
                       <span className={styles.snapshotRowValue}>{fmt(a.balance)}</span>
                     </div>
                   ))}
@@ -231,7 +241,10 @@ export function OverviewPage() {
                   {liabilityRows.length === 0 && <div className={styles.snapshotEmpty}>No linked liabilities</div>}
                   {liabilityRows.map(l => (
                     <div key={l.name} className={styles.snapshotRow}>
-                      <span className={styles.snapshotRowName}>{l.name}</span>
+                      <span className={styles.snapshotRowName}>
+                        <span className={styles.snapshotRowDisplay}>{displayAccount(l.name)}</span>
+                        {accountNicknames[l.name] && <span className={styles.snapshotRowOriginal}>{l.name}</span>}
+                      </span>
                       <span className={styles.snapshotRowValue}>{fmt(l.balance)}</span>
                     </div>
                   ))}
@@ -246,7 +259,10 @@ export function OverviewPage() {
                   return (
                     <div key={a.name} className={styles.snapshotRowFull}>
                       <div className={styles.snapshotRowFullHeader}>
-                        <span className={styles.snapshotRowName}>{a.name}</span>
+                        <span className={styles.snapshotRowName}>
+                        <span className={styles.snapshotRowDisplay}>{displayAccount(a.name)}</span>
+                        {accountNicknames[a.name] && <span className={styles.snapshotRowOriginal}>{a.name}</span>}
+                      </span>
                         <span className={styles.snapshotRowValue}>{fmt(a.balance)} <span className={styles.snapshotPct}>{pct.toFixed(1)}%</span></span>
                       </div>
                       <div className={styles.snapshotBar}>
@@ -265,7 +281,10 @@ export function OverviewPage() {
                   return (
                     <div key={l.name} className={styles.snapshotRowFull}>
                       <div className={styles.snapshotRowFullHeader}>
-                        <span className={styles.snapshotRowName}>{l.name}</span>
+                        <span className={styles.snapshotRowName}>
+                        <span className={styles.snapshotRowDisplay}>{displayAccount(l.name)}</span>
+                        {accountNicknames[l.name] && <span className={styles.snapshotRowOriginal}>{l.name}</span>}
+                      </span>
                         <span className={styles.snapshotRowValue}>{fmt(l.balance)} <span className={styles.snapshotPct}>{pct.toFixed(1)}%</span></span>
                       </div>
                       <div className={styles.snapshotBar}>
