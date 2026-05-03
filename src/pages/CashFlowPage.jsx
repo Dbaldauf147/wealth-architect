@@ -239,16 +239,27 @@ export function CashFlowPage() {
     return { rows, total, monthFilter };
   }, [transactions, data.months, drilldown]);
 
-  function exportMonthCsv(monthKey) {
+  function exportMonthCsv(monthKey, kind) {
     if (!transactions || !monthKey) return;
     const [yy, mm] = monthKey.split('-');
     const rows = transactions
       .filter(t => {
-        if (!t.date) return false;
+        if (!t.date || t.amount === 0) return false;
         const d = new Date(t.date);
         if (isNaN(d)) return false;
         const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        return k === monthKey;
+        if (k !== monthKey) return false;
+        const tCat = (t.category || '').toLowerCase();
+        // Mirrors drilldownData's exclusion list so the export matches
+        // what the user is looking at.
+        if (tCat === 'transfer' || tCat === 'credit card payments' || tCat === 'credit card payment') return false;
+        if (tCat === 'investments' || tCat === 'retirement') return false;
+        if (kind === 'income' && t.amount <= 0) return false;
+        if (kind === 'expenses') {
+          if (t.amount >= 0) return false;
+          if (tCat === 'paycheck') return false;
+        }
+        return true;
       })
       .map(t => ({
         Date: t.date,
@@ -263,10 +274,11 @@ export function CashFlowPage() {
       .sort((a, b) => String(b.Date || '').localeCompare(String(a.Date || '')));
     if (rows.length === 0) return;
     const monthName = MONTH_SHORT[parseInt(mm, 10) - 1].toLowerCase();
+    const kindSuffix = kind === 'income' ? '-income' : kind === 'expenses' ? '-expenses' : '';
     downloadCsv(
       rows,
       ['Date', 'Description', 'Category', 'Subcategory', 'Amount', 'Account', 'Institution', 'Notes'],
-      `cashflow-${monthName}-${yy}.csv`,
+      `cashflow-${monthName}-${yy}${kindSuffix}.csv`,
     );
   }
 
@@ -630,9 +642,9 @@ export function CashFlowPage() {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <button
-                  onClick={() => exportMonthCsv(drilldownData.monthKey)}
+                  onClick={() => exportMonthCsv(drilldownData.monthKey, drilldownData.kind)}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', border: '1px solid var(--border-ghost)', background: 'var(--color-surface-alt)', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)' }}
-                  title={`Export all ${monthName} ${y} transactions to CSV`}
+                  title={`Export ${heading.toLowerCase()} for ${monthName} ${y} to CSV`}
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: 16 }}>download</span>
                   Export CSV
