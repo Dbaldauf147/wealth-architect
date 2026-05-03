@@ -325,9 +325,8 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                     style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
                     onMouseEnter={() => setHoverSeg({ mi, ci, x: cx, y: y + barH / 2, xRight: cx + barW / 2 })}
                     onClick={() => {
-                      const r = onSegmentClick && onSegmentClick(cat);
-                      if (r === 'fallthrough' && onMonthClick) onMonthClick(m.key);
-                      else if (!onSegmentClick && onMonthClick) onMonthClick(m.key);
+                      if (onSegmentClick) onSegmentClick(cat);
+                      else if (onMonthClick) onMonthClick(m.key);
                     }}
                   />
                 );
@@ -415,9 +414,8 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                     style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
                     onMouseEnter={() => setHoverSeg({ mi, ci, x: bx + singleW / 2, y: by + Math.max(barH, 0) / 2, xRight: bx + w })}
                     onClick={() => {
-                      const r = onSegmentClick && onSegmentClick(cat);
-                      if (r === 'fallthrough' && onMonthClick) onMonthClick(m.key);
-                      else if (!onSegmentClick && onMonthClick) onMonthClick(m.key);
+                      if (onSegmentClick) onSegmentClick(cat);
+                      else if (onMonthClick) onMonthClick(m.key);
                     }}
                   />
                 );
@@ -2413,14 +2411,23 @@ export function TransactionsPage() {
                   const active = isOther || includedCategories.size === 0 || includedCategories.has(cat);
                   const isSub = barChartData.drillDown;
                   const otherTip = isOther && barChartData.otherMembers && barChartData.otherMembers.length > 0
-                    ? `Other (${barChartData.otherMembers.length}): ${barChartData.otherMembers.join(', ')}`
+                    ? `Click to zoom in on: ${barChartData.otherMembers.join(', ')}`
                     : null;
                   return (
                     <div
                       key={cat}
                       className={styles.barLegendItem}
-                      onClick={isOther ? undefined : () => { toggleCategoryFilter(cat); setPage(0); }}
-                      style={{ cursor: isOther ? 'default' : 'pointer', opacity: active ? 1 : 0.4 }}
+                      onClick={isOther
+                        ? () => {
+                            const members = barChartData.otherMembers || [];
+                            if (members.length === 0) return;
+                            setIncludedSubcategories(new Set());
+                            setIncludedCategories(new Set(members));
+                            setPage(0);
+                          }
+                        : () => { toggleCategoryFilter(cat); setPage(0); }
+                      }
+                      style={{ cursor: 'pointer', opacity: active ? 1 : 0.4 }}
                       title={otherTip || undefined}
                     >
                       <span className={styles.barLegendDot} style={{ background: dotColor }} />
@@ -2519,8 +2526,16 @@ export function TransactionsPage() {
               setPage(0);
             }}
             onSegmentClick={name => {
-              // The synthetic 'Other' aggregate isn't a real category — let the month click handler run instead.
-              if (name === '__OTHER_AGGREGATE__') return 'fallthrough';
+              // Clicking the synthetic 'Other' aggregate zooms into those categories
+              // by setting them as the included-category filter.
+              if (name === '__OTHER_AGGREGATE__') {
+                const members = barChartData.otherMembers || [];
+                if (members.length === 0) return;
+                setIncludedSubcategories(new Set());
+                setIncludedCategories(new Set(members));
+                setPage(0);
+                return;
+              }
               if (barChartData.drillDown) {
                 setIncludedSubcategories(prev => {
                   const next = new Set(prev);
