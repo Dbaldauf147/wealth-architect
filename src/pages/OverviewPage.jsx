@@ -30,6 +30,7 @@ export function OverviewPage() {
   const [chartMode, setChartMode] = useState('bar');
   const [hoverPoint, setHoverPoint] = useState(null); // { kind: 'income'|'expense', i, x, y }
   const [hoverDonut, setHoverDonut] = useState(null); // index in ALLOCATION
+  const [selectedSnapshot, setSelectedSnapshot] = useState(null); // 'Net Worth' | 'Total Assets' | 'Total Liabilities' | '30D Cash Flow' | null
 
   // Loading state
   if (loading) {
@@ -124,29 +125,189 @@ export function OverviewPage() {
   // Linked accounts count
   const linkedAccounts = (balances?.assets?.length || 0) + (balances?.liabilities?.length || 0);
 
+  // Last-30-days breakdown for the cash-flow card
+  const cashFlowBreakdown = (() => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    const recent = (transactions || []).filter(t => {
+      if (!t.date) return false;
+      const d = new Date(t.date);
+      return !isNaN(d) && d >= cutoff;
+    });
+    let income = 0;
+    let expenses = 0;
+    const incomeByCat = {};
+    const expensesByCat = {};
+    for (const t of recent) {
+      const cat = t.category || 'Uncategorized';
+      const tCat = cat.toLowerCase();
+      if (tCat === 'transfer' || tCat === 'credit card payments' || tCat === 'credit card payment') continue;
+      if (t.amount > 0) {
+        income += t.amount;
+        incomeByCat[cat] = (incomeByCat[cat] || 0) + t.amount;
+      } else if (t.amount < 0) {
+        const a = Math.abs(t.amount);
+        expenses += a;
+        expensesByCat[cat] = (expensesByCat[cat] || 0) + a;
+      }
+    }
+    const sortRows = obj => Object.entries(obj)
+      .map(([name, total]) => ({ name, total }))
+      .sort((a, b) => b.total - a.total);
+    return { income, expenses, net: income - expenses, incomeRows: sortRows(incomeByCat), expenseRows: sortRows(expensesByCat) };
+  })();
+
+  // Resolve real assets/liabilities for breakdown rows
+  const assetRows = (balances?.assets || []).slice().sort((a, b) => b.balance - a.balance);
+  const liabilityRows = (balances?.liabilities || []).slice().sort((a, b) => b.balance - a.balance);
+  const assetTotal = balances?.totalAssets || assetRows.reduce((s, a) => s + a.balance, 0);
+  const liabilityTotal = balances?.totalLiabilities || liabilityRows.reduce((s, l) => s + l.balance, 0);
+
   return (
     <div className={styles.page}>
       {/* Hero Stats */}
       <div>
         <div className={styles.sectionLabel}>Portfolio Snapshot</div>
         <div className={styles.statsGrid}>
-          {STATS.map((s) => (
-            <div key={s.title} className={styles.statCard}>
-              <div className={styles.statHeader}>
-                <span className={styles.statTitle}>{s.title}</span>
-                <div className={`${styles.statIcon} ${styles[s.iconClass]}`}>
-                  <span className="material-symbols-outlined">{s.icon}</span>
+          {STATS.map((s) => {
+            const isActive = selectedSnapshot === s.title;
+            return (
+              <div
+                key={s.title}
+                className={`${styles.statCard} ${isActive ? styles.statCardActive : ''}`}
+                onClick={() => setSelectedSnapshot(prev => (prev === s.title ? null : s.title))}
+                style={{ cursor: 'pointer' }}
+                title={isActive ? 'Click to close breakdown' : `Show ${s.title} breakdown`}
+              >
+                <div className={styles.statHeader}>
+                  <span className={styles.statTitle}>{s.title}</span>
+                  <div className={`${styles.statIcon} ${styles[s.iconClass]}`}>
+                    <span className="material-symbols-outlined">{s.icon}</span>
+                  </div>
+                </div>
+                <div
+                  className={styles.statValue}
+                  style={s.cashFlowColor ? { color: s.cashFlowColor } : undefined}
+                >
+                  {s.value}
                 </div>
               </div>
-              <div
-                className={styles.statValue}
-                style={s.cashFlowColor ? { color: s.cashFlowColor } : undefined}
-              >
-                {s.value}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
+        {selectedSnapshot && (
+          <div className={styles.snapshotBreakdown}>
+            <div className={styles.snapshotBreakdownHeader}>
+              <span className={styles.snapshotBreakdownTitle}>{selectedSnapshot} Breakdown</span>
+              <button
+                type="button"
+                className={styles.snapshotBreakdownClose}
+                onClick={() => setSelectedSnapshot(null)}
+                title="Close"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
+              </button>
+            </div>
+            {selectedSnapshot === 'Net Worth' && (
+              <div className={styles.snapshotNetWorth}>
+                <div className={styles.snapshotColumn}>
+                  <div className={styles.snapshotColumnHeader}>
+                    <span>Assets</span>
+                    <span style={{ color: 'var(--color-success)' }}>{fmt(assetTotal)}</span>
+                  </div>
+                  {assetRows.length === 0 && <div className={styles.snapshotEmpty}>No linked assets</div>}
+                  {assetRows.map(a => (
+                    <div key={a.name} className={styles.snapshotRow}>
+                      <span className={styles.snapshotRowName}>{a.name}</span>
+                      <span className={styles.snapshotRowValue}>{fmt(a.balance)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className={styles.snapshotColumn}>
+                  <div className={styles.snapshotColumnHeader}>
+                    <span>Liabilities</span>
+                    <span style={{ color: 'var(--color-error)' }}>{fmt(liabilityTotal)}</span>
+                  </div>
+                  {liabilityRows.length === 0 && <div className={styles.snapshotEmpty}>No linked liabilities</div>}
+                  {liabilityRows.map(l => (
+                    <div key={l.name} className={styles.snapshotRow}>
+                      <span className={styles.snapshotRowName}>{l.name}</span>
+                      <span className={styles.snapshotRowValue}>{fmt(l.balance)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {selectedSnapshot === 'Total Assets' && (
+              <div className={styles.snapshotList}>
+                {assetRows.length === 0 && <div className={styles.snapshotEmpty}>No linked assets</div>}
+                {assetRows.map(a => {
+                  const pct = assetTotal > 0 ? (a.balance / assetTotal) * 100 : 0;
+                  return (
+                    <div key={a.name} className={styles.snapshotRowFull}>
+                      <div className={styles.snapshotRowFullHeader}>
+                        <span className={styles.snapshotRowName}>{a.name}</span>
+                        <span className={styles.snapshotRowValue}>{fmt(a.balance)} <span className={styles.snapshotPct}>{pct.toFixed(1)}%</span></span>
+                      </div>
+                      <div className={styles.snapshotBar}>
+                        <div className={styles.snapshotBarFill} style={{ width: `${pct}%`, background: 'var(--color-success)' }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {selectedSnapshot === 'Total Liabilities' && (
+              <div className={styles.snapshotList}>
+                {liabilityRows.length === 0 && <div className={styles.snapshotEmpty}>No linked liabilities</div>}
+                {liabilityRows.map(l => {
+                  const pct = liabilityTotal > 0 ? (l.balance / liabilityTotal) * 100 : 0;
+                  return (
+                    <div key={l.name} className={styles.snapshotRowFull}>
+                      <div className={styles.snapshotRowFullHeader}>
+                        <span className={styles.snapshotRowName}>{l.name}</span>
+                        <span className={styles.snapshotRowValue}>{fmt(l.balance)} <span className={styles.snapshotPct}>{pct.toFixed(1)}%</span></span>
+                      </div>
+                      <div className={styles.snapshotBar}>
+                        <div className={styles.snapshotBarFill} style={{ width: `${pct}%`, background: 'var(--color-error)' }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {selectedSnapshot === '30D Cash Flow' && (
+              <div className={styles.snapshotNetWorth}>
+                <div className={styles.snapshotColumn}>
+                  <div className={styles.snapshotColumnHeader}>
+                    <span>Income (last 30d)</span>
+                    <span style={{ color: 'var(--color-success)' }}>{fmt(cashFlowBreakdown.income)}</span>
+                  </div>
+                  {cashFlowBreakdown.incomeRows.length === 0 && <div className={styles.snapshotEmpty}>No income in last 30 days</div>}
+                  {cashFlowBreakdown.incomeRows.slice(0, 8).map(r => (
+                    <div key={r.name} className={styles.snapshotRow}>
+                      <span className={styles.snapshotRowName}>{r.name}</span>
+                      <span className={styles.snapshotRowValue}>{fmt(r.total)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className={styles.snapshotColumn}>
+                  <div className={styles.snapshotColumnHeader}>
+                    <span>Expenses (last 30d)</span>
+                    <span style={{ color: 'var(--color-error)' }}>{fmt(cashFlowBreakdown.expenses)}</span>
+                  </div>
+                  {cashFlowBreakdown.expenseRows.length === 0 && <div className={styles.snapshotEmpty}>No expenses in last 30 days</div>}
+                  {cashFlowBreakdown.expenseRows.slice(0, 8).map(r => (
+                    <div key={r.name} className={styles.snapshotRow}>
+                      <span className={styles.snapshotRowName}>{r.name}</span>
+                      <span className={styles.snapshotRowValue}>{fmt(r.total)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Charts Row */}
