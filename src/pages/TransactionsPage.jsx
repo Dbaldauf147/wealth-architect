@@ -102,7 +102,10 @@ function smoothPath(points) {
   return d;
 }
 
-function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 280, mode = 'stacked', onMonthClick, onSegmentClick, selectedMonth, colorFor = pieColor }) {
+const OTHER_AGGREGATE_KEY = '__OTHER_AGGREGATE__';
+function displayCat(name) { return name === OTHER_AGGREGATE_KEY ? 'Other' : name; }
+function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 280, mode = 'stacked', onMonthClick, onSegmentClick, selectedMonth, colorFor: colorForProp = pieColor }) {
+  const colorFor = name => name === OTHER_AGGREGATE_KEY ? '#94a3b8' : colorForProp(name);
   const [hoverIdx, setHoverIdx] = useState(null);
   const [hoverSeg, setHoverSeg] = useState(null); // { mi, ci, x, y }
   if (!months.length) return null;
@@ -244,7 +247,7 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
     const m = months[mi];
     const cat = topCategories[ci];
     const val = (m && cat) ? (m.byCategory[cat] || 0) : 0;
-    const label = `${cat} — ${fmt(val)}`;
+    const label = `${displayCat(cat)} — ${fmt(val)}`;
     const sub = m ? `${m.label} ${m.year}` : '';
     const boxW = Math.max(120, label.length * 6.4, sub.length * 6.4);
     const boxH = 40;
@@ -322,8 +325,9 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                     style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
                     onMouseEnter={() => setHoverSeg({ mi, ci, x: cx, y: y + barH / 2, xRight: cx + barW / 2 })}
                     onClick={() => {
-                      if (onSegmentClick) onSegmentClick(cat);
-                      else if (onMonthClick) onMonthClick(m.key);
+                      const r = onSegmentClick && onSegmentClick(cat);
+                      if (r === 'fallthrough' && onMonthClick) onMonthClick(m.key);
+                      else if (!onSegmentClick && onMonthClick) onMonthClick(m.key);
                     }}
                   />
                 );
@@ -411,8 +415,9 @@ function SpendingChart({ months, topCategories, maxTotal, width = 900, height = 
                     style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
                     onMouseEnter={() => setHoverSeg({ mi, ci, x: bx + singleW / 2, y: by + Math.max(barH, 0) / 2, xRight: bx + w })}
                     onClick={() => {
-                      if (onSegmentClick) onSegmentClick(cat);
-                      else if (onMonthClick) onMonthClick(m.key);
+                      const r = onSegmentClick && onSegmentClick(cat);
+                      if (r === 'fallthrough' && onMonthClick) onMonthClick(m.key);
+                      else if (!onSegmentClick && onMonthClick) onMonthClick(m.key);
                     }}
                   />
                 );
@@ -1170,6 +1175,8 @@ export function TransactionsPage() {
   /* Bar chart data — by category (or subcategory when single category filtered) over time */
   const barChartData = useMemo(() => {
     let source = filtered.filter(t => t.date && t.amount !== 0);
+    // Match the pie chart: exclude Income entirely from the spending chart.
+    source = source.filter(t => (t.category || '') !== 'Income');
     // Exclude categories the user has hidden from charts
     source = source.filter(t => !chartHiddenCats.has(t.category || 'Uncategorized'));
     if (!source.length) return { months: [], topCategories: [], maxTotal: 0, drillDown: false, parent: null, visibleKeys: new Set() };
@@ -1212,11 +1219,21 @@ export function TransactionsPage() {
       catTotals[g] = Math.abs(signedTotals[g]);
     }
 
-    // Top 6 groups by total spend
-    const topCategories = Object.entries(catTotals)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6)
-      .map(([name]) => name);
+    // Match the pie chart's category filter: keep only categories whose net is
+    // a true expense (negative overall), plus any 'Uncategorized' that's non-zero.
+    const qualifying = Object.keys(signedTotals).filter(g => (
+      signedTotals[g] < 0 || (g === 'Uncategorized' && signedTotals[g] !== 0)
+    ));
+
+    // Top 6 qualifying groups by total spend; the rest fold into 'Other'
+    // so the column total matches the pie's total exactly.
+    const sortedQualifying = qualifying.slice().sort((a, b) => catTotals[b] - catTotals[a]);
+    const topQualifying = sortedQualifying.slice(0, 6);
+    const otherQualifying = sortedQualifying.slice(6);
+    // Distinct internal key so a real category named 'Other' doesn't collide
+    const OTHER_KEY = '__OTHER_AGGREGATE__';
+    const hasOther = otherQualifying.length > 0;
+    const topCategories = hasOther ? [...topQualifying, OTHER_KEY] : topQualifying;
 
     // Build continuous month range (fill gaps where no data exists)
     const sortedKeys = Object.keys(buckets).sort();
@@ -1241,16 +1258,24 @@ export function TransactionsPage() {
       const [y, m] = key.split('-');
       const byCategory = {};
       let monthTotal = 0;
-      for (const cat of topCategories) {
+      for (const cat of topQualifying) {
         const val = (buckets[key] && buckets[key][cat]) || 0;
         byCategory[cat] = val;
         monthTotal += val;
+      }
+      if (hasOther) {
+        let otherVal = 0;
+        for (const cat of otherQualifying) {
+          otherVal += (buckets[key] && buckets[key][cat]) || 0;
+        }
+        byCategory[OTHER_KEY] = otherVal;
+        monthTotal += otherVal;
       }
       if (monthTotal > maxTotal) maxTotal = monthTotal;
       return { key, label: MONTH_SHORT[parseInt(m, 10) - 1], year: y, byCategory };
     });
 
-    return { months, topCategories, maxTotal, drillDown, parent: drillDown ? visibleCats[0] : null, totalMonths: allKeys.length, visibleKeys: new Set(recentKeys) };
+    return { months, topCategories, otherKey: hasOther ? OTHER_KEY : null, otherMembers: otherQualifying, maxTotal, drillDown, parent: drillDown ? visibleCats[0] : null, totalMonths: allKeys.length, visibleKeys: new Set(recentKeys) };
   }, [filtered, chartMonthCount, chartHiddenCats, chartHiddenSubs]);
 
   /* Per-category spend totals for Pareto 80/20 bucketing.
@@ -2382,36 +2407,47 @@ export function TransactionsPage() {
               </div>
               <div className={styles.barLegend}>
                 {barChartData.topCategories.map((cat, i) => {
-                  const active = includedCategories.size === 0 || includedCategories.has(cat);
+                  const isOther = cat === '__OTHER_AGGREGATE__';
+                  const display = isOther ? 'Other' : cat;
+                  const dotColor = isOther ? '#94a3b8' : colorFor(cat);
+                  const active = isOther || includedCategories.size === 0 || includedCategories.has(cat);
                   const isSub = barChartData.drillDown;
+                  const otherTip = isOther && barChartData.otherMembers && barChartData.otherMembers.length > 0
+                    ? `Other (${barChartData.otherMembers.length}): ${barChartData.otherMembers.join(', ')}`
+                    : null;
                   return (
                     <div
                       key={cat}
                       className={styles.barLegendItem}
-                      onClick={() => { toggleCategoryFilter(cat); setPage(0); }}
-                      style={{ cursor: 'pointer', opacity: active ? 1 : 0.4 }}
+                      onClick={isOther ? undefined : () => { toggleCategoryFilter(cat); setPage(0); }}
+                      style={{ cursor: isOther ? 'default' : 'pointer', opacity: active ? 1 : 0.4 }}
+                      title={otherTip || undefined}
                     >
-                      <span className={styles.barLegendDot} style={{ background: colorFor(cat) }} />
-                      <span className={styles.barLegendName}>{cat}</span>
-                      <button
-                        type="button"
-                        className={styles.legendColorBtn}
-                        title={`Change color for ${cat}`}
-                        onClick={e => {
-                          e.stopPropagation();
-                          const r = e.currentTarget.getBoundingClientRect();
-                          setColorPicker({ name: cat, x: r.left, y: r.bottom + 4 });
-                        }}
-                        style={{ background: colorFor(cat) }}
-                      />
-                      <button
-                        type="button"
-                        className={styles.legendHideBtn}
-                        title={`Hide ${cat} from charts`}
-                        onClick={e => { e.stopPropagation(); hideFromCharts(cat, isSub); }}
-                      >
-                        <span className="material-symbols-outlined" style={{ fontSize: 12 }}>visibility_off</span>
-                      </button>
+                      <span className={styles.barLegendDot} style={{ background: dotColor }} />
+                      <span className={styles.barLegendName}>{display}</span>
+                      {!isOther && (
+                        <>
+                          <button
+                            type="button"
+                            className={styles.legendColorBtn}
+                            title={`Change color for ${cat}`}
+                            onClick={e => {
+                              e.stopPropagation();
+                              const r = e.currentTarget.getBoundingClientRect();
+                              setColorPicker({ name: cat, x: r.left, y: r.bottom + 4 });
+                            }}
+                            style={{ background: colorFor(cat) }}
+                          />
+                          <button
+                            type="button"
+                            className={styles.legendHideBtn}
+                            title={`Hide ${cat} from charts`}
+                            onClick={e => { e.stopPropagation(); hideFromCharts(cat, isSub); }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>visibility_off</span>
+                          </button>
+                        </>
+                      )}
                     </div>
                   );
                 })}
@@ -2483,6 +2519,8 @@ export function TransactionsPage() {
               setPage(0);
             }}
             onSegmentClick={name => {
+              // The synthetic 'Other' aggregate isn't a real category — let the month click handler run instead.
+              if (name === '__OTHER_AGGREGATE__') return 'fallthrough';
               if (barChartData.drillDown) {
                 setIncludedSubcategories(prev => {
                   const next = new Set(prev);
