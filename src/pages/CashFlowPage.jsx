@@ -361,6 +361,7 @@ export function CashFlowPage() {
     ...data.months.map(m => Math.max(m.income, m.expenses)),
     1
   );
+  const minNet = Math.min(0, ...data.months.map(m => m.net));
   const raw = maxVal * 1.05;
   const mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
   const steps = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
@@ -369,16 +370,31 @@ export function CashFlowPage() {
     if (mag * s >= raw) { niceMax = mag * s; break; }
   }
   if (niceMax === 0) niceMax = 1000;
-  const ticks = [0, niceMax * 0.25, niceMax * 0.5, niceMax * 0.75, niceMax];
+  let niceMin = 0;
+  if (minNet < 0) {
+    const rawMin = Math.abs(minNet) * 1.05;
+    const magMin = Math.pow(10, Math.floor(Math.log10(rawMin || 1)));
+    niceMin = -magMin * 10;
+    for (const s of steps) {
+      if (magMin * s >= rawMin) { niceMin = -magMin * s; break; }
+    }
+  }
+  const range = niceMax - niceMin;
+  const ticks = [niceMax, niceMax * 0.75, niceMax * 0.5, niceMax * 0.25, 0];
+  if (niceMin < 0) ticks.push(niceMin);
 
-  const yPos = v => pad.top + innerH - (v / niceMax) * innerH;
+  const yPos = v => pad.top + innerH - ((v - niceMin) / range) * innerH;
   const slotW = data.months.length ? innerW / data.months.length : 0;
   const xCenter = mi => pad.left + (mi + 0.5) * slotW;
   const barW = Math.min(18, slotW * 0.35);
 
-  const fmtAxis = t => t >= 1000 ? `$${(t / 1000).toFixed(t % 1000 === 0 ? 0 : 1)}k` : `$${t}`;
+  const fmtAxis = t => {
+    const sign = t < 0 ? '-' : '';
+    const abs = Math.abs(t);
+    return abs >= 1000 ? `${sign}$${(abs / 1000).toFixed(abs % 1000 === 0 ? 0 : 1)}k` : `${sign}$${abs}`;
+  };
 
-  const netPoints = data.months.map((m, i) => ({ x: xCenter(i), y: yPos(Math.abs(m.net)) }));
+  const netPoints = data.months.map((m, i) => ({ x: xCenter(i), y: yPos(m.net) }));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -461,8 +477,8 @@ export function CashFlowPage() {
           {/* Income & Expense bars — clickable to show category breakdown */}
           {data.months.map((m, mi) => {
             const cx = xCenter(mi);
-            const incH = (m.income / niceMax) * innerH;
-            const expH = (m.expenses / niceMax) * innerH;
+            const incH = (m.income / range) * innerH;
+            const expH = (m.expenses / range) * innerH;
             return (
               <g key={mi}>
                 <rect x={cx - barW - 2} y={yPos(m.income)} width={barW} height={incH}
