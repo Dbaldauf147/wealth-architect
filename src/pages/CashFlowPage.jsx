@@ -50,6 +50,7 @@ export function CashFlowPage() {
       if (k !== monthKey) continue;
       if (kind === 'income' && t.amount <= 0) continue;
       if (kind === 'expenses' && t.amount >= 0) continue;
+      if (kind === 'expenses' && tCat === 'paycheck') continue;
       const cat = t.category || 'Uncategorized';
       const sub = t.subcategory || '';
       if (!byCat[cat]) byCat[cat] = { total: 0, count: 0, subs: {}, txns: [] };
@@ -62,6 +63,31 @@ export function CashFlowPage() {
       }
       total += amt;
     }
+
+    // Merge categories whose name also appears as a subcategory in another
+    // category — e.g. a "Paycheck" top-level transaction folds into the
+    // "Income → Paycheck" subcategory bucket so it doesn't render twice.
+    const subToParent = {};
+    for (const [parent, v] of Object.entries(byCat)) {
+      for (const sub of Object.keys(v.subs)) {
+        const k = sub.toLowerCase();
+        if (k && k !== parent.toLowerCase() && !subToParent[k]) {
+          subToParent[k] = parent;
+        }
+      }
+    }
+    for (const cat of Object.keys(byCat)) {
+      const target = subToParent[cat.toLowerCase()];
+      if (!target || target === cat) continue;
+      const src = byCat[cat];
+      const dst = byCat[target];
+      dst.total += src.total;
+      dst.count += src.count;
+      dst.txns.push(...src.txns.map(t => ({ ...t, sub: t.sub || cat })));
+      dst.subs[cat] = (dst.subs[cat] || 0) + src.total;
+      delete byCat[cat];
+    }
+
     const rows = Object.entries(byCat)
       .map(([name, v]) => ({
         name,
@@ -99,6 +125,7 @@ export function CashFlowPage() {
         const subLabel = t.subcategory || t.category || 'Other';
         buckets[key].incomeSubs[subLabel] = (buckets[key].incomeSubs[subLabel] || 0) + t.amount;
       } else {
+        if (cat === 'paycheck') continue;
         buckets[key].expenses += Math.abs(t.amount);
       }
     }
