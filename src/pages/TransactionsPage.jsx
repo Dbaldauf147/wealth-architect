@@ -873,6 +873,7 @@ export function TransactionsPage() {
   const [viewsOpen, setViewsOpen] = useState(false);
   const [viewNameInput, setViewNameInput] = useState('');
   const [activeViewName, setActiveViewName] = useState(() => localStorage.getItem('activeTxnView') || '');
+  const [editingViewName, setEditingViewName] = useState(null);
   const viewsRef = useRef(null);
   function hideFromCharts(name, isSub) {
     const setter = isSub ? setChartHiddenSubs : setChartHiddenCats;
@@ -948,6 +949,98 @@ export function TransactionsPage() {
       setActiveViewName('');
       localStorage.removeItem('activeTxnView');
     }
+    if (editingViewName === name) setEditingViewName(null);
+  }
+  function updateSavedView(name, patch) {
+    const current = savedViews[name];
+    if (!current) return;
+    const updated = { ...current, ...patch };
+    const next = { ...savedViews, [name]: updated };
+    setSavedViews(next);
+    localStorage.setItem('savedTxnViews', JSON.stringify(next));
+    if (activeViewName === name) applyView(updated);
+  }
+  function viewFilterChips(name, view) {
+    if (!view) return [];
+    const chips = [];
+    if (view.activeAccount && view.activeAccount !== 'all') {
+      chips.push({
+        key: 'account',
+        label: `Account: ${view.activeAccount}`,
+        onRemove: () => updateSavedView(name, { activeAccount: 'all' }),
+      });
+    }
+    (view.includedCategories || []).forEach(cat => {
+      chips.push({
+        key: `cat:${cat}`,
+        label: `Category: ${cat}`,
+        onRemove: () => updateSavedView(name, {
+          includedCategories: (view.includedCategories || []).filter(c => c !== cat),
+        }),
+      });
+    });
+    (view.includedSubcategories || []).forEach(sub => {
+      chips.push({
+        key: `sub:${sub}`,
+        label: `Subcategory: ${sub}`,
+        onRemove: () => updateSavedView(name, {
+          includedSubcategories: (view.includedSubcategories || []).filter(s => s !== sub),
+        }),
+      });
+    });
+    if (view.selectedMonth) {
+      chips.push({
+        key: 'month',
+        label: `Month: ${view.selectedMonth}`,
+        onRemove: () => updateSavedView(name, { selectedMonth: null }),
+      });
+    }
+    if (view.searchQuery) {
+      chips.push({
+        key: 'search',
+        label: `Search: ${view.searchQuery}`,
+        onRemove: () => updateSavedView(name, { searchQuery: '' }),
+      });
+    }
+    if (view.columnFilters) {
+      Object.entries(view.columnFilters).forEach(([col, val]) => {
+        if (val && String(val).trim()) {
+          chips.push({
+            key: `col:${col}`,
+            label: `${col}: ${val}`,
+            onRemove: () => updateSavedView(name, {
+              columnFilters: { ...view.columnFilters, [col]: '' },
+            }),
+          });
+        }
+      });
+    }
+    if (view.noSubOnly) {
+      chips.push({
+        key: 'noSubOnly',
+        label: 'No subcategory only',
+        onRemove: () => updateSavedView(name, { noSubOnly: false }),
+      });
+    }
+    (view.chartHiddenCats || []).forEach(cat => {
+      chips.push({
+        key: `hcat:${cat}`,
+        label: `Chart hides cat: ${cat}`,
+        onRemove: () => updateSavedView(name, {
+          chartHiddenCats: (view.chartHiddenCats || []).filter(c => c !== cat),
+        }),
+      });
+    });
+    (view.chartHiddenSubs || []).forEach(sub => {
+      chips.push({
+        key: `hsub:${sub}`,
+        label: `Chart hides sub: ${sub}`,
+        onRemove: () => updateSavedView(name, {
+          chartHiddenSubs: (view.chartHiddenSubs || []).filter(s => s !== sub),
+        }),
+      });
+    });
+    return chips;
   }
   function clearAllFilters() {
     setActiveAccount('all');
@@ -1277,6 +1370,7 @@ export function TransactionsPage() {
     function handleClick(e) {
       if (viewsRef.current && !viewsRef.current.contains(e.target)) {
         setViewsOpen(false);
+        setEditingViewName(null);
       }
     }
     if (viewsOpen) document.addEventListener('mousedown', handleClick);
@@ -1973,36 +2067,77 @@ export function TransactionsPage() {
                 {Object.keys(savedViews).length === 0 && (
                   <div className={styles.viewsEmpty}>No saved views yet</div>
                 )}
-                {Object.keys(savedViews).sort().map(name => (
-                  <div
-                    key={name}
-                    className={`${styles.viewsItem} ${activeViewName === name ? styles.viewsItemActive : ''}`}
-                  >
-                    <button
-                      type="button"
-                      className={styles.viewsItemName}
-                      onClick={() => {
-                        applyView(savedViews[name]);
-                        setActiveViewName(name);
-                        localStorage.setItem('activeTxnView', name);
-                        setViewsOpen(false);
-                      }}
-                    >
-                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
-                        {activeViewName === name ? 'check' : 'bookmark'}
-                      </span>
-                      {name}
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.viewsItemDelete}
-                      onClick={() => deleteView(name)}
-                      title={`Delete "${name}"`}
-                    >
-                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
-                    </button>
-                  </div>
-                ))}
+                {Object.keys(savedViews).sort().map(name => {
+                  const isEditing = editingViewName === name;
+                  const chips = isEditing ? viewFilterChips(name, savedViews[name]) : [];
+                  return (
+                    <div key={name}>
+                      <div className={`${styles.viewsItem} ${activeViewName === name ? styles.viewsItemActive : ''}`}>
+                        <button
+                          type="button"
+                          className={styles.viewsItemName}
+                          onClick={() => {
+                            applyView(savedViews[name]);
+                            setActiveViewName(name);
+                            localStorage.setItem('activeTxnView', name);
+                            setViewsOpen(false);
+                          }}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                            {activeViewName === name ? 'check' : 'bookmark'}
+                          </span>
+                          {name}
+                        </button>
+                        <button
+                          type="button"
+                          className={`${styles.viewsItemEdit} ${isEditing ? styles.viewsItemEditActive : ''}`}
+                          onClick={() => setEditingViewName(prev => (prev === name ? null : name))}
+                          title={isEditing ? 'Close editor' : `Edit filters in "${name}"`}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                            {isEditing ? 'expand_less' : 'edit'}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.viewsItemDelete}
+                          onClick={() => deleteView(name)}
+                          title={`Delete "${name}"`}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                        </button>
+                      </div>
+                      {isEditing && (
+                        <div className={styles.viewsEditPanel}>
+                          {chips.length === 0 ? (
+                            <div className={styles.viewsEditEmpty}>
+                              No filters saved in this view. Apply it, change filters, then click "Update".
+                            </div>
+                          ) : (
+                            <div className={styles.viewsChipList}>
+                              {chips.map(c => (
+                                <span key={c.key} className={styles.viewsChip}>
+                                  <span className={styles.viewsChipLabel}>{c.label}</span>
+                                  <button
+                                    type="button"
+                                    className={styles.viewsChipRemove}
+                                    onClick={c.onRemove}
+                                    title="Remove this filter from view"
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 12 }}>close</span>
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <div className={styles.viewsEditHint}>
+                            Tip: to add filters, apply this view, change filters, then click "Update".
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
               {(activeViewName || Object.keys(savedViews).length > 0) && (
                 <>
