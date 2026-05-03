@@ -64,86 +64,24 @@ export function CashFlowPage() {
   const [expandedDrillCats, setExpandedDrillCats] = useState(new Set());
   const [expandedRevCats, setExpandedRevCats] = useState(new Set());
 
-  /* Category breakdown for clicked cell */
-  const drilldownData = useMemo(() => {
-    if (!drilldown || !transactions) return null;
-    const { monthKey, kind } = drilldown;
-    const byCat = {};
-    let total = 0;
-    for (const t of transactions) {
-      if (!t.date || t.amount === 0) continue;
-      const tCat = (t.category || '').toLowerCase();
-      if (tCat === 'transfer' || tCat === 'credit card payments' || tCat === 'credit card payment') continue;
-      if (tCat === 'investments' || tCat === 'retirement') continue;
-      const d = new Date(t.date);
-      if (isNaN(d)) continue;
-      const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (k !== monthKey) continue;
-      if (kind === 'income' && t.amount <= 0) continue;
-      if (kind === 'expenses' && t.amount >= 0) continue;
-      if (kind === 'expenses' && NON_EXPENSE_CATS.has(tCat)) continue;
-      const cat = t.category || 'Uncategorized';
-      const sub = t.subcategory || '';
-      if (!byCat[cat]) byCat[cat] = { total: 0, count: 0, subs: {}, txns: [] };
-      const amt = Math.abs(t.amount);
-      byCat[cat].total += amt;
-      byCat[cat].count += 1;
-      byCat[cat].txns.push({ description: t.description || t.fullDescription || 'Unknown', amount: amt, date: t.date, sub });
-      if (sub) {
-        byCat[cat].subs[sub] = (byCat[cat].subs[sub] || 0) + amt;
-      }
-      total += amt;
-    }
-
-    // Merge categories whose name also appears as a subcategory in another
-    // category — e.g. a "Paycheck" top-level transaction folds into the
-    // "Income → Paycheck" subcategory bucket so it doesn't render twice.
-    const subToParent = {};
-    for (const [parent, v] of Object.entries(byCat)) {
-      for (const sub of Object.keys(v.subs)) {
-        const k = sub.toLowerCase();
-        if (k && k !== parent.toLowerCase() && !subToParent[k]) {
-          subToParent[k] = parent;
-        }
-      }
-    }
-    for (const cat of Object.keys(byCat)) {
-      const target = subToParent[cat.toLowerCase()];
-      if (!target || target === cat) continue;
-      const src = byCat[cat];
-      const dst = byCat[target];
-      dst.total += src.total;
-      dst.count += src.count;
-      dst.txns.push(...src.txns.map(t => ({ ...t, sub: t.sub || cat })));
-      dst.subs[cat] = (dst.subs[cat] || 0) + src.total;
-      delete byCat[cat];
-    }
-
-    const rows = Object.entries(byCat)
-      .map(([name, v]) => ({
-        name,
-        total: v.total,
-        count: v.count,
-        pct: total > 0 ? v.total / total : 0,
-        subs: Object.entries(v.subs).map(([n, a]) => ({ name: n, total: a })).sort((a, b) => b.total - a.total),
-        txns: v.txns.sort((a, b) => b.amount - a.amount),
-      }))
-      .sort((a, b) => b.total - a.total);
-    return { rows, total, monthKey, kind };
-  }, [drilldown, transactions]);
-
   const data = useMemo(() => {
-    if (!transactions) return { months: [], totalIncome: 0, totalExpenses: 0, net: 0, avgIncome: 0, avgExpenses: 0 };
+    if (!transactions) return { months: [], totalIncome: 0, totalExpenses: 0, net: 0, avgIncome: 0, avgExpenses: 0, qualifyingExpCats: new Set() };
 
     const buckets = {};
+    // Per-category per-month signed sums for the expense calculation.
+    // We mirror the Transactions page: a category counts as an expense category only
+    // when its net across the visible months is negative; the per-month value is
+    // |signed sum| so refunds reduce the displayed expense.
+    const expSignedByCat = {}; // [categoryDisplayName] -> { [monthKey]: signedSum }
     for (const t of transactions) {
       if (!t.date || t.amount === 0) continue;
       const cat = (t.category || '').toLowerCase();
+      const catKey = t.category || 'Uncategorized';
       if (cat === 'transfer' || cat === 'credit card payments' || cat === 'credit card payment') continue;
       const d = new Date(t.date);
       if (isNaN(d)) continue;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (!buckets[key]) buckets[key] = { income: 0, expenses: 0, invested: 0, retirement: 0, incomeSubs: {} };
+      if (!buckets[key]) buckets[key] = { income: 0, invested: 0, retirement: 0, incomeSubs: {} };
       if (cat === 'investments' || cat === 'retirement') {
         const amt = Math.abs(t.amount);
         buckets[key].invested += amt;
@@ -151,14 +89,17 @@ export function CashFlowPage() {
         if (cat === 'retirement' || sub === 'retirement') {
           buckets[key].retirement += amt;
         }
-      } else if (t.amount > 0) {
+        continue;
+      }
+      if (t.amount > 0) {
         buckets[key].income += t.amount;
         const subLabel = t.subcategory || t.category || 'Other';
         buckets[key].incomeSubs[subLabel] = (buckets[key].incomeSubs[subLabel] || 0) + t.amount;
-      } else {
-        if (NON_EXPENSE_CATS.has(cat)) continue;
-        buckets[key].expenses += Math.abs(t.amount);
       }
+      // Track per-cat-per-month signed amounts for the expense calc, excluding income-side cats
+      if (NON_EXPENSE_CATS.has(cat)) continue;
+      if (!expSignedByCat[catKey]) expSignedByCat[catKey] = {};
+      expSignedByCat[catKey][key] = (expSignedByCat[catKey][key] || 0) + t.amount;
     }
 
     const sortedKeys = Object.keys(buckets).sort();
@@ -175,18 +116,34 @@ export function CashFlowPage() {
     }
 
     const recentKeys = allKeys.slice(-monthCount);
+
+    // Qualifying expense cats: those whose net across the visible range is negative,
+    // plus 'Uncategorized' if it has any non-zero net.
+    const qualifyingExpCats = new Set();
+    for (const cat of Object.keys(expSignedByCat)) {
+      let net = 0;
+      for (const k of recentKeys) net += expSignedByCat[cat][k] || 0;
+      if (net < 0 || (cat === 'Uncategorized' && net !== 0)) {
+        qualifyingExpCats.add(cat);
+      }
+    }
+
     const months = recentKeys.map(key => {
       const [y, m] = key.split('-');
-      const b = buckets[key] || { income: 0, expenses: 0, invested: 0, retirement: 0, incomeSubs: {} };
+      const b = buckets[key] || { income: 0, invested: 0, retirement: 0, incomeSubs: {} };
+      let expenses = 0;
+      for (const cat of qualifyingExpCats) {
+        expenses += Math.abs(expSignedByCat[cat]?.[key] || 0);
+      }
       return {
         key,
         label: MONTH_SHORT[parseInt(m, 10) - 1],
         year: y,
         income: b.income,
-        expenses: b.expenses,
+        expenses,
         invested: b.invested,
         retirement: b.retirement,
-        net: b.income - b.expenses,
+        net: b.income - expenses,
         incomeSubs: b.incomeSubs,
       };
     });
@@ -208,8 +165,97 @@ export function CashFlowPage() {
       avgExpenses: totalExpenses / activeMonths,
       avgInvested: totalInvested / activeMonths,
       savingsRate: totalIncome > 0 ? (totalIncome - totalExpenses) / totalIncome : 0,
+      qualifyingExpCats,
+      expSignedByCat,
     };
   }, [transactions, monthCount]);
+
+  /* Category breakdown for clicked cell — mirrors the table semantics:
+     - kind='expenses': only categories qualifying as expenses (net-negative
+       across the visible range), per-cat total uses |month-signed| so refunds
+       reduce the displayed value. Refund txns are still shown in the list.
+     - kind='income': positive-amount transactions in any non-special category. */
+  const drilldownData = useMemo(() => {
+    if (!drilldown || !transactions) return null;
+    const { monthKey, kind } = drilldown;
+    const byCat = {};
+    for (const t of transactions) {
+      if (!t.date || t.amount === 0) continue;
+      const tCat = (t.category || '').toLowerCase();
+      if (tCat === 'transfer' || tCat === 'credit card payments' || tCat === 'credit card payment') continue;
+      if (tCat === 'investments' || tCat === 'retirement') continue;
+      const d = new Date(t.date);
+      if (isNaN(d)) continue;
+      const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (k !== monthKey) continue;
+      if (kind === 'income' && t.amount <= 0) continue;
+      if (kind === 'expenses') {
+        if (NON_EXPENSE_CATS.has(tCat)) continue;
+        const cat0 = t.category || 'Uncategorized';
+        if (!data.qualifyingExpCats.has(cat0)) continue;
+        // Note: positive amounts (refunds) in qualifying cats are intentionally NOT
+        // skipped — they reduce the cat's net for the month.
+      }
+      const cat = t.category || 'Uncategorized';
+      const sub = t.subcategory || '';
+      if (!byCat[cat]) byCat[cat] = { signedTotal: 0, count: 0, subs: {}, txns: [] };
+      byCat[cat].signedTotal += t.amount;
+      byCat[cat].count += 1;
+      byCat[cat].txns.push({
+        description: t.description || t.fullDescription || 'Unknown',
+        amount: Math.abs(t.amount),
+        isRefund: kind === 'expenses' && t.amount > 0,
+        date: t.date,
+        sub,
+      });
+      if (sub) {
+        byCat[cat].subs[sub] = (byCat[cat].subs[sub] || 0) + t.amount;
+      }
+    }
+
+    // Merge categories whose name also appears as a subcategory in another
+    // category — e.g. a "Paycheck" top-level transaction folds into the
+    // "Income → Paycheck" subcategory bucket so it doesn't render twice.
+    const subToParent = {};
+    for (const [parent, v] of Object.entries(byCat)) {
+      for (const sub of Object.keys(v.subs)) {
+        const sk = sub.toLowerCase();
+        if (sk && sk !== parent.toLowerCase() && !subToParent[sk]) {
+          subToParent[sk] = parent;
+        }
+      }
+    }
+    for (const cat of Object.keys(byCat)) {
+      const target = subToParent[cat.toLowerCase()];
+      if (!target || target === cat) continue;
+      const src = byCat[cat];
+      const dst = byCat[target];
+      dst.signedTotal += src.signedTotal;
+      dst.count += src.count;
+      dst.txns.push(...src.txns.map(t => ({ ...t, sub: t.sub || cat })));
+      dst.subs[cat] = (dst.subs[cat] || 0) + src.signedTotal;
+      delete byCat[cat];
+    }
+
+    // Display totals: |signed sum| for the cat and each sub.
+    let total = 0;
+    for (const v of Object.values(byCat)) {
+      v.total = Math.abs(v.signedTotal);
+      total += v.total;
+    }
+
+    const rows = Object.entries(byCat)
+      .map(([name, v]) => ({
+        name,
+        total: v.total,
+        count: v.count,
+        pct: total > 0 ? v.total / total : 0,
+        subs: Object.entries(v.subs).map(([n, a]) => ({ name: n, total: Math.abs(a) })).sort((a, b) => b.total - a.total),
+        txns: v.txns.sort((a, b) => b.amount - a.amount),
+      }))
+      .sort((a, b) => b.total - a.total);
+    return { rows, total, monthKey, kind };
+  }, [drilldown, transactions, data.qualifyingExpCats]);
 
   const revenueBreakdown = useMemo(() => {
     if (!transactions) return null;
@@ -266,8 +312,11 @@ export function CashFlowPage() {
         if (tCat === 'investments' || tCat === 'retirement') return false;
         if (kind === 'income' && t.amount <= 0) return false;
         if (kind === 'expenses') {
-          if (t.amount >= 0) return false;
           if (NON_EXPENSE_CATS.has(tCat)) return false;
+          const cat0 = t.category || 'Uncategorized';
+          if (!data.qualifyingExpCats.has(cat0)) return false;
+          // Include refunds (positive amounts) in qualifying cats — they net
+          // against spending and reduce the displayed total.
         }
         return true;
       })
