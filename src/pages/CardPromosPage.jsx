@@ -191,6 +191,7 @@ export function CardPromosPage() {
       period: 'annual',
       notes: '',
       color: '#475569',
+      renewsOn: '',
     };
     setPromos(prev => [newPromo, ...prev]);
     setEditingId(newPromo.id);
@@ -313,7 +314,7 @@ export function CardPromosPage() {
                         <LabeledInput label="Card" value={editDraft.card} onChange={v => setEditDraft({ ...editDraft, card: v })} />
                         <LabeledInput label="Name" value={editDraft.name} onChange={v => setEditDraft({ ...editDraft, name: v })} />
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
                         <LabeledInput label="Total $" type="number" value={editDraft.value} onChange={v => setEditDraft({ ...editDraft, value: v })} />
                         <LabeledInput label="Used $ (manual)" type="number" value={editDraft.used} onChange={v => setEditDraft({ ...editDraft, used: v })} />
                         <div>
@@ -325,6 +326,7 @@ export function CardPromosPage() {
                             <option value="one-time">One-time</option>
                           </select>
                         </div>
+                        <LabeledInput label="Renews on" type="date" value={editDraft.renewsOn} onChange={v => setEditDraft({ ...editDraft, renewsOn: v })} />
                         <div>
                           <div style={labelStyle}>Color</div>
                           <input type="color" value={editDraft.color || '#475569'} onChange={e => setEditDraft({ ...editDraft, color: e.target.value })} style={{ ...inputStyle, padding: 2, height: 34 }} />
@@ -355,6 +357,25 @@ export function CardPromosPage() {
                         <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'var(--color-surface-alt)', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                           {p.period}
                         </span>
+                        {p.renewsOn && (() => {
+                          const d = new Date(p.renewsOn + 'T00:00:00');
+                          if (isNaN(d)) return null;
+                          const today = new Date();
+                          today.setHours(0, 0, 0, 0);
+                          const days = Math.round((d - today) / 86400000);
+                          const dateLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                          const tip = days > 0
+                            ? `Renews in ${days} day${days === 1 ? '' : 's'} (${dateLabel})`
+                            : days === 0
+                              ? `Renews today (${dateLabel})`
+                              : `Renewal date passed ${-days} day${days === -1 ? '' : 's'} ago (${dateLabel})`;
+                          return (
+                            <span title={tip} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'rgba(232, 163, 23, 0.12)', color: '#a36b00', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 12 }}>event_repeat</span>
+                              Renews {dateLabel}
+                            </span>
+                          );
+                        })()}
                         {isAuto && (() => {
                           const parts = [];
                           if (p.matchSubcategory) parts.push(`subcategory “${p.matchSubcategory}”`);
