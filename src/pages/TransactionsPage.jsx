@@ -1154,7 +1154,9 @@ export function TransactionsPage() {
   /* Category allocation — top 8 expense categories */
   const categoryAlloc = useMemo(() => {
     if (!analytics?.byCategory) return [];
-    const expenseCats = analytics.byCategory.filter(c => c.total < 0);
+    const expenseCats = analytics.byCategory.filter(c =>
+      c.total < 0 && (c.name || '').toLowerCase() !== 'tax refund/payment'
+    );
     const maxAbs = expenseCats.length ? expenseCats[0].absTotal : 1;
     return expenseCats.slice(0, 8).map(c => ({
       label: c.name,
