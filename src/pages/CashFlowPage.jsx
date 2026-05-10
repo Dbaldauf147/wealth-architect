@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useData } from '../contexts/DataContext';
+import { upcomingCardPayments } from '../lib/weeklySummary';
 
 function fmt(n) {
   if (n == null) return '—';
@@ -64,7 +65,6 @@ export function CashFlowPage() {
   const [expandedDrillCats, setExpandedDrillCats] = useState(new Set());
   const [expandedRevCats, setExpandedRevCats] = useState(new Set());
   const [view, setView] = useState('history'); // 'history' | 'projections'
-  const [horizon, setHorizon] = useState(6); // forecast horizon in months
 
   const data = useMemo(() => {
     if (!transactions) return { months: [], totalIncome: 0, totalExpenses: 0, net: 0, avgIncome: 0, avgExpenses: 0, qualifyingExpCats: new Set() };
@@ -297,61 +297,77 @@ export function CashFlowPage() {
     return { rows, total, monthFilter };
   }, [transactions, data.months, drilldown]);
 
-  /* Forecast — projects income/expenses/invested/retirement for the next
-     `horizon` months by blending a trailing 6-month average with the same
-     calendar month from prior history (when available). */
-  const forecast = useMemo(() => {
-    const months = data.months || [];
-    if (months.length === 0) return [];
-    const last = months[months.length - 1];
-    const [lyStr, lmStr] = last.key.split('-');
-    let cy = parseInt(lyStr, 10);
-    let cm = parseInt(lmStr, 10);
+  /* This-month projection. MTD actuals + projected remainder, where the
+     remainder is (daysRemaining / daysInMonth) × baseline. Baseline blends
+     a 6-month trailing average (over completed months) with prior occurrences
+     of the same calendar month, when history exists. */
+  const thisMonthProjection = useMemo(() => {
+    const today = new Date();
+    const cy = today.getFullYear();
+    const cm = today.getMonth() + 1;
+    const currentKey = `${cy}-${String(cm).padStart(2, '0')}`;
+    const daysInMonth = new Date(cy, cm, 0).getDate();
+    const daysElapsed = Math.min(today.getDate(), daysInMonth);
+    const daysRemaining = Math.max(0, daysInMonth - daysElapsed);
+    const monthLabel = today.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
-    const tailLen = Math.min(6, months.length);
-    const tail = months.slice(-tailLen);
+    const months = data.months || [];
+    const currentBucket = months.find(m => m.key === currentKey);
+    const mtdIncome = currentBucket?.income || 0;
+    const mtdExpenses = currentBucket?.expenses || 0;
+
+    const pastMonths = months.filter(m => m.key !== currentKey);
+    if (pastMonths.length === 0) {
+      return {
+        currentKey, monthLabel,
+        daysInMonth, daysElapsed, daysRemaining,
+        mtdIncome, mtdExpenses,
+        baselineIncome: 0, baselineExpenses: 0,
+        remainingIncome: 0, remainingExpenses: 0,
+        projectedIncome: mtdIncome, projectedExpenses: mtdExpenses,
+        hasHistory: false,
+      };
+    }
+
+    const tailLen = Math.min(6, pastMonths.length);
+    const tail = pastMonths.slice(-tailLen);
     const tAvg = sel => tail.reduce((s, m) => s + sel(m), 0) / tail.length;
     const tIncome = tAvg(m => m.income);
     const tExpenses = tAvg(m => m.expenses);
-    const tInvested = tAvg(m => m.invested);
-    const tRetirement = tAvg(m => m.retirement);
 
-    const byCal = {};
-    for (const m of months) {
-      const cal = parseInt(m.key.split('-')[1], 10);
-      if (!byCal[cal]) byCal[cal] = [];
-      byCal[cal].push(m);
+    const seas = pastMonths.filter(m => parseInt(m.key.split('-')[1], 10) === cm);
+    let baselineIncome, baselineExpenses;
+    if (seas.length) {
+      const sAvg = sel => seas.reduce((s, m) => s + sel(m), 0) / seas.length;
+      baselineIncome = 0.5 * sAvg(m => m.income) + 0.5 * tIncome;
+      baselineExpenses = 0.5 * sAvg(m => m.expenses) + 0.5 * tExpenses;
+    } else {
+      baselineIncome = tIncome;
+      baselineExpenses = tExpenses;
     }
 
-    const out = [];
-    for (let i = 0; i < horizon; i++) {
-      cm++;
-      if (cm > 12) { cm = 1; cy++; }
-      const key = `${cy}-${String(cm).padStart(2, '0')}`;
-      const seas = byCal[cm];
-      let income, expenses, invested, retirement;
-      if (seas && seas.length) {
-        const sAvg = sel => seas.reduce((s, m) => s + sel(m), 0) / seas.length;
-        income = 0.5 * sAvg(m => m.income) + 0.5 * tIncome;
-        expenses = 0.5 * sAvg(m => m.expenses) + 0.5 * tExpenses;
-        invested = 0.5 * sAvg(m => m.invested) + 0.5 * tInvested;
-        retirement = 0.5 * sAvg(m => m.retirement) + 0.5 * tRetirement;
-      } else {
-        income = tIncome;
-        expenses = tExpenses;
-        invested = tInvested;
-        retirement = tRetirement;
-      }
-      out.push({
-        key,
-        label: MONTH_SHORT[cm - 1],
-        year: String(cy),
-        income, expenses, invested, retirement,
-        net: income - expenses,
-      });
-    }
-    return out;
-  }, [data.months, horizon]);
+    const remainingFrac = daysInMonth > 0 ? daysRemaining / daysInMonth : 0;
+    const remainingIncome = baselineIncome * remainingFrac;
+    const remainingExpenses = baselineExpenses * remainingFrac;
+
+    return {
+      currentKey, monthLabel,
+      daysInMonth, daysElapsed, daysRemaining,
+      mtdIncome, mtdExpenses,
+      baselineIncome, baselineExpenses,
+      remainingIncome, remainingExpenses,
+      projectedIncome: mtdIncome + remainingIncome,
+      projectedExpenses: mtdExpenses + remainingExpenses,
+      hasHistory: true,
+    };
+  }, [data.months]);
+
+  /* Upcoming credit-card payments — uses the shared helper that infers cadence
+     and average amount from each card's CC-payment transaction history. */
+  const cardPayments = useMemo(
+    () => upcomingCardPayments({ transactions: transactions || [] }),
+    [transactions],
+  );
 
   function exportMonthCsv(monthKey, kind) {
     if (!transactions || !monthKey) return;
@@ -464,7 +480,7 @@ export function CashFlowPage() {
             <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>
               {view === 'history'
                 ? `Income vs. expenses across the last ${monthCount} months`
-                : `Forecasted cash flow for the next ${horizon} months, based on history`}
+                : `${thisMonthProjection.monthLabel} projection and upcoming credit card payments`}
             </div>
           </div>
           <div style={{ display: 'inline-flex', gap: 2, background: 'var(--color-surface-alt)', padding: 2, borderRadius: 10 }}>
@@ -886,254 +902,143 @@ export function CashFlowPage() {
       </>)}
 
       {view === 'projections' && (() => {
-        if (forecast.length === 0 || (data.months || []).length === 0) {
+        const p = thisMonthProjection;
+        const projNet = p.projectedIncome - p.projectedExpenses;
+        const mtdNet = p.mtdIncome - p.mtdExpenses;
+        const remainingNet = p.remainingIncome - p.remainingExpenses;
+        const projNetColor = projNet >= 0 ? incomeColor : expenseColor;
+        const monthPct = p.daysInMonth > 0 ? Math.min(100, Math.round((p.daysElapsed / p.daysInMonth) * 100)) : 0;
+        const today = new Date();
+        const ccTotal = cardPayments.reduce((s, cp) => s + cp.avgAmount, 0);
+
+        if (!p.hasHistory && p.mtdIncome === 0 && p.mtdExpenses === 0) {
           return (
             <div style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 40, boxShadow: 'var(--shadow-xs)', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: 13 }}>
-              Not enough history yet to build projections. Import a few months of transactions and check back.
+              Not enough history yet to project this month. Import a few months of transactions and check back.
             </div>
           );
         }
 
-        const horizonOptions = [3, 6, 12];
-        const histTail = (data.months || []).slice(-6).map(m => ({ ...m, projected: false }));
-        const fcst = forecast.map(m => ({ ...m, projected: true }));
-        const projChart = [...histTail, ...fcst];
-
-        const projTotalIncome = forecast.reduce((s, m) => s + m.income, 0);
-        const projTotalExpenses = forecast.reduce((s, m) => s + m.expenses, 0);
-        const projNet = projTotalIncome - projTotalExpenses;
-        const projSavings = projTotalIncome > 0 ? projNet / projTotalIncome : 0;
-        const projAvgIncome = forecast.length ? projTotalIncome / forecast.length : 0;
-        const projAvgExpenses = forecast.length ? projTotalExpenses / forecast.length : 0;
-        const projNetColor = projNet >= 0 ? incomeColor : expenseColor;
-
-        // Chart layout (mirrors the history chart)
-        const pChartW = 960, pChartH = 340;
-        const pPad = { top: 16, right: 16, bottom: 48, left: 60 };
-        const pInnerW = pChartW - pPad.left - pPad.right;
-        const pInnerH = pChartH - pPad.top - pPad.bottom;
-        const pMaxVal = Math.max(...projChart.map(m => Math.max(m.income, m.expenses)), 1);
-        const pMinNet = Math.min(0, ...projChart.map(m => m.net));
-        const pRaw = pMaxVal * 1.05;
-        const pMag = Math.pow(10, Math.floor(Math.log10(pRaw || 1)));
-        const pSteps = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
-        let pNiceMax = pMag * 10;
-        for (const s of pSteps) {
-          if (pMag * s >= pRaw) { pNiceMax = pMag * s; break; }
-        }
-        if (pNiceMax === 0) pNiceMax = 1000;
-        let pNiceMin = 0;
-        if (pMinNet < 0) {
-          const rm = Math.abs(pMinNet) * 1.05;
-          const mm = Math.pow(10, Math.floor(Math.log10(rm || 1)));
-          pNiceMin = -mm * 10;
-          for (const s of pSteps) {
-            if (mm * s >= rm) { pNiceMin = -mm * s; break; }
-          }
-        }
-        const pRange = pNiceMax - pNiceMin;
-        const pTicks = [pNiceMax, pNiceMax * 0.75, pNiceMax * 0.5, pNiceMax * 0.25, 0];
-        if (pNiceMin < 0) pTicks.push(pNiceMin);
-        const pYPos = v => pPad.top + pInnerH - ((v - pNiceMin) / pRange) * pInnerH;
-        const pSlotW = projChart.length ? pInnerW / projChart.length : 0;
-        const pXCenter = mi => pPad.left + (mi + 0.5) * pSlotW;
-        const pBarW = Math.min(18, pSlotW * 0.35);
-        const pNetPoints = projChart.map((m, i) => ({ x: pXCenter(i), y: pYPos(m.net) }));
-        const pHistEnd = histTail.length;
-
         return (
           <>
-            {/* Horizon selector */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Forecast horizon
-              </div>
-              <div style={{ display: 'inline-flex', gap: 2, background: 'var(--color-surface-alt)', padding: 2, borderRadius: 8 }}>
-                {horizonOptions.map(h => (
-                  <button
-                    key={h}
-                    onClick={() => setHorizon(h)}
-                    style={{
-                      padding: '5px 12px',
-                      border: 'none',
-                      background: horizon === h ? 'var(--color-surface)' : 'transparent',
-                      boxShadow: horizon === h ? 'var(--shadow-xs)' : 'none',
-                      borderRadius: 6,
-                      cursor: 'pointer',
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: horizon === h ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-                    }}
-                  >
-                    {h} mo
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Stat Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-              <StatCard label={`Projected Income (${horizon}mo)`} value={fmt(projTotalIncome)} color={incomeColor} icon="trending_up" />
-              <StatCard label={`Projected Expenses (${horizon}mo)`} value={fmt(projTotalExpenses)} color={expenseColor} icon="trending_down" />
-              <StatCard label={`Projected Net (${horizon}mo)`} value={`${projNet >= 0 ? '+' : ''}${fmt(projNet)}`} color={projNetColor} icon="payments" />
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-              <StatCard label="Avg Monthly Income" value={fmt(projAvgIncome)} color={incomeColor} icon="calendar_month" />
-              <StatCard label="Avg Monthly Expenses" value={fmt(projAvgExpenses)} color={expenseColor} icon="calendar_month" />
-              <StatCard
-                label="Projected Savings Rate"
-                value={`${Math.round(projSavings * 100)}%`}
-                color={projSavings >= 0.2 ? incomeColor : projSavings >= 0 ? '#e8a317' : expenseColor}
-                icon="savings"
-              />
-            </div>
-
-            {/* Chart */}
+            {/* Month progress */}
             <div style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
                 <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>
-                  History &amp; Forecast
+                  {p.monthLabel} progress
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                  Day {p.daysElapsed} of {p.daysInMonth} · {p.daysRemaining} day{p.daysRemaining !== 1 ? 's' : ''} remaining
                 </div>
               </div>
-
-              <svg width="100%" height={pChartH} viewBox={`0 0 ${pChartW} ${pChartH}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
-                {pTicks.map((t, i) => {
-                  const y = pYPos(t);
-                  return (
-                    <g key={i}>
-                      {t > 0 && (
-                        <line x1={pPad.left} y1={y} x2={pChartW - pPad.right} y2={y}
-                          stroke="var(--color-text-tertiary)" strokeOpacity={0.25} strokeWidth={1} />
-                      )}
-                      <text x={pPad.left - 8} y={y + 4} textAnchor="end" fontSize={11} fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">
-                        {fmtAxis(t)}
-                      </text>
-                    </g>
-                  );
-                })}
-
-                <line x1={pPad.left} y1={pYPos(0)} x2={pChartW - pPad.right} y2={pYPos(0)}
-                  stroke="var(--color-text-tertiary)" strokeOpacity={0.3} strokeWidth={1} />
-
-                {/* Forecast region tint */}
-                {pHistEnd < projChart.length && (
-                  <rect
-                    x={pXCenter(pHistEnd) - pSlotW / 2}
-                    y={pPad.top}
-                    width={(projChart.length - pHistEnd) * pSlotW}
-                    height={pInnerH}
-                    fill="var(--color-text-tertiary)"
-                    fillOpacity={0.05}
-                  />
-                )}
-
-                {projChart.map((m, mi) => {
-                  const cx = pXCenter(mi);
-                  const incH = (m.income / pRange) * pInnerH;
-                  const expH = (m.expenses / pRange) * pInnerH;
-                  const isProj = m.projected;
-                  return (
-                    <g key={mi}>
-                      <rect x={cx - pBarW - 2} y={pYPos(m.income)} width={pBarW} height={incH}
-                        rx={3} fill={incomeColor} opacity={isProj ? 0.4 : 0.85}
-                        stroke={isProj ? incomeColor : 'none'} strokeWidth={isProj ? 1 : 0}
-                        strokeDasharray={isProj ? '3 2' : undefined}>
-                        <title>{m.label} {m.year} {isProj ? 'Projected ' : ''}Income: {fmt(m.income)}</title>
-                      </rect>
-                      <rect x={cx + 2} y={pYPos(m.expenses)} width={pBarW} height={expH}
-                        rx={3} fill={expenseColor} opacity={isProj ? 0.4 : 0.85}
-                        stroke={isProj ? expenseColor : 'none'} strokeWidth={isProj ? 1 : 0}
-                        strokeDasharray={isProj ? '3 2' : undefined}>
-                        <title>{m.label} {m.year} {isProj ? 'Projected ' : ''}Expenses: {fmt(m.expenses)}</title>
-                      </rect>
-                    </g>
-                  );
-                })}
-
-                {projChart.length >= 2 && (
-                  <>
-                    <path d={smoothPath(pNetPoints)} fill="none" stroke="var(--color-text-primary)" strokeWidth={2}
-                      strokeLinecap="round" strokeLinejoin="round" strokeDasharray="5 3" opacity={0.4} />
-                    {projChart.map((m, i) => (
-                      <circle key={i} cx={pNetPoints[i].x} cy={pNetPoints[i].y} r={3.5}
-                        fill="#fff" stroke="var(--color-text-primary)" strokeWidth={1.5}>
-                        <title>{m.label} {m.year} {m.projected ? 'Projected ' : ''}Net: {m.net >= 0 ? '+' : ''}{fmt(m.net)}</title>
-                      </circle>
-                    ))}
-                  </>
-                )}
-
-                {projChart.map((m, mi) => {
-                  const showYear = mi === 0 || m.year !== projChart[mi - 1].year;
-                  return (
-                    <g key={mi}>
-                      <text x={pXCenter(mi)} y={pChartH - (showYear ? 22 : 12)} textAnchor="middle"
-                        fontSize={11} fill={m.projected ? 'var(--color-text-tertiary)' : 'var(--color-text-secondary)'} fontFamily="var(--font-headline)">
-                        {m.label}
-                      </text>
-                      {showYear && (
-                        <text x={pXCenter(mi)} y={pChartH - 6} textAnchor="middle" fontSize={10} fontWeight={700} fill="var(--color-text-tertiary)">
-                          {m.year}
-                        </text>
-                      )}
-                    </g>
-                  );
-                })}
-              </svg>
-
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 12, fontSize: 12 }}>
-                <LegendItem color={incomeColor} label="Income" />
-                <LegendItem color={expenseColor} label="Expenses" />
-                <LegendItem color="var(--color-text-primary)" label="Net (dashed)" dashed />
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-text-secondary)' }}>
-                  <span style={{
-                    display: 'inline-block',
-                    width: 14, height: 10,
-                    borderRadius: 2,
-                    border: `1px dashed ${incomeColor}`,
-                    background: `${incomeColor}33`,
-                  }} />
-                  Forecast (lighter)
-                </span>
+              <div style={{ height: 8, background: 'var(--color-surface-alt)', borderRadius: 4, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${monthPct}%`, background: 'var(--color-text-primary)', opacity: 0.4 }} />
               </div>
             </div>
 
-            {/* Forecast table */}
+            {/* Stat cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+              <StatCard label={`Projected Income (${p.monthLabel})`} value={fmt(p.projectedIncome)} color={incomeColor} icon="trending_up" />
+              <StatCard label={`Projected Expenses (${p.monthLabel})`} value={fmt(p.projectedExpenses)} color={expenseColor} icon="trending_down" />
+              <StatCard label="Projected Net" value={`${projNet >= 0 ? '+' : ''}${fmt(projNet)}`} color={projNetColor} icon="payments" />
+            </div>
+
+            {/* MTD vs remaining breakdown */}
             <div style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
               <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
-                Monthly Forecast
+                So far vs. projected remainder
               </div>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-ghost)' }}>
-                    <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Month</th>
-                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Projected Income</th>
-                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Projected Expenses</th>
-                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Net</th>
-                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Savings %</th>
+                    <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}></th>
+                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>So far ({p.daysElapsed}d)</th>
+                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Projected remainder ({p.daysRemaining}d)</th>
+                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Total</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {forecast.map(m => {
-                    const sav = m.income > 0 ? (m.income - m.expenses) / m.income : 0;
-                    return (
-                      <tr key={m.key} style={{ borderBottom: '1px solid var(--border-ghost)' }}>
-                        <td style={{ padding: '10px 12px', fontWeight: 600 }}>{m.label} {m.year}</td>
-                        <td style={{ padding: '10px 12px', textAlign: 'right', color: incomeColor, fontFamily: 'var(--font-headline)', fontWeight: 600 }}>{fmt(m.income)}</td>
-                        <td style={{ padding: '10px 12px', textAlign: 'right', color: expenseColor, fontFamily: 'var(--font-headline)', fontWeight: 600 }}>{fmt(m.expenses)}</td>
-                        <td style={{ padding: '10px 12px', textAlign: 'right', color: m.net >= 0 ? incomeColor : expenseColor, fontFamily: 'var(--font-headline)', fontWeight: 700 }}>
-                          {m.net >= 0 ? '+' : ''}{fmt(m.net)}
-                        </td>
-                        <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: m.income === 0 ? 'var(--color-text-tertiary)' : sav >= 0.2 ? incomeColor : sav >= 0 ? '#e8a317' : expenseColor }}>
-                          {m.income > 0 ? `${Math.round(sav * 100)}%` : '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  <tr style={{ borderBottom: '1px solid var(--border-ghost)' }}>
+                    <td style={{ padding: '10px 12px', fontWeight: 600 }}>Income</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', color: incomeColor, fontFamily: 'var(--font-headline)', fontWeight: 600 }}>{fmt(p.mtdIncome)}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', color: incomeColor, fontFamily: 'var(--font-headline)', fontWeight: 600, opacity: 0.7 }}>{fmt(p.remainingIncome)}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', color: incomeColor, fontFamily: 'var(--font-headline)', fontWeight: 700 }}>{fmt(p.projectedIncome)}</td>
+                  </tr>
+                  <tr style={{ borderBottom: '1px solid var(--border-ghost)' }}>
+                    <td style={{ padding: '10px 12px', fontWeight: 600 }}>Expenses</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', color: expenseColor, fontFamily: 'var(--font-headline)', fontWeight: 600 }}>{fmt(p.mtdExpenses)}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', color: expenseColor, fontFamily: 'var(--font-headline)', fontWeight: 600, opacity: 0.7 }}>{fmt(p.remainingExpenses)}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', color: expenseColor, fontFamily: 'var(--font-headline)', fontWeight: 700 }}>{fmt(p.projectedExpenses)}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: '10px 12px', fontWeight: 600 }}>Net</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', color: mtdNet >= 0 ? incomeColor : expenseColor, fontFamily: 'var(--font-headline)', fontWeight: 700 }}>{mtdNet >= 0 ? '+' : ''}{fmt(mtdNet)}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', color: remainingNet >= 0 ? incomeColor : expenseColor, fontFamily: 'var(--font-headline)', fontWeight: 700, opacity: 0.7 }}>{remainingNet >= 0 ? '+' : ''}{fmt(remainingNet)}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'right', color: projNetColor, fontFamily: 'var(--font-headline)', fontWeight: 700 }}>{projNet >= 0 ? '+' : ''}{fmt(projNet)}</td>
+                  </tr>
                 </tbody>
               </table>
               <div style={{ marginTop: 12, fontSize: 11, color: 'var(--color-text-tertiary)' }}>
-                Forecast blends a 6-month trailing average with the same calendar month from prior history when available.
+                Projected remainder = (days remaining ÷ {p.daysInMonth}) × baseline. Baseline blends a 6-month trailing average with the same calendar month from prior history when available.
+              </div>
+            </div>
+
+            {/* Upcoming credit card payments */}
+            <div style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>
+                  Upcoming Credit Card Payments
+                </div>
+                {cardPayments.length > 0 && (
+                  <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-headline)' }}>
+                    {fmt(ccTotal)} <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)' }}>total expected</span>
+                  </div>
+                )}
+              </div>
+              {cardPayments.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: 24, color: 'var(--color-text-tertiary)', fontSize: 13 }}>
+                  No credit card payment history detected yet. Once you have at least one Credit Card Payment transaction, projections will appear here.
+                </div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-ghost)' }}>
+                      <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Card</th>
+                      <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Due</th>
+                      <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Expected Amount</th>
+                      <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Last Payment</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cardPayments.map(cp => {
+                      const due = new Date(cp.nextDate);
+                      const daysUntil = Math.ceil((due - today) / 86400000);
+                      const dueLabel = due.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                      const last = new Date(cp.lastDate);
+                      const dueColor = daysUntil <= 0 ? expenseColor : daysUntil <= 7 ? '#e8a317' : 'var(--color-text-primary)';
+                      return (
+                        <tr key={cp.card} style={{ borderBottom: '1px solid var(--border-ghost)' }}>
+                          <td style={{ padding: '10px 12px', fontWeight: 600 }}>{cp.card}</td>
+                          <td style={{ padding: '10px 12px' }}>
+                            <div style={{ fontWeight: 600, color: dueColor }}>{dueLabel}</div>
+                            <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+                              {daysUntil <= 0 ? 'due today' : `in ${daysUntil} day${daysUntil === 1 ? '' : 's'}`}
+                            </div>
+                          </td>
+                          <td style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'var(--font-headline)', fontWeight: 700 }}>
+                            {fmt(cp.avgAmount)}
+                          </td>
+                          <td style={{ padding: '10px 12px', textAlign: 'right', color: 'var(--color-text-tertiary)', fontSize: 12 }}>
+                            {fmt(cp.lastAmount)} on {last.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+              <div style={{ marginTop: 12, fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+                Estimated from each card's Credit Card Payment transaction history (cadence + average amount).
               </div>
             </div>
           </>
