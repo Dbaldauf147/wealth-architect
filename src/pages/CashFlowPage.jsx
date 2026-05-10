@@ -63,6 +63,8 @@ export function CashFlowPage() {
   const [drilldown, setDrilldown] = useState(null); // { monthKey, kind: 'income'|'expenses' }
   const [expandedDrillCats, setExpandedDrillCats] = useState(new Set());
   const [expandedRevCats, setExpandedRevCats] = useState(new Set());
+  const [view, setView] = useState('history'); // 'history' | 'projections'
+  const [horizon, setHorizon] = useState(6); // forecast horizon in months
 
   const data = useMemo(() => {
     if (!transactions) return { months: [], totalIncome: 0, totalExpenses: 0, net: 0, avgIncome: 0, avgExpenses: 0, qualifyingExpCats: new Set() };
@@ -295,6 +297,62 @@ export function CashFlowPage() {
     return { rows, total, monthFilter };
   }, [transactions, data.months, drilldown]);
 
+  /* Forecast — projects income/expenses/invested/retirement for the next
+     `horizon` months by blending a trailing 6-month average with the same
+     calendar month from prior history (when available). */
+  const forecast = useMemo(() => {
+    const months = data.months || [];
+    if (months.length === 0) return [];
+    const last = months[months.length - 1];
+    const [lyStr, lmStr] = last.key.split('-');
+    let cy = parseInt(lyStr, 10);
+    let cm = parseInt(lmStr, 10);
+
+    const tailLen = Math.min(6, months.length);
+    const tail = months.slice(-tailLen);
+    const tAvg = sel => tail.reduce((s, m) => s + sel(m), 0) / tail.length;
+    const tIncome = tAvg(m => m.income);
+    const tExpenses = tAvg(m => m.expenses);
+    const tInvested = tAvg(m => m.invested);
+    const tRetirement = tAvg(m => m.retirement);
+
+    const byCal = {};
+    for (const m of months) {
+      const cal = parseInt(m.key.split('-')[1], 10);
+      if (!byCal[cal]) byCal[cal] = [];
+      byCal[cal].push(m);
+    }
+
+    const out = [];
+    for (let i = 0; i < horizon; i++) {
+      cm++;
+      if (cm > 12) { cm = 1; cy++; }
+      const key = `${cy}-${String(cm).padStart(2, '0')}`;
+      const seas = byCal[cm];
+      let income, expenses, invested, retirement;
+      if (seas && seas.length) {
+        const sAvg = sel => seas.reduce((s, m) => s + sel(m), 0) / seas.length;
+        income = 0.5 * sAvg(m => m.income) + 0.5 * tIncome;
+        expenses = 0.5 * sAvg(m => m.expenses) + 0.5 * tExpenses;
+        invested = 0.5 * sAvg(m => m.invested) + 0.5 * tInvested;
+        retirement = 0.5 * sAvg(m => m.retirement) + 0.5 * tRetirement;
+      } else {
+        income = tIncome;
+        expenses = tExpenses;
+        invested = tInvested;
+        retirement = tRetirement;
+      }
+      out.push({
+        key,
+        label: MONTH_SHORT[cm - 1],
+        year: String(cy),
+        income, expenses, invested, retirement,
+        net: income - expenses,
+      });
+    }
+    return out;
+  }, [data.months, horizon]);
+
   function exportMonthCsv(monthKey, kind) {
     if (!transactions || !monthKey) return;
     const [yy, mm] = monthKey.split('-');
@@ -398,14 +456,42 @@ export function CashFlowPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-      {/* Header */}
+      {/* Header + view tabs */}
       <div>
-        <div style={{ fontFamily: 'var(--font-headline)', fontSize: 24, fontWeight: 700, marginBottom: 4 }}>Cash Flow</div>
-        <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>
-          Income vs. expenses across the last {monthCount} months
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontFamily: 'var(--font-headline)', fontSize: 24, fontWeight: 700, marginBottom: 4 }}>Cash Flow</div>
+            <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>
+              {view === 'history'
+                ? `Income vs. expenses across the last ${monthCount} months`
+                : `Forecasted cash flow for the next ${horizon} months, based on history`}
+            </div>
+          </div>
+          <div style={{ display: 'inline-flex', gap: 2, background: 'var(--color-surface-alt)', padding: 2, borderRadius: 10 }}>
+            {[{ key: 'history', label: 'History' }, { key: 'projections', label: 'Projections' }].map(t => (
+              <button
+                key={t.key}
+                onClick={() => setView(t.key)}
+                style={{
+                  padding: '6px 14px',
+                  border: 'none',
+                  background: view === t.key ? 'var(--color-surface)' : 'transparent',
+                  boxShadow: view === t.key ? 'var(--shadow-xs)' : 'none',
+                  borderRadius: 8,
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: view === t.key ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
+      {view === 'history' && (<>
       {/* Stat Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
         <StatCard label="Total Income" value={fmt(data.totalIncome)} color={incomeColor} icon="trending_up" />
@@ -795,6 +881,262 @@ export function CashFlowPage() {
               </div>
             )}
           </div>
+        );
+      })()}
+      </>)}
+
+      {view === 'projections' && (() => {
+        if (forecast.length === 0 || (data.months || []).length === 0) {
+          return (
+            <div style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 40, boxShadow: 'var(--shadow-xs)', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: 13 }}>
+              Not enough history yet to build projections. Import a few months of transactions and check back.
+            </div>
+          );
+        }
+
+        const horizonOptions = [3, 6, 12];
+        const histTail = (data.months || []).slice(-6).map(m => ({ ...m, projected: false }));
+        const fcst = forecast.map(m => ({ ...m, projected: true }));
+        const projChart = [...histTail, ...fcst];
+
+        const projTotalIncome = forecast.reduce((s, m) => s + m.income, 0);
+        const projTotalExpenses = forecast.reduce((s, m) => s + m.expenses, 0);
+        const projNet = projTotalIncome - projTotalExpenses;
+        const projSavings = projTotalIncome > 0 ? projNet / projTotalIncome : 0;
+        const projAvgIncome = forecast.length ? projTotalIncome / forecast.length : 0;
+        const projAvgExpenses = forecast.length ? projTotalExpenses / forecast.length : 0;
+        const projNetColor = projNet >= 0 ? incomeColor : expenseColor;
+
+        // Chart layout (mirrors the history chart)
+        const pChartW = 960, pChartH = 340;
+        const pPad = { top: 16, right: 16, bottom: 48, left: 60 };
+        const pInnerW = pChartW - pPad.left - pPad.right;
+        const pInnerH = pChartH - pPad.top - pPad.bottom;
+        const pMaxVal = Math.max(...projChart.map(m => Math.max(m.income, m.expenses)), 1);
+        const pMinNet = Math.min(0, ...projChart.map(m => m.net));
+        const pRaw = pMaxVal * 1.05;
+        const pMag = Math.pow(10, Math.floor(Math.log10(pRaw || 1)));
+        const pSteps = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+        let pNiceMax = pMag * 10;
+        for (const s of pSteps) {
+          if (pMag * s >= pRaw) { pNiceMax = pMag * s; break; }
+        }
+        if (pNiceMax === 0) pNiceMax = 1000;
+        let pNiceMin = 0;
+        if (pMinNet < 0) {
+          const rm = Math.abs(pMinNet) * 1.05;
+          const mm = Math.pow(10, Math.floor(Math.log10(rm || 1)));
+          pNiceMin = -mm * 10;
+          for (const s of pSteps) {
+            if (mm * s >= rm) { pNiceMin = -mm * s; break; }
+          }
+        }
+        const pRange = pNiceMax - pNiceMin;
+        const pTicks = [pNiceMax, pNiceMax * 0.75, pNiceMax * 0.5, pNiceMax * 0.25, 0];
+        if (pNiceMin < 0) pTicks.push(pNiceMin);
+        const pYPos = v => pPad.top + pInnerH - ((v - pNiceMin) / pRange) * pInnerH;
+        const pSlotW = projChart.length ? pInnerW / projChart.length : 0;
+        const pXCenter = mi => pPad.left + (mi + 0.5) * pSlotW;
+        const pBarW = Math.min(18, pSlotW * 0.35);
+        const pNetPoints = projChart.map((m, i) => ({ x: pXCenter(i), y: pYPos(m.net) }));
+        const pHistEnd = histTail.length;
+
+        return (
+          <>
+            {/* Horizon selector */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Forecast horizon
+              </div>
+              <div style={{ display: 'inline-flex', gap: 2, background: 'var(--color-surface-alt)', padding: 2, borderRadius: 8 }}>
+                {horizonOptions.map(h => (
+                  <button
+                    key={h}
+                    onClick={() => setHorizon(h)}
+                    style={{
+                      padding: '5px 12px',
+                      border: 'none',
+                      background: horizon === h ? 'var(--color-surface)' : 'transparent',
+                      boxShadow: horizon === h ? 'var(--shadow-xs)' : 'none',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: horizon === h ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                    }}
+                  >
+                    {h} mo
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Stat Cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+              <StatCard label={`Projected Income (${horizon}mo)`} value={fmt(projTotalIncome)} color={incomeColor} icon="trending_up" />
+              <StatCard label={`Projected Expenses (${horizon}mo)`} value={fmt(projTotalExpenses)} color={expenseColor} icon="trending_down" />
+              <StatCard label={`Projected Net (${horizon}mo)`} value={`${projNet >= 0 ? '+' : ''}${fmt(projNet)}`} color={projNetColor} icon="payments" />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+              <StatCard label="Avg Monthly Income" value={fmt(projAvgIncome)} color={incomeColor} icon="calendar_month" />
+              <StatCard label="Avg Monthly Expenses" value={fmt(projAvgExpenses)} color={expenseColor} icon="calendar_month" />
+              <StatCard
+                label="Projected Savings Rate"
+                value={`${Math.round(projSavings * 100)}%`}
+                color={projSavings >= 0.2 ? incomeColor : projSavings >= 0 ? '#e8a317' : expenseColor}
+                icon="savings"
+              />
+            </div>
+
+            {/* Chart */}
+            <div style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>
+                  History &amp; Forecast
+                </div>
+              </div>
+
+              <svg width="100%" height={pChartH} viewBox={`0 0 ${pChartW} ${pChartH}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
+                {pTicks.map((t, i) => {
+                  const y = pYPos(t);
+                  return (
+                    <g key={i}>
+                      {t > 0 && (
+                        <line x1={pPad.left} y1={y} x2={pChartW - pPad.right} y2={y}
+                          stroke="var(--color-text-tertiary)" strokeOpacity={0.25} strokeWidth={1} />
+                      )}
+                      <text x={pPad.left - 8} y={y + 4} textAnchor="end" fontSize={11} fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">
+                        {fmtAxis(t)}
+                      </text>
+                    </g>
+                  );
+                })}
+
+                <line x1={pPad.left} y1={pYPos(0)} x2={pChartW - pPad.right} y2={pYPos(0)}
+                  stroke="var(--color-text-tertiary)" strokeOpacity={0.3} strokeWidth={1} />
+
+                {/* Forecast region tint */}
+                {pHistEnd < projChart.length && (
+                  <rect
+                    x={pXCenter(pHistEnd) - pSlotW / 2}
+                    y={pPad.top}
+                    width={(projChart.length - pHistEnd) * pSlotW}
+                    height={pInnerH}
+                    fill="var(--color-text-tertiary)"
+                    fillOpacity={0.05}
+                  />
+                )}
+
+                {projChart.map((m, mi) => {
+                  const cx = pXCenter(mi);
+                  const incH = (m.income / pRange) * pInnerH;
+                  const expH = (m.expenses / pRange) * pInnerH;
+                  const isProj = m.projected;
+                  return (
+                    <g key={mi}>
+                      <rect x={cx - pBarW - 2} y={pYPos(m.income)} width={pBarW} height={incH}
+                        rx={3} fill={incomeColor} opacity={isProj ? 0.4 : 0.85}
+                        stroke={isProj ? incomeColor : 'none'} strokeWidth={isProj ? 1 : 0}
+                        strokeDasharray={isProj ? '3 2' : undefined}>
+                        <title>{m.label} {m.year} {isProj ? 'Projected ' : ''}Income: {fmt(m.income)}</title>
+                      </rect>
+                      <rect x={cx + 2} y={pYPos(m.expenses)} width={pBarW} height={expH}
+                        rx={3} fill={expenseColor} opacity={isProj ? 0.4 : 0.85}
+                        stroke={isProj ? expenseColor : 'none'} strokeWidth={isProj ? 1 : 0}
+                        strokeDasharray={isProj ? '3 2' : undefined}>
+                        <title>{m.label} {m.year} {isProj ? 'Projected ' : ''}Expenses: {fmt(m.expenses)}</title>
+                      </rect>
+                    </g>
+                  );
+                })}
+
+                {projChart.length >= 2 && (
+                  <>
+                    <path d={smoothPath(pNetPoints)} fill="none" stroke="var(--color-text-primary)" strokeWidth={2}
+                      strokeLinecap="round" strokeLinejoin="round" strokeDasharray="5 3" opacity={0.4} />
+                    {projChart.map((m, i) => (
+                      <circle key={i} cx={pNetPoints[i].x} cy={pNetPoints[i].y} r={3.5}
+                        fill="#fff" stroke="var(--color-text-primary)" strokeWidth={1.5}>
+                        <title>{m.label} {m.year} {m.projected ? 'Projected ' : ''}Net: {m.net >= 0 ? '+' : ''}{fmt(m.net)}</title>
+                      </circle>
+                    ))}
+                  </>
+                )}
+
+                {projChart.map((m, mi) => {
+                  const showYear = mi === 0 || m.year !== projChart[mi - 1].year;
+                  return (
+                    <g key={mi}>
+                      <text x={pXCenter(mi)} y={pChartH - (showYear ? 22 : 12)} textAnchor="middle"
+                        fontSize={11} fill={m.projected ? 'var(--color-text-tertiary)' : 'var(--color-text-secondary)'} fontFamily="var(--font-headline)">
+                        {m.label}
+                      </text>
+                      {showYear && (
+                        <text x={pXCenter(mi)} y={pChartH - 6} textAnchor="middle" fontSize={10} fontWeight={700} fill="var(--color-text-tertiary)">
+                          {m.year}
+                        </text>
+                      )}
+                    </g>
+                  );
+                })}
+              </svg>
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 12, fontSize: 12 }}>
+                <LegendItem color={incomeColor} label="Income" />
+                <LegendItem color={expenseColor} label="Expenses" />
+                <LegendItem color="var(--color-text-primary)" label="Net (dashed)" dashed />
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-text-secondary)' }}>
+                  <span style={{
+                    display: 'inline-block',
+                    width: 14, height: 10,
+                    borderRadius: 2,
+                    border: `1px dashed ${incomeColor}`,
+                    background: `${incomeColor}33`,
+                  }} />
+                  Forecast (lighter)
+                </span>
+              </div>
+            </div>
+
+            {/* Forecast table */}
+            <div style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
+                Monthly Forecast
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-ghost)' }}>
+                    <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Month</th>
+                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Projected Income</th>
+                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Projected Expenses</th>
+                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Net</th>
+                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Savings %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {forecast.map(m => {
+                    const sav = m.income > 0 ? (m.income - m.expenses) / m.income : 0;
+                    return (
+                      <tr key={m.key} style={{ borderBottom: '1px solid var(--border-ghost)' }}>
+                        <td style={{ padding: '10px 12px', fontWeight: 600 }}>{m.label} {m.year}</td>
+                        <td style={{ padding: '10px 12px', textAlign: 'right', color: incomeColor, fontFamily: 'var(--font-headline)', fontWeight: 600 }}>{fmt(m.income)}</td>
+                        <td style={{ padding: '10px 12px', textAlign: 'right', color: expenseColor, fontFamily: 'var(--font-headline)', fontWeight: 600 }}>{fmt(m.expenses)}</td>
+                        <td style={{ padding: '10px 12px', textAlign: 'right', color: m.net >= 0 ? incomeColor : expenseColor, fontFamily: 'var(--font-headline)', fontWeight: 700 }}>
+                          {m.net >= 0 ? '+' : ''}{fmt(m.net)}
+                        </td>
+                        <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: m.income === 0 ? 'var(--color-text-tertiary)' : sav >= 0.2 ? incomeColor : sav >= 0 ? '#e8a317' : expenseColor }}>
+                          {m.income > 0 ? `${Math.round(sav * 100)}%` : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div style={{ marginTop: 12, fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+                Forecast blends a 6-month trailing average with the same calendar month from prior history when available.
+              </div>
+            </div>
+          </>
         );
       })()}
     </div>
