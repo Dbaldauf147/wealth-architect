@@ -1,5 +1,18 @@
-import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { fetchTransactions, fetchBalances, computeAnalytics } from '../utils/sheets';
+import { db } from '../firebase';
+import {
+  normalizeDesc,
+  txnFallbackKey,
+  ruleMatches,
+  sameFilters,
+  applyRulesToTransactions,
+  applySubcategoryRulesToTransactions,
+  applyOverrides,
+} from '../lib/categorize';
+
+const CONFIG_DOC_PATH = ['config', 'default'];
 
 const DataContext = createContext(null);
 
@@ -83,32 +96,6 @@ function saveAccountNicknames(nicknames) {
   localStorage.setItem('accountNicknames', JSON.stringify(nicknames));
 }
 
-/* Build a composite key for transactions without a stable transactionId */
-function txnFallbackKey(t) {
-  return `${t.date || ''}|${(t.description || '').trim()}|${t.amount}`;
-}
-
-function applyOverrides(txns, overrides, subOverrides, dateOverrides) {
-  const hasCat = Object.keys(overrides).length > 0;
-  const hasSub = Object.keys(subOverrides).length > 0;
-  const hasDate = dateOverrides && Object.keys(dateOverrides).length > 0;
-  if (!hasCat && !hasSub && !hasDate) return txns;
-  return txns.map(t => {
-    let updated = t;
-    const id = t.transactionId;
-    const fb = txnFallbackKey(t);
-    if (id && overrides[id]) updated = { ...updated, category: overrides[id] };
-    else if (overrides[fb]) updated = { ...updated, category: overrides[fb] };
-    if (id && subOverrides[id]) updated = { ...updated, subcategory: subOverrides[id] };
-    else if (subOverrides[fb]) updated = { ...updated, subcategory: subOverrides[fb] };
-    if (hasDate) {
-      if (id && dateOverrides[id]) updated = { ...updated, originalDate: t.date, date: dateOverrides[id] };
-      else if (dateOverrides[fb]) updated = { ...updated, originalDate: t.date, date: dateOverrides[fb] };
-    }
-    return updated;
-  });
-}
-
 function loadCustomCategories() {
   try {
     return JSON.parse(localStorage.getItem('customCategories') || '[]');
@@ -129,69 +116,6 @@ function saveHiddenCategories(cats) {
   localStorage.setItem('hiddenCategories', JSON.stringify([...cats]));
 }
 
-function normalizeDesc(s) {
-  return (s || '').toLowerCase().trim().replace(/[\s\-–—]+/g, ' ');
-}
-
-function ruleMatches(rule, t) {
-  const ruleDesc = normalizeDesc(rule.description);
-  const hasDesc = !!ruleDesc;
-  const hasSign = rule.sign === 'positive' || rule.sign === 'negative';
-  const hasMin = rule.minAmount != null && !Number.isNaN(Number(rule.minAmount));
-  const hasMax = rule.maxAmount != null && !Number.isNaN(Number(rule.maxAmount));
-  // A rule with zero filters would match every transaction — reject to be safe.
-  if (!hasDesc && !hasSign && !hasMin && !hasMax) return false;
-
-  if (hasDesc) {
-    const txnDesc = normalizeDesc(t.description);
-    const txnFull = normalizeDesc(t.fullDescription);
-    let descMatch = false;
-    if (txnDesc && (txnDesc.includes(ruleDesc) || ruleDesc.includes(txnDesc))) descMatch = true;
-    if (!descMatch && txnFull && txnFull.includes(ruleDesc)) descMatch = true;
-    if (!descMatch) return false;
-  }
-
-  const amt = typeof t.amount === 'number' ? t.amount : parseFloat(t.amount);
-  if (hasSign) {
-    if (rule.sign === 'positive' && !(amt > 0)) return false;
-    if (rule.sign === 'negative' && !(amt < 0)) return false;
-  }
-  const absAmt = Math.abs(amt);
-  if (hasMin && absAmt < Number(rule.minAmount)) return false;
-  if (hasMax && absAmt > Number(rule.maxAmount)) return false;
-
-  return true;
-}
-
-function sameFilters(a, b) {
-  return (
-    normalizeDesc(a.description) === normalizeDesc(b.description) &&
-    (a.sign || null) === (b.sign || null) &&
-    (a.minAmount != null ? Number(a.minAmount) : null) === (b.minAmount != null ? Number(b.minAmount) : null) &&
-    (a.maxAmount != null ? Number(a.maxAmount) : null) === (b.maxAmount != null ? Number(b.maxAmount) : null)
-  );
-}
-
-function applyRulesToTransactions(txns, rules) {
-  if (!rules.length) return txns;
-  return txns.map(t => {
-    for (const rule of rules) {
-      if (ruleMatches(rule, t)) return { ...t, category: rule.category };
-    }
-    return t;
-  });
-}
-
-function applySubcategoryRulesToTransactions(txns, rules) {
-  if (!rules.length) return txns;
-  return txns.map(t => {
-    for (const rule of rules) {
-      if (ruleMatches(rule, t)) return { ...t, subcategory: rule.subcategory };
-    }
-    return t;
-  });
-}
-
 export function DataProvider({ children }) {
   const [allTransactions, setAllTransactions] = useState([]);
   const [hiddenIds, setHiddenIds] = useState(loadHiddenIds);
@@ -208,6 +132,69 @@ export function DataProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastSync, setLastSync] = useState(null);
+
+  // ── Firestore sync of category rules + overrides ──────────────────────
+  // The Vercel weekly-summary Function reads this same doc so the email
+  // applies the user's rules. localStorage stays the fast read source on
+  // the client; Firestore is the cross-process source of truth.
+  const syncHydrated = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const ref = doc(db, ...CONFIG_DOC_PATH);
+        const snap = await getDoc(ref);
+        if (cancelled) return;
+        if (snap.exists()) {
+          const data = snap.data() || {};
+          if (Array.isArray(data.categoryRules)) {
+            setCategoryRules(data.categoryRules);
+            saveCategoryRules(data.categoryRules);
+          }
+          if (Array.isArray(data.subcategoryRules)) {
+            setSubcategoryRules(data.subcategoryRules);
+            saveSubcategoryRules(data.subcategoryRules);
+          }
+          if (data.categoryOverrides && typeof data.categoryOverrides === 'object') {
+            setCategoryOverrides(data.categoryOverrides);
+            saveCategoryOverrides(data.categoryOverrides);
+          }
+          if (data.subcategoryOverrides && typeof data.subcategoryOverrides === 'object') {
+            setSubcategoryOverrides(data.subcategoryOverrides);
+            saveSubcategoryOverrides(data.subcategoryOverrides);
+          }
+        } else {
+          // First-time migration: push current localStorage values up.
+          await setDoc(ref, {
+            categoryRules: loadCategoryRules(),
+            subcategoryRules: loadSubcategoryRules(),
+            categoryOverrides: loadCategoryOverrides(),
+            subcategoryOverrides: loadSubcategoryOverrides(),
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        console.warn('Firestore config sync (read) failed:', err);
+      } finally {
+        if (!cancelled) syncHydrated.current = true;
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!syncHydrated.current) return;
+    const handle = setTimeout(() => {
+      setDoc(doc(db, ...CONFIG_DOC_PATH), {
+        categoryRules,
+        subcategoryRules,
+        categoryOverrides,
+        subcategoryOverrides,
+        updatedAt: new Date().toISOString(),
+      }).catch(err => console.warn('Firestore config sync (write) failed:', err));
+    }, 500);
+    return () => clearTimeout(handle);
+  }, [categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides]);
 
   const transactions = useMemo(
     () => allTransactions.filter(t => !hiddenIds.has(t.transactionId)),

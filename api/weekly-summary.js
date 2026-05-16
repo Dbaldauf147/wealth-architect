@@ -1,8 +1,44 @@
 import nodemailer from 'nodemailer';
+import { initializeApp, cert, getApps } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
 import { buildWeeklySummary, lastCompletedWeek } from '../src/lib/weeklySummary.js';
 import { renderWeeklyEmailHtml } from '../src/lib/renderWeeklyEmail.js';
+import {
+  applyRulesToTransactions,
+  applySubcategoryRulesToTransactions,
+  applyOverrides,
+} from '../src/lib/categorize.js';
 
 const DAY_MAP = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+
+// Lazy singleton — Vercel may reuse the function instance across invocations.
+function getFirestoreDb() {
+  if (!getApps().length) {
+    const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+    if (!raw) return null;
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON');
+    }
+    initializeApp({ credential: cert(parsed) });
+  }
+  return getFirestore();
+}
+
+async function fetchCategoryConfig() {
+  const db = getFirestoreDb();
+  if (!db) return null;
+  try {
+    const snap = await db.collection('config').doc('default').get();
+    if (!snap.exists) return null;
+    return snap.data() || null;
+  } catch (err) {
+    console.warn('Firestore config fetch failed:', err.message);
+    return null;
+  }
+}
 
 async function fetchTransactionsFromSheet() {
   const apiKey = process.env.SHEETS_API_KEY;
@@ -53,7 +89,23 @@ export default async function handler(req, res) {
       }
     }
 
-    const transactions = await fetchTransactionsFromSheet();
+    const rawTransactions = await fetchTransactionsFromSheet();
+
+    // Apply the same category rules + per-transaction overrides the website
+    // applies, so the email reflects the same categorized view.
+    const config = await fetchCategoryConfig();
+    let transactions = rawTransactions;
+    if (config) {
+      transactions = applyRulesToTransactions(transactions, config.categoryRules || []);
+      transactions = applySubcategoryRulesToTransactions(transactions, config.subcategoryRules || []);
+      transactions = applyOverrides(
+        transactions,
+        config.categoryOverrides || {},
+        config.subcategoryOverrides || {},
+        {}, // dateOverrides not synced yet
+      );
+    }
+
     const { start, end } = lastCompletedWeek();
     const summary = buildWeeklySummary({ transactions, start, end });
     const html = renderWeeklyEmailHtml(summary);

@@ -1,14 +1,18 @@
 // Firestore Security Rules for the wealth-architecht project.
 //
-// State of the codebase: Firebase SDK is initialized (src/firebase.js) but no
-// Firestore reads or writes are wired up anywhere. To keep the database
-// inaccessible until a real auth flow exists, this rule denies every request.
+// State of the codebase: single-user app with no auth. The website writes
+// the user's category rules and per-transaction overrides to a single doc
+// at /config/default so the Vercel weekly-summary Function can read them
+// and apply the same categorization view as the website.
 //
-// To loosen later: replace the inner match with per-collection rules that
-// require request.auth.uid to match a document field, e.g.:
-//   match /users/{uid}/{doc=**} {
-//     allow read, write: if request.auth != null && request.auth.uid == uid;
+// The /config/default doc allows public read+write because there is no
+// auth wired in yet. When auth lands, tighten this to:
+//   match /config/default {
+//     allow read, write: if request.auth != null && request.auth.uid == 'YOUR_UID';
 //   }
+//
+// All other paths remain locked so accidental writes to other collections
+// can't happen.
 //
 // To deploy: paste into Firebase Console → Firestore Database → Rules → Publish.
 // Alternatively, install the Firebase CLI and run:
@@ -17,6 +21,9 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    match /config/default {
+      allow read, write: if true;
+    }
     match /{document=**} {
       allow read, write: if false;
     }

@@ -16,8 +16,14 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+function daysUntil(iso, now = new Date()) {
+  const target = new Date(iso);
+  const diffMs = target - now;
+  return Math.round(diffMs / 86400000);
+}
+
 export function renderWeeklyEmailHtml(summary) {
-  const { range, expenseTotal, wowDelta, wowPct, topCategories, topMerchants, uncategorized, transactionCount, uncategorizedCount } = summary;
+  const { range, expenseTotal, wowDelta, wowPct, topCategories, topMerchants, uncategorized, transactionCount, uncategorizedCount, nextCardPayment, monthlyTrends } = summary;
 
   const deltaStr = wowPct == null
     ? 'No prior-week data'
@@ -79,6 +85,31 @@ export function renderWeeklyEmailHtml(summary) {
       </td>
     </tr>
 
+    ${nextCardPayment ? (() => {
+      const days = daysUntil(nextCardPayment.nextDate);
+      const when = days <= 0
+        ? 'expected today'
+        : days === 1
+        ? 'in 1 day'
+        : `in ${days} days`;
+      return `
+    <tr>
+      <td style="padding:0 28px 24px;">
+        <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:8px;">Next Credit Card Payment</div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;">
+            <div>
+              <div style="font-size:15px;font-weight:600;color:#111;">${escapeHtml(nextCardPayment.card)}</div>
+              <div style="font-size:12px;color:#64748b;margin-top:2px;">${shortDate(nextCardPayment.nextDate)} · ${when}</div>
+            </div>
+            <div style="font-size:18px;font-weight:600;color:#111;font-variant-numeric:tabular-nums;text-align:right;">${money(nextCardPayment.lastAmount)}</div>
+          </div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:6px;">Projected from past payment cadence (~${nextCardPayment.cadenceDays} days). Last paid ${shortDate(nextCardPayment.lastDate)}.</div>
+        </div>
+      </td>
+    </tr>`;
+    })() : ''}
+
     ${topCategories.length ? `
     <tr>
       <td style="padding:0 28px;">
@@ -102,6 +133,47 @@ export function renderWeeklyEmailHtml(summary) {
         </div>
       </td>
     </tr>` : ''}
+
+    ${monthlyTrends && (monthlyTrends.mtdTotal > 0 || monthlyTrends.priorMtdTotal > 0) ? (() => {
+      const mt = monthlyTrends;
+      const headlineColor = mt.mtdDelta >= 0 ? '#b91c1c' : '#16a34a';
+      const headlineDelta = mt.mtdPct == null
+        ? `${money(mt.mtdTotal)} so far this month (no prior data)`
+        : `${mt.mtdDelta >= 0 ? '▲' : '▼'} ${money(Math.abs(mt.mtdDelta))} (${mt.mtdPct >= 0 ? '+' : ''}${mt.mtdPct.toFixed(1)}%) vs. same days last month`;
+
+      const moverRows = mt.topMovers.map(m => {
+        const up = m.delta >= 0;
+        const arrow = up ? '▲' : '▼';
+        const color = up ? '#b91c1c' : '#16a34a';
+        const pctStr = m.pct == null
+          ? '<span style="color:#64748b;">new this month</span>'
+          : `<span style="color:#64748b;">(${m.pct >= 0 ? '+' : ''}${m.pct.toFixed(0)}%)</span>`;
+        return `
+          <tr>
+            <td style="padding:6px 0;font-size:13px;color:#111;">${escapeHtml(m.name)}</td>
+            <td style="padding:6px 8px;font-size:12px;color:${color};white-space:nowrap;">${arrow} ${money(Math.abs(m.delta))}</td>
+            <td style="padding:6px 0;font-size:12px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;">
+              <strong style="color:#111;">${money(m.current)}</strong> ${pctStr}
+            </td>
+          </tr>`;
+      }).join('');
+
+      return `
+    <tr>
+      <td style="padding:20px 28px 0;">
+        <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:8px;">${escapeHtml(mt.monthLabel)} — Month-to-Date</div>
+          <div style="font-size:24px;font-weight:700;color:#111;letter-spacing:-0.01em;line-height:1;">${money(mt.mtdTotal)}</div>
+          <div style="font-size:12px;color:${headlineColor};margin-top:6px;">${headlineDelta}</div>
+          ${mt.topMovers.length ? `
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin:14px 0 4px;">Biggest Movers</div>
+          <table role="presentation" width="100%" style="border-collapse:collapse;">
+            ${moverRows}
+          </table>` : ''}
+        </div>
+      </td>
+    </tr>`;
+    })() : ''}
 
     ${uncategorized.length ? `
     <tr>
