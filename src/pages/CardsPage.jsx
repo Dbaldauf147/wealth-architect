@@ -1,10 +1,16 @@
-import { useMemo } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useData } from '../contexts/DataContext';
+import { buildCardSchedule } from '../lib/cardSchedule';
 import styles from './CardsPage.module.css';
 
 function fmt(n) {
-  if (n == null) return '\u2014';
+  if (n == null) return '—';
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
+}
+
+function fmtDate(d) {
+  if (!d) return '—';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 const CARD_COLORS = [
@@ -14,6 +20,8 @@ const CARD_COLORS = [
 
 export function CardsPage() {
   const { transactions, balances, loading } = useData();
+  const [view, setView] = useState('optimizer');
+  const [expanded, setExpanded] = useState(() => new Set());
 
   // Derive credit card accounts from liabilities
   const creditCards = useMemo(() => {
@@ -81,7 +89,6 @@ export function CardsPage() {
   const optimization = useMemo(() => {
     if (!spendByCategory.length || !creditCards.length) return null;
     const topCat = spendByCategory[0];
-    // Find which card has the most spend in that category
     let bestCard = null;
     let bestAmount = 0;
     for (const card of creditCards) {
@@ -92,7 +99,6 @@ export function CardsPage() {
         bestCard = card.name;
       }
     }
-    // Find which card has the least spend in top category (to suggest switching FROM)
     let worstCard = null;
     let worstAmount = Infinity;
     for (const card of creditCards) {
@@ -110,6 +116,72 @@ export function CardsPage() {
       worstCard,
     };
   }, [spendByCategory, creditCards, categoryPerCard]);
+
+  // ── Schedule view data ────────────────────────────────────────────────────
+  const schedule = useMemo(
+    () => buildCardSchedule({ cards: creditCards, transactions: transactions || [] }),
+    [creditCards, transactions],
+  );
+
+  // Sort schedule rows by next-payment-date asc (no-payment-history rows last).
+  const sortedSchedule = useMemo(() => {
+    return [...schedule].sort((a, b) => {
+      if (!a.nextPaymentDate && !b.nextPaymentDate) return 0;
+      if (!a.nextPaymentDate) return 1;
+      if (!b.nextPaymentDate) return -1;
+      return a.nextPaymentDate - b.nextPaymentDate;
+    });
+  }, [schedule]);
+
+  // 60-day timeline: payment dots + week markers
+  const timeline = useMemo(() => {
+    const days = 60;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const endMs = today.getTime() + days * 86400000;
+    const dots = [];
+    for (const s of schedule) {
+      if (!s.nextPaymentDate) continue;
+      const ms = s.nextPaymentDate.getTime();
+      if (ms < today.getTime() || ms > endMs) continue;
+      const pct = ((ms - today.getTime()) / (days * 86400000)) * 100;
+      dots.push({
+        card: s.card,
+        color: s.color,
+        date: s.nextPaymentDate,
+        amount: s.estimatedNextAmount,
+        pct,
+      });
+    }
+    // Stagger dots vertically when two are within ~5% of each other.
+    dots.sort((a, b) => a.pct - b.pct);
+    let lastPct = -100;
+    let row = 0;
+    for (const d of dots) {
+      if (d.pct - lastPct < 5) row = (row + 1) % 3;
+      else row = 0;
+      d.row = row;
+      lastPct = d.pct;
+    }
+    const weekMarks = [];
+    for (let d = 0; d <= days; d += 7) {
+      const t = new Date(today.getTime() + d * 86400000);
+      weekMarks.push({
+        label: t.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        pct: (d / days) * 100,
+      });
+    }
+    return { dots, weekMarks };
+  }, [schedule]);
+
+  function toggleExpand(cardName) {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(cardName)) next.delete(cardName);
+      else next.add(cardName);
+      return next;
+    });
+  }
 
   // Total spend across all cards
   const totalCardSpend = useMemo(() => {
@@ -141,6 +213,42 @@ export function CardsPage() {
 
   return (
     <div className={styles.page}>
+      {/* Header + sub-tabs */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontFamily: 'var(--font-headline)', fontSize: 24, fontWeight: 700, marginBottom: 4 }}>Cards</div>
+            <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>
+              {view === 'optimizer'
+                ? 'Spending breakdown, portfolio matrix, and reward optimization'
+                : 'Projected payment dates and the charges feeding each one'}
+            </div>
+          </div>
+          <div style={{ display: 'inline-flex', gap: 2, background: 'var(--color-surface-alt)', padding: 2, borderRadius: 10 }}>
+            {[{ key: 'optimizer', label: 'Optimizer' }, { key: 'schedule', label: 'Schedule' }].map(t => (
+              <button
+                key={t.key}
+                onClick={() => setView(t.key)}
+                style={{
+                  padding: '6px 14px',
+                  border: 'none',
+                  background: view === t.key ? 'var(--color-surface)' : 'transparent',
+                  boxShadow: view === t.key ? 'var(--shadow-xs)' : 'none',
+                  borderRadius: 8,
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: view === t.key ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {view === 'optimizer' && (<>
       {/* Optimization Alert Hero */}
       <div className={styles.hero}>
         <div className={styles.heroIcon}>
@@ -372,6 +480,155 @@ export function CardsPage() {
           );
         })}
       </div>
+      </>)}
+
+      {view === 'schedule' && (<>
+      {/* Timeline strip — next 60 days */}
+      <div className={styles.chartCard}>
+        <div className={styles.chartHeader}>
+          <div>
+            <div className={styles.chartTitle}>Upcoming Payments — Next 60 Days</div>
+            <div className={styles.chartSubtitle}>Projected from each card's historical payment cadence</div>
+          </div>
+        </div>
+        <div className={styles.timeline}>
+          {timeline.weekMarks.map((w, i) => (
+            <div key={i} className={styles.weekMark} style={{ left: `${w.pct}%` }}>
+              <div className={styles.weekTick} />
+              <div className={styles.weekLabel}>{w.label}</div>
+            </div>
+          ))}
+          {timeline.dots.length === 0 ? (
+            <div className={styles.timelineEmpty}>
+              No projected payments fall within the next 60 days.
+            </div>
+          ) : timeline.dots.map((d, i) => (
+            <div
+              key={i}
+              className={styles.paymentDot}
+              style={{ left: `${d.pct}%`, top: `${20 + (d.row || 0) * 28}px`, background: d.color }}
+              title={`${d.card} — ${fmt(d.amount)} on ${fmtDate(d.date)}`}
+            >
+              <div className={styles.paymentDotInfo}>
+                <div className={styles.paymentDotAmount}>{fmt(d.amount)}</div>
+                <div className={styles.paymentDotCard}>{d.card}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Per-card schedule table */}
+      <div className={styles.matrixCard}>
+        <div className={styles.matrixTitle}>Card Payment Schedule</div>
+        <table className={styles.matrixTable}>
+          <thead>
+            <tr>
+              <th>Card</th>
+              <th>Last Payment</th>
+              <th>Next (est.)</th>
+              <th>In</th>
+              <th>Charges</th>
+              <th>Est. Next Payment</th>
+              <th style={{ width: 32 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedSchedule.length === 0 ? (
+              <tr>
+                <td colSpan={7} style={{ textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
+                  No credit card accounts found in liabilities
+                </td>
+              </tr>
+            ) : sortedSchedule.map((s) => {
+              const isOpen = expanded.has(s.card);
+              return (
+                <Fragment key={s.card}>
+                  <tr className={styles.scheduleRow} onClick={() => toggleExpand(s.card)}>
+                    <td>
+                      <div className={styles.cardIdent}>
+                        <div className={styles.cardStripe} style={{ background: s.color }} />
+                        <div className={styles.cardName}>{s.card}</div>
+                      </div>
+                    </td>
+                    <td>
+                      {s.lastPayment ? (
+                        <span>
+                          <span style={{ color: 'var(--color-text-secondary)' }}>{fmtDate(s.lastPayment.date)}</span>
+                          <span style={{ marginLeft: 8, fontWeight: 600 }}>{fmt(s.lastPayment.amount)}</span>
+                        </span>
+                      ) : '—'}
+                    </td>
+                    <td>{s.nextPaymentDate ? fmtDate(s.nextPaymentDate) : '—'}</td>
+                    <td style={{ color: 'var(--color-text-secondary)' }}>
+                      {s.daysUntilNext != null ? `${s.daysUntilNext}d` : '—'}
+                    </td>
+                    <td style={{ color: 'var(--color-text-secondary)' }}>
+                      {s.chargesSinceLast.length}
+                    </td>
+                    <td className={styles.cardFee}>{fmt(s.estimatedNextAmount)}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--color-text-tertiary)' }}>
+                        {isOpen ? 'expand_less' : 'expand_more'}
+                      </span>
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    <tr>
+                      <td colSpan={7} className={styles.expandedCell}>
+                        {s.chargesSinceLast.length === 0 ? (
+                          <div className={styles.emptyDrill}>
+                            {s.lastPayment
+                              ? `No charges since ${fmtDate(s.lastPayment.date)}.`
+                              : 'No payment history on this card yet — record a payment to start projecting.'}
+                          </div>
+                        ) : (
+                          (() => {
+                            // Compute running total in chronological order, render newest first.
+                            const oldestFirst = [...s.chargesSinceLast].reverse();
+                            let total = 0;
+                            const withRunning = oldestFirst.map(t => {
+                              total += -t.amount;
+                              return { ...t, runningTotal: total };
+                            }).reverse();
+                            return (
+                              <table className={styles.drillTable}>
+                                <thead>
+                                  <tr>
+                                    <th>Date</th>
+                                    <th>Description</th>
+                                    <th>Category</th>
+                                    <th style={{ textAlign: 'right' }}>Amount</th>
+                                    <th style={{ textAlign: 'right' }}>Running Total</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {withRunning.map((t, j) => (
+                                    <tr key={j}>
+                                      <td>{fmtDate(t._date)}</td>
+                                      <td>{t.description}</td>
+                                      <td style={{ color: 'var(--color-text-secondary)' }}>{t.category || '—'}</td>
+                                      <td style={{ textAlign: 'right', color: t.amount < 0 ? 'var(--color-text-primary)' : 'var(--color-success)' }}>
+                                        {fmt(t.amount)}
+                                      </td>
+                                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(t.runningTotal)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            );
+                          })()
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      </>)}
     </div>
   );
 }

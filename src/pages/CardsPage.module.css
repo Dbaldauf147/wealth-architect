@@ -424,6 +424,137 @@
   font-family: var(--font-headline);
 }
 
+/* ── Schedule view ── */
+.timeline {
+  position: relative;
+  height: 140px;
+  margin-top: 8px;
+  padding-bottom: 22px;
+  border-top: var(--border-ghost);
+}
+
+.weekMark {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.weekTick {
+  width: 1px;
+  height: 8px;
+  background: var(--color-border, rgba(0, 0, 0, 0.1));
+  margin: 0 auto;
+}
+
+.weekLabel {
+  position: absolute;
+  bottom: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.paymentDot {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  border: 2px solid var(--color-surface);
+  box-shadow: var(--shadow-xs);
+  cursor: default;
+}
+
+.paymentDotInfo {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-xs);
+}
+
+.paymentDotAmount {
+  font-family: var(--font-headline);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1.2;
+}
+
+.paymentDotCard {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  line-height: 1.2;
+  margin-top: 1px;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timelineEmpty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+
+.scheduleRow {
+  cursor: pointer;
+}
+
+.scheduleRow:hover td {
+  background: var(--color-surface-hover);
+}
+
+.expandedCell {
+  padding: 0 !important;
+  background: var(--color-surface-alt);
+}
+
+.emptyDrill {
+  padding: 16px 20px;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+
+.drillTable {
+  width: 100%;
+  font-size: 12.5px;
+  border-collapse: collapse;
+}
+
+.drillTable th {
+  padding: 8px 16px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  background: var(--color-surface);
+  border-bottom: var(--border-ghost);
+}
+
+.drillTable td {
+  padding: 10px 16px;
+  border-bottom: var(--border-ghost);
+  vertical-align: middle;
+}
+
+.drillTable tr:last-child td {
+  border-bottom: none;
+}
+
 /* ── Responsive ── */
 @media (max-width: 1024px) {
   .perfGrid,
