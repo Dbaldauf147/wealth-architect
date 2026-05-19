@@ -48,6 +48,81 @@ const saveCustomCategories = (v) => saveJSON('customCategories', v);
 const loadHiddenCategories = () => new Set(loadJSON('hiddenCategories', []));
 const saveHiddenCategories = (cats) => saveJSON('hiddenCategories', [...cats]);
 
+// ── Union-merge helpers for two-way cross-device sync ────────────────────
+function ruleKey(r) {
+  return JSON.stringify([
+    normalizeDesc(r.description || ''),
+    r.sign || null,
+    r.minAmount != null && r.minAmount !== '' ? Number(r.minAmount) : null,
+    r.maxAmount != null && r.maxAmount !== '' ? Number(r.maxAmount) : null,
+  ]);
+}
+
+function unionRules(local, remote) {
+  const seen = new Set();
+  const out = [];
+  // Remote first so on duplicate filters remote's category target wins.
+  for (const rule of remote || []) {
+    const k = ruleKey(rule);
+    if (seen.has(k)) continue;
+    seen.add(k); out.push(rule);
+  }
+  for (const rule of local || []) {
+    const k = ruleKey(rule);
+    if (seen.has(k)) continue;
+    seen.add(k); out.push(rule);
+  }
+  return out;
+}
+
+function unionMap(local, remote) {
+  // Remote wins on overlapping keys (most recently synced).
+  return { ...(local || {}), ...(remote || {}) };
+}
+
+function unionStringArray(local, remote) {
+  const set = new Set();
+  for (const s of remote || []) set.add(s);
+  for (const s of local || []) set.add(s);
+  return [...set];
+}
+
+function unionSet(localSet, remoteArray) {
+  const out = new Set(localSet);
+  for (const s of remoteArray || []) out.add(s);
+  return out;
+}
+
+function mergedDiffersFromRemote(merged, remote) {
+  const checks = [
+    [merged.categoryRules, remote.categoryRules],
+    [merged.subcategoryRules, remote.subcategoryRules],
+    [merged.customCategories, remote.customCategories],
+    [[...merged.hiddenCategories], remote.hiddenCategories],
+    [[...merged.hiddenTransactionIds], remote.hiddenTransactionIds],
+  ];
+  for (const [a, b] of checks) {
+    if (!Array.isArray(b) || a.length !== b.length) return true;
+  }
+  const maps = [
+    [merged.categoryOverrides, remote.categoryOverrides],
+    [merged.subcategoryOverrides, remote.subcategoryOverrides],
+    [merged.dateOverrides, remote.dateOverrides],
+    [merged.transactionNotes, remote.transactionNotes],
+    [merged.accountNicknames, remote.accountNicknames],
+  ];
+  for (const [a, b] of maps) {
+    const bObj = b && typeof b === 'object' ? b : {};
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(bObj);
+    if (aKeys.length !== bKeys.length) return true;
+    for (const k of aKeys) {
+      if (a[k] !== bObj[k]) return true;
+    }
+  }
+  return false;
+}
+
 export function DataProvider({ children }) {
   const [rawTransactions, setRawTransactions] = useState([]);
   const [hiddenIds, setHiddenIds] = useState(loadHiddenIds);
@@ -70,6 +145,11 @@ export function DataProvider({ children }) {
   // The Vercel weekly-summary Function reads this same doc so the email
   // applies the user's rules/overrides. localStorage is the fast read
   // source on the client; Firestore is the cross-device source of truth.
+  //
+  // Hydration uses a *union merge* between localStorage and Firestore so a
+  // device opening with empty localStorage can't accidentally overwrite
+  // another device's data via Firestore. Deletes don't propagate
+  // cross-device, but no data is ever lost.
   const syncHydrated = useRef(false);
   useEffect(() => {
     let cancelled = false;
@@ -78,63 +158,60 @@ export function DataProvider({ children }) {
         const ref = doc(db, ...CONFIG_DOC_PATH);
         const snap = await getDoc(ref);
         if (cancelled) return;
-        if (snap.exists()) {
-          const data = snap.data() || {};
-          if (Array.isArray(data.categoryRules)) {
-            setCategoryRules(data.categoryRules);
-            saveCategoryRules(data.categoryRules);
-          }
-          if (Array.isArray(data.subcategoryRules)) {
-            setSubcategoryRules(data.subcategoryRules);
-            saveSubcategoryRules(data.subcategoryRules);
-          }
-          if (data.categoryOverrides && typeof data.categoryOverrides === 'object') {
-            setCategoryOverrides(data.categoryOverrides);
-            saveCategoryOverrides(data.categoryOverrides);
-          }
-          if (data.subcategoryOverrides && typeof data.subcategoryOverrides === 'object') {
-            setSubcategoryOverrides(data.subcategoryOverrides);
-            saveSubcategoryOverrides(data.subcategoryOverrides);
-          }
-          if (data.dateOverrides && typeof data.dateOverrides === 'object') {
-            setDateOverrides(data.dateOverrides);
-            saveDateOverrides(data.dateOverrides);
-          }
-          if (data.transactionNotes && typeof data.transactionNotes === 'object') {
-            setTransactionNotes(data.transactionNotes);
-            saveNotes(data.transactionNotes);
-          }
-          if (data.accountNicknames && typeof data.accountNicknames === 'object') {
-            setAccountNicknames(data.accountNicknames);
-            saveAccountNicknames(data.accountNicknames);
-          }
-          if (Array.isArray(data.customCategories)) {
-            setCustomCategories(data.customCategories);
-            saveCustomCategories(data.customCategories);
-          }
-          if (Array.isArray(data.hiddenCategories)) {
-            const set = new Set(data.hiddenCategories);
-            setHiddenCategories(set);
-            saveHiddenCategories(set);
-          }
-          if (Array.isArray(data.hiddenTransactionIds)) {
-            const set = new Set(data.hiddenTransactionIds);
-            setHiddenIds(set);
-            saveHiddenIds(set);
-          }
-        } else {
-          // First-time migration: push current localStorage values up.
+        const remote = snap.exists() ? (snap.data() || {}) : {};
+
+        const localRules = loadCategoryRules();
+        const localSubRules = loadSubcategoryRules();
+        const localCatOv = loadCategoryOverrides();
+        const localSubOv = loadSubcategoryOverrides();
+        const localDateOv = loadDateOverrides();
+        const localNotes = loadNotes();
+        const localNicks = loadAccountNicknames();
+        const localCustomCats = loadCustomCategories();
+        const localHiddenCats = loadHiddenCategories();
+        const localHiddenIds = loadHiddenIds();
+
+        const merged = {
+          categoryRules: unionRules(localRules, Array.isArray(remote.categoryRules) ? remote.categoryRules : []),
+          subcategoryRules: unionRules(localSubRules, Array.isArray(remote.subcategoryRules) ? remote.subcategoryRules : []),
+          categoryOverrides: unionMap(localCatOv, remote.categoryOverrides),
+          subcategoryOverrides: unionMap(localSubOv, remote.subcategoryOverrides),
+          dateOverrides: unionMap(localDateOv, remote.dateOverrides),
+          transactionNotes: unionMap(localNotes, remote.transactionNotes),
+          accountNicknames: unionMap(localNicks, remote.accountNicknames),
+          customCategories: unionStringArray(localCustomCats, remote.customCategories),
+          hiddenCategories: unionSet(localHiddenCats, remote.hiddenCategories),
+          hiddenTransactionIds: unionSet(localHiddenIds, remote.hiddenTransactionIds),
+        };
+
+        // Push merged state into React + localStorage.
+        setCategoryRules(merged.categoryRules); saveCategoryRules(merged.categoryRules);
+        setSubcategoryRules(merged.subcategoryRules); saveSubcategoryRules(merged.subcategoryRules);
+        setCategoryOverrides(merged.categoryOverrides); saveCategoryOverrides(merged.categoryOverrides);
+        setSubcategoryOverrides(merged.subcategoryOverrides); saveSubcategoryOverrides(merged.subcategoryOverrides);
+        setDateOverrides(merged.dateOverrides); saveDateOverrides(merged.dateOverrides);
+        setTransactionNotes(merged.transactionNotes); saveNotes(merged.transactionNotes);
+        setAccountNicknames(merged.accountNicknames); saveAccountNicknames(merged.accountNicknames);
+        setCustomCategories(merged.customCategories); saveCustomCategories(merged.customCategories);
+        setHiddenCategories(merged.hiddenCategories); saveHiddenCategories(merged.hiddenCategories);
+        setHiddenIds(merged.hiddenTransactionIds); saveHiddenIds(merged.hiddenTransactionIds);
+
+        // If the union added anything that wasn't in the remote, push it
+        // back immediately so other devices see the restored data on next
+        // load. This self-heals the case where a fresh device clobbered
+        // Firestore with empty values before the primary device synced.
+        if (mergedDiffersFromRemote(merged, remote)) {
           await setDoc(ref, {
-            categoryRules: loadCategoryRules(),
-            subcategoryRules: loadSubcategoryRules(),
-            categoryOverrides: loadCategoryOverrides(),
-            subcategoryOverrides: loadSubcategoryOverrides(),
-            dateOverrides: loadDateOverrides(),
-            transactionNotes: loadNotes(),
-            accountNicknames: loadAccountNicknames(),
-            customCategories: loadCustomCategories(),
-            hiddenCategories: [...loadHiddenCategories()],
-            hiddenTransactionIds: [...loadHiddenIds()],
+            categoryRules: merged.categoryRules,
+            subcategoryRules: merged.subcategoryRules,
+            categoryOverrides: merged.categoryOverrides,
+            subcategoryOverrides: merged.subcategoryOverrides,
+            dateOverrides: merged.dateOverrides,
+            transactionNotes: merged.transactionNotes,
+            accountNicknames: merged.accountNicknames,
+            customCategories: merged.customCategories,
+            hiddenCategories: [...merged.hiddenCategories],
+            hiddenTransactionIds: [...merged.hiddenTransactionIds],
             updatedAt: new Date().toISOString(),
           });
         }
