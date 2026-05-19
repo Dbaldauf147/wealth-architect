@@ -24,6 +24,9 @@ service cloud.firestore {
     match /config/default {
       allow read, write: if true;
     }
+    match /budgets/{doc=**} {
+      allow read, write: if true;
+    }
     match /{document=**} {
       allow read, write: if false;
     }
