@@ -102,7 +102,7 @@ export default async function handler(req, res) {
         transactions,
         config.categoryOverrides || {},
         config.subcategoryOverrides || {},
-        {}, // dateOverrides not synced yet
+        config.dateOverrides || {},
       );
     }
 

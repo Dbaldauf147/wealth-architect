@@ -16,108 +16,40 @@ const CONFIG_DOC_PATH = ['config', 'default'];
 
 const DataContext = createContext(null);
 
-function loadHiddenIds() {
+function loadJSON(key, fallback) {
   try {
-    return new Set(JSON.parse(localStorage.getItem('hiddenTransactionIds') || '[]'));
-  } catch { return new Set(); }
+    const raw = localStorage.getItem(key);
+    return raw == null ? fallback : JSON.parse(raw);
+  } catch { return fallback; }
 }
 
-function saveHiddenIds(ids) {
-  localStorage.setItem('hiddenTransactionIds', JSON.stringify([...ids]));
+function saveJSON(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
 
-function loadCategoryRules() {
-  try {
-    return JSON.parse(localStorage.getItem('categoryRules') || '[]');
-  } catch { return []; }
-}
-
-function saveCategoryRules(rules) {
-  localStorage.setItem('categoryRules', JSON.stringify(rules));
-}
-
-function loadSubcategoryRules() {
-  try {
-    return JSON.parse(localStorage.getItem('subcategoryRules') || '[]');
-  } catch { return []; }
-}
-
-function saveSubcategoryRules(rules) {
-  localStorage.setItem('subcategoryRules', JSON.stringify(rules));
-}
-
-function loadCategoryOverrides() {
-  try {
-    return JSON.parse(localStorage.getItem('categoryOverrides') || '{}');
-  } catch { return {}; }
-}
-
-function saveCategoryOverrides(overrides) {
-  localStorage.setItem('categoryOverrides', JSON.stringify(overrides));
-}
-
-function loadSubcategoryOverrides() {
-  try {
-    return JSON.parse(localStorage.getItem('subcategoryOverrides') || '{}');
-  } catch { return {}; }
-}
-
-function saveSubcategoryOverrides(overrides) {
-  localStorage.setItem('subcategoryOverrides', JSON.stringify(overrides));
-}
-
-function loadDateOverrides() {
-  try {
-    return JSON.parse(localStorage.getItem('dateOverrides') || '{}');
-  } catch { return {}; }
-}
-
-function saveDateOverrides(overrides) {
-  localStorage.setItem('dateOverrides', JSON.stringify(overrides));
-}
-
-function loadNotes() {
-  try {
-    return JSON.parse(localStorage.getItem('transactionNotes') || '{}');
-  } catch { return {}; }
-}
-
-function saveNotes(notes) {
-  localStorage.setItem('transactionNotes', JSON.stringify(notes));
-}
-
-function loadAccountNicknames() {
-  try {
-    return JSON.parse(localStorage.getItem('accountNicknames') || '{}');
-  } catch { return {}; }
-}
-
-function saveAccountNicknames(nicknames) {
-  localStorage.setItem('accountNicknames', JSON.stringify(nicknames));
-}
-
-function loadCustomCategories() {
-  try {
-    return JSON.parse(localStorage.getItem('customCategories') || '[]');
-  } catch { return []; }
-}
-
-function saveCustomCategories(cats) {
-  localStorage.setItem('customCategories', JSON.stringify(cats));
-}
-
-function loadHiddenCategories() {
-  try {
-    return new Set(JSON.parse(localStorage.getItem('hiddenCategories') || '[]'));
-  } catch { return new Set(); }
-}
-
-function saveHiddenCategories(cats) {
-  localStorage.setItem('hiddenCategories', JSON.stringify([...cats]));
-}
+const loadHiddenIds = () => new Set(loadJSON('hiddenTransactionIds', []));
+const saveHiddenIds = (ids) => saveJSON('hiddenTransactionIds', [...ids]);
+const loadCategoryRules = () => loadJSON('categoryRules', []);
+const saveCategoryRules = (v) => saveJSON('categoryRules', v);
+const loadSubcategoryRules = () => loadJSON('subcategoryRules', []);
+const saveSubcategoryRules = (v) => saveJSON('subcategoryRules', v);
+const loadCategoryOverrides = () => loadJSON('categoryOverrides', {});
+const saveCategoryOverrides = (v) => saveJSON('categoryOverrides', v);
+const loadSubcategoryOverrides = () => loadJSON('subcategoryOverrides', {});
+const saveSubcategoryOverrides = (v) => saveJSON('subcategoryOverrides', v);
+const loadDateOverrides = () => loadJSON('dateOverrides', {});
+const saveDateOverrides = (v) => saveJSON('dateOverrides', v);
+const loadNotes = () => loadJSON('transactionNotes', {});
+const saveNotes = (v) => saveJSON('transactionNotes', v);
+const loadAccountNicknames = () => loadJSON('accountNicknames', {});
+const saveAccountNicknames = (v) => saveJSON('accountNicknames', v);
+const loadCustomCategories = () => loadJSON('customCategories', []);
+const saveCustomCategories = (v) => saveJSON('customCategories', v);
+const loadHiddenCategories = () => new Set(loadJSON('hiddenCategories', []));
+const saveHiddenCategories = (cats) => saveJSON('hiddenCategories', [...cats]);
 
 export function DataProvider({ children }) {
-  const [allTransactions, setAllTransactions] = useState([]);
+  const [rawTransactions, setRawTransactions] = useState([]);
   const [hiddenIds, setHiddenIds] = useState(loadHiddenIds);
   const [categoryRules, setCategoryRules] = useState(loadCategoryRules);
   const [subcategoryRules, setSubcategoryRules] = useState(loadSubcategoryRules);
@@ -129,14 +61,15 @@ export function DataProvider({ children }) {
   const [transactionNotes, setTransactionNotes] = useState(loadNotes);
   const [accountNicknames, setAccountNicknames] = useState(loadAccountNicknames);
   const [balances, setBalances] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [configHydrated, setConfigHydrated] = useState(false);
   const [error, setError] = useState(null);
   const [lastSync, setLastSync] = useState(null);
 
-  // ── Firestore sync of category rules + overrides ──────────────────────
+  // ── Firestore sync of all per-user categorization state ───────────────
   // The Vercel weekly-summary Function reads this same doc so the email
-  // applies the user's rules. localStorage stays the fast read source on
-  // the client; Firestore is the cross-process source of truth.
+  // applies the user's rules/overrides. localStorage is the fast read
+  // source on the client; Firestore is the cross-device source of truth.
   const syncHydrated = useRef(false);
   useEffect(() => {
     let cancelled = false;
@@ -163,6 +96,32 @@ export function DataProvider({ children }) {
             setSubcategoryOverrides(data.subcategoryOverrides);
             saveSubcategoryOverrides(data.subcategoryOverrides);
           }
+          if (data.dateOverrides && typeof data.dateOverrides === 'object') {
+            setDateOverrides(data.dateOverrides);
+            saveDateOverrides(data.dateOverrides);
+          }
+          if (data.transactionNotes && typeof data.transactionNotes === 'object') {
+            setTransactionNotes(data.transactionNotes);
+            saveNotes(data.transactionNotes);
+          }
+          if (data.accountNicknames && typeof data.accountNicknames === 'object') {
+            setAccountNicknames(data.accountNicknames);
+            saveAccountNicknames(data.accountNicknames);
+          }
+          if (Array.isArray(data.customCategories)) {
+            setCustomCategories(data.customCategories);
+            saveCustomCategories(data.customCategories);
+          }
+          if (Array.isArray(data.hiddenCategories)) {
+            const set = new Set(data.hiddenCategories);
+            setHiddenCategories(set);
+            saveHiddenCategories(set);
+          }
+          if (Array.isArray(data.hiddenTransactionIds)) {
+            const set = new Set(data.hiddenTransactionIds);
+            setHiddenIds(set);
+            saveHiddenIds(set);
+          }
         } else {
           // First-time migration: push current localStorage values up.
           await setDoc(ref, {
@@ -170,13 +129,22 @@ export function DataProvider({ children }) {
             subcategoryRules: loadSubcategoryRules(),
             categoryOverrides: loadCategoryOverrides(),
             subcategoryOverrides: loadSubcategoryOverrides(),
+            dateOverrides: loadDateOverrides(),
+            transactionNotes: loadNotes(),
+            accountNicknames: loadAccountNicknames(),
+            customCategories: loadCustomCategories(),
+            hiddenCategories: [...loadHiddenCategories()],
+            hiddenTransactionIds: [...loadHiddenIds()],
             updatedAt: new Date().toISOString(),
           });
         }
       } catch (err) {
         console.warn('Firestore config sync (read) failed:', err);
       } finally {
-        if (!cancelled) syncHydrated.current = true;
+        if (!cancelled) {
+          syncHydrated.current = true;
+          setConfigHydrated(true);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -190,11 +158,39 @@ export function DataProvider({ children }) {
         subcategoryRules,
         categoryOverrides,
         subcategoryOverrides,
+        dateOverrides,
+        transactionNotes,
+        accountNicknames,
+        customCategories,
+        hiddenCategories: [...hiddenCategories],
+        hiddenTransactionIds: [...hiddenIds],
         updatedAt: new Date().toISOString(),
       }).catch(err => console.warn('Firestore config sync (write) failed:', err));
     }, 500);
     return () => clearTimeout(handle);
-  }, [categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides]);
+  }, [
+    categoryRules,
+    subcategoryRules,
+    categoryOverrides,
+    subcategoryOverrides,
+    dateOverrides,
+    transactionNotes,
+    accountNicknames,
+    customCategories,
+    hiddenCategories,
+    hiddenIds,
+  ]);
+
+  // Derive the categorized transaction list from raw data + current rules
+  // and overrides. This makes late-arriving Firestore hydration re-apply
+  // categorization automatically, instead of being stuck with whatever was
+  // in localStorage when loadData() ran.
+  const allTransactions = useMemo(() => {
+    if (!rawTransactions.length) return rawTransactions;
+    const withRules = applyRulesToTransactions(rawTransactions, categoryRules);
+    const withSubRules = applySubcategoryRulesToTransactions(withRules, subcategoryRules);
+    return applyOverrides(withSubRules, categoryOverrides, subcategoryOverrides, dateOverrides);
+  }, [rawTransactions, categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides]);
 
   const transactions = useMemo(
     () => allTransactions.filter(t => !hiddenIds.has(t.transactionId)),
@@ -207,68 +203,49 @@ export function DataProvider({ children }) {
   );
 
   const loadData = useCallback(async () => {
-    setLoading(true);
+    setDataLoading(true);
     setError(null);
     try {
       const [txns, bal] = await Promise.all([
         fetchTransactions(),
         fetchBalances(),
       ]);
-      const rules = loadCategoryRules();
-      const subRules = loadSubcategoryRules();
-      const overrides = loadCategoryOverrides();
-      const subOverrides = loadSubcategoryOverrides();
-      const dOverrides = loadDateOverrides();
-      const withRules = applyRulesToTransactions(txns, rules);
-      const withSubRules = applySubcategoryRulesToTransactions(withRules, subRules);
-      setAllTransactions(applyOverrides(withSubRules, overrides, subOverrides, dOverrides));
+      setRawTransactions(txns);
       setBalances(bal);
       setLastSync(new Date());
     } catch (err) {
       console.error('Failed to load sheet data:', err);
       setError(err.message);
     } finally {
-      setLoading(false);
+      setDataLoading(false);
     }
   }, []);
+
+  // Gate the "ready" state on both the sheet fetch and the Firestore
+  // hydration so consumers don't render uncategorized data on a fresh
+  // device while Firestore is still in flight.
+  const loading = dataLoading || !configHydrated;
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  const updateTransactionCategory = useCallback((transactionId, index, newCategory) => {
-    setAllTransactions(prev => prev.map((t, i) => {
-      if (transactionId && t.transactionId === transactionId) return { ...t, category: newCategory };
-      if (!transactionId && i === index) return { ...t, category: newCategory };
-      return t;
-    }));
-    if (transactionId) {
-      setCategoryOverrides(prev => {
-        const next = { ...prev, [transactionId]: newCategory };
-        saveCategoryOverrides(next);
-        return next;
-      });
-    }
+  const updateTransactionCategory = useCallback((transactionId, _index, newCategory) => {
+    if (!transactionId) return;
+    setCategoryOverrides(prev => {
+      const next = { ...prev, [transactionId]: newCategory };
+      saveCategoryOverrides(next);
+      return next;
+    });
   }, []);
 
   const updateTransactionSubcategory = useCallback((transactionId, newSubcategory) => {
-    setAllTransactions(prev => prev.map(t =>
-      t.transactionId === transactionId ? { ...t, subcategory: newSubcategory } : t
-    ));
-    if (transactionId) {
-      setSubcategoryOverrides(prev => {
-        const next = { ...prev, [transactionId]: newSubcategory };
-        saveSubcategoryOverrides(next);
-        return next;
-      });
-    }
-  }, []);
-
-  const bulkUpdateCategoryByRule = useCallback((ruleLike, newCategory) => {
-    setAllTransactions(prev => prev.map(t => {
-      if (ruleMatches(ruleLike, t)) return { ...t, category: newCategory };
-      return t;
-    }));
+    if (!transactionId) return;
+    setSubcategoryOverrides(prev => {
+      const next = { ...prev, [transactionId]: newSubcategory };
+      saveSubcategoryOverrides(next);
+      return next;
+    });
   }, []);
 
   const addCategoryRule = useCallback((description, amount, category, options) => {
@@ -287,21 +264,11 @@ export function DataProvider({ children }) {
       saveCategoryRules(next);
       return next;
     });
-    bulkUpdateCategoryByRule(ruleObj, category);
-  }, [bulkUpdateCategoryByRule]);
+  }, []);
 
   const updateTransactionDate = useCallback((transactionId, newDate, fallbackKey) => {
     const key = transactionId || fallbackKey;
     if (!key) return;
-    setAllTransactions(prev => prev.map(t => {
-      const matches = (transactionId && t.transactionId === transactionId)
-        || (!transactionId && fallbackKey && txnFallbackKey(t) === fallbackKey);
-      if (!matches) return t;
-      // Preserve the very first observed date so we can show it on hover even after
-      // multiple edits (don't overwrite originalDate if it's already set).
-      const originalDate = t.originalDate || t.date;
-      return { ...t, originalDate, date: newDate };
-    }));
     setDateOverrides(prev => {
       const next = { ...prev };
       if (newDate) next[key] = newDate;
@@ -332,13 +299,6 @@ export function DataProvider({ children }) {
     });
   }, []);
 
-  const bulkUpdateSubcategoryByRule = useCallback((ruleLike, newSubcategory) => {
-    setAllTransactions(prev => prev.map(t => {
-      if (ruleMatches(ruleLike, t)) return { ...t, subcategory: newSubcategory };
-      return t;
-    }));
-  }, []);
-
   const addSubcategoryRule = useCallback((description, subcategory, options) => {
     const opts = options || {};
     const ruleObj = {
@@ -354,8 +314,7 @@ export function DataProvider({ children }) {
       saveSubcategoryRules(next);
       return next;
     });
-    bulkUpdateSubcategoryByRule(ruleObj, subcategory);
-  }, [bulkUpdateSubcategoryByRule]);
+  }, []);
 
   const removeCategoryRule = useCallback((index) => {
     setCategoryRules(prev => {
@@ -387,8 +346,7 @@ export function DataProvider({ children }) {
       saveCategoryRules(next);
       return next;
     });
-    bulkUpdateCategoryByRule(patch, newCategory);
-  }, [bulkUpdateCategoryByRule]);
+  }, []);
 
   const updateSubcategoryRule = useCallback((index, newDescription, newSubcategory, options) => {
     const opts = options || {};
@@ -404,14 +362,9 @@ export function DataProvider({ children }) {
       saveSubcategoryRules(next);
       return next;
     });
-    bulkUpdateSubcategoryByRule(patch, newSubcategory);
-  }, [bulkUpdateSubcategoryByRule]);
+  }, []);
 
   const bulkUpdateCategoryByIds = useCallback((transactionIds, newCategory) => {
-    const idSet = new Set(transactionIds);
-    setAllTransactions(prev => prev.map(t =>
-      idSet.has(t.transactionId) ? { ...t, category: newCategory } : t
-    ));
     setCategoryOverrides(prev => {
       const next = { ...prev };
       for (const id of transactionIds) {
@@ -444,10 +397,6 @@ export function DataProvider({ children }) {
     const affectedIds = allTransactions
       .filter(t => (t.category || '') === oldName && t.transactionId)
       .map(t => t.transactionId);
-
-    setAllTransactions(prev => prev.map(t =>
-      (t.category || '') === oldName ? { ...t, category: trimmed } : t
-    ));
 
     setCategoryOverrides(prev => {
       const next = { ...prev };
@@ -482,10 +431,6 @@ export function DataProvider({ children }) {
     const affectedIds = allTransactions
       .filter(t => (t.category || '') === name && t.transactionId)
       .map(t => t.transactionId);
-
-    setAllTransactions(prev => prev.map(t =>
-      (t.category || '') === name ? { ...t, category: reassignTo } : t
-    ));
 
     setCategoryOverrides(prev => {
       const next = { ...prev };
