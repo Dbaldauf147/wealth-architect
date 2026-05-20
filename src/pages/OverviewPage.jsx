@@ -25,8 +25,26 @@ function relativeTime(date) {
 const DONUT_COLORS = ['#0058be', '#009668', '#e8a317', '#94a3b8', '#7c3aed', '#e11d48', '#06b6d4', '#f97316'];
 
 export function OverviewPage() {
-  const { balances, analytics, transactions, loading, error, lastSync, accountNicknames: ctxNicknames } = useData();
+  const { balances, analytics, transactions, loading, error, lastSync, accountNicknames: ctxNicknames, setAccountNickname } = useData();
   const accountNicknames = ctxNicknames || {};
+  const [renamingAccount, setRenamingAccount] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  function startRename(originalName) {
+    setRenamingAccount(originalName);
+    setRenameValue(accountNicknames[originalName] || originalName);
+  }
+  function saveRename() {
+    if (!renamingAccount) return;
+    const val = renameValue.trim();
+    setAccountNickname(renamingAccount, val && val !== renamingAccount ? val : null);
+    setRenamingAccount(null);
+    setRenameValue('');
+  }
+  function cancelRename() {
+    setRenamingAccount(null);
+    setRenameValue('');
+  }
   const [chartPeriod, setChartPeriod] = useState('6M');
   const [chartMode, setChartMode] = useState('bar');
   const [hoverPoint, setHoverPoint] = useState(null); // { kind: 'income'|'expense', i, x, y }
@@ -160,6 +178,41 @@ export function OverviewPage() {
 
   // Resolve real assets/liabilities for breakdown rows
   const displayAccount = (name) => accountNicknames[name] || name;
+
+  // Inline-rename row for snapshot breakdowns. Lives inside .snapshotRowName,
+  // which already stacks two lines (display name above, original below).
+  const renderAccountName = (name) => {
+    if (renamingAccount === name) {
+      return (
+        <span className={styles.renameRow}>
+          <input
+            className={styles.renameInput}
+            value={renameValue}
+            onChange={e => setRenameValue(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') cancelRename(); }}
+            autoFocus
+          />
+          <button className={styles.renameSave} onClick={saveRename} title="Save">
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span>
+          </button>
+          <button className={styles.renameCancel} onClick={cancelRename} title="Cancel">
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+          </button>
+        </span>
+      );
+    }
+    return (
+      <>
+        <span className={styles.renameAware}>
+          <span className={styles.snapshotRowDisplay}>{displayAccount(name)}</span>
+          <button className={styles.renameBtn} onClick={() => startRename(name)} title="Rename account">
+            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
+          </button>
+        </span>
+        {accountNicknames[name] && <span className={styles.snapshotRowOriginal}>{name}</span>}
+      </>
+    );
+  };
   const assetRows = (balances?.assets || []).slice().sort((a, b) => b.balance - a.balance);
   const liabilityRows = (balances?.liabilities || []).slice().sort((a, b) => b.balance - a.balance);
   const assetTotal = balances?.totalAssets || assetRows.reduce((s, a) => s + a.balance, 0);
@@ -221,8 +274,7 @@ export function OverviewPage() {
                   {assetRows.map(a => (
                     <div key={a.name} className={styles.snapshotRow}>
                       <span className={styles.snapshotRowName}>
-                        <span className={styles.snapshotRowDisplay}>{displayAccount(a.name)}</span>
-                        {accountNicknames[a.name] && <span className={styles.snapshotRowOriginal}>{a.name}</span>}
+                        {renderAccountName(a.name)}
                       </span>
                       <span className={styles.snapshotRowValue}>{fmt(a.balance)}</span>
                     </div>
@@ -237,8 +289,7 @@ export function OverviewPage() {
                   {liabilityRows.map(l => (
                     <div key={l.name} className={styles.snapshotRow}>
                       <span className={styles.snapshotRowName}>
-                        <span className={styles.snapshotRowDisplay}>{displayAccount(l.name)}</span>
-                        {accountNicknames[l.name] && <span className={styles.snapshotRowOriginal}>{l.name}</span>}
+                        {renderAccountName(l.name)}
                       </span>
                       <span className={styles.snapshotRowValue}>{fmt(l.balance)}</span>
                     </div>
@@ -255,8 +306,7 @@ export function OverviewPage() {
                     <div key={a.name} className={styles.snapshotRowFull}>
                       <div className={styles.snapshotRowFullHeader}>
                         <span className={styles.snapshotRowName}>
-                        <span className={styles.snapshotRowDisplay}>{displayAccount(a.name)}</span>
-                        {accountNicknames[a.name] && <span className={styles.snapshotRowOriginal}>{a.name}</span>}
+                        {renderAccountName(a.name)}
                       </span>
                         <span className={styles.snapshotRowValue}>{fmt(a.balance)} <span className={styles.snapshotPct}>{pct.toFixed(1)}%</span></span>
                       </div>
@@ -277,8 +327,7 @@ export function OverviewPage() {
                     <div key={l.name} className={styles.snapshotRowFull}>
                       <div className={styles.snapshotRowFullHeader}>
                         <span className={styles.snapshotRowName}>
-                        <span className={styles.snapshotRowDisplay}>{displayAccount(l.name)}</span>
-                        {accountNicknames[l.name] && <span className={styles.snapshotRowOriginal}>{l.name}</span>}
+                        {renderAccountName(l.name)}
                       </span>
                         <span className={styles.snapshotRowValue}>{fmt(l.balance)} <span className={styles.snapshotPct}>{pct.toFixed(1)}%</span></span>
                       </div>
@@ -574,7 +623,7 @@ export function OverviewPage() {
                       {hoverDonut != null ? ALLOCATION[hoverDonut].value : fmtCompact(balances?.totalAssets)}
                     </text>
                     <text x="80" y="92" textAnchor="middle" fontFamily="var(--font-body)" fontSize="9" fill="var(--color-text-tertiary)">
-                      {hoverDonut != null ? `${ALLOCATION[hoverDonut].label.toUpperCase()} · ${ALLOCATION[hoverDonut].pct}%` : 'TOTAL'}
+                      {hoverDonut != null ? `${displayAccount(ALLOCATION[hoverDonut].label).toUpperCase()} · ${ALLOCATION[hoverDonut].pct}%` : 'TOTAL'}
                     </text>
                   </>
                 );
@@ -582,15 +631,43 @@ export function OverviewPage() {
             </svg>
           </div>
           <div className={styles.donutLegend}>
-            {ALLOCATION.map((a) => (
-              <div key={a.label} className={styles.donutLegendItem}>
-                <div className={styles.donutLegendLeft}>
-                  <div className={styles.donutLegendDot} style={{ background: a.color }} />
-                  {a.label}
+            {ALLOCATION.map((a) => {
+              const isEditing = renamingAccount === a.label;
+              const hasNickname = !!accountNicknames[a.label];
+              return (
+                <div key={a.label} className={styles.donutLegendItem}>
+                  <div className={styles.donutLegendLeft}>
+                    <div className={styles.donutLegendDot} style={{ background: a.color }} />
+                    {isEditing ? (
+                      <span className={styles.renameRow}>
+                        <input
+                          className={styles.renameInput}
+                          value={renameValue}
+                          onChange={e => setRenameValue(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') cancelRename(); }}
+                          autoFocus
+                        />
+                        <button className={styles.renameSave} onClick={saveRename} title="Save">
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span>
+                        </button>
+                        <button className={styles.renameCancel} onClick={cancelRename} title="Cancel">
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+                        </button>
+                      </span>
+                    ) : (
+                      <span className={styles.renameAware}>
+                        <span>{displayAccount(a.label)}</span>
+                        <button className={styles.renameBtn} onClick={() => startRename(a.label)} title="Rename account">
+                          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
+                        </button>
+                        {hasNickname && <span className={styles.renameOriginal}>{a.label}</span>}
+                      </span>
+                    )}
+                  </div>
+                  <span className={styles.donutLegendValue}>{a.pct}%</span>
                 </div>
-                <span className={styles.donutLegendValue}>{a.pct}%</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

@@ -432,6 +432,97 @@
   font-family: var(--font-headline);
 }
 
+/* ── Inline rename (shared by donut legend + snapshot rows) ── */
+.renameAware {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.renameBtn {
+  padding: 2px 4px;
+  background: transparent;
+  border: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+
+.donutLegendItem:hover .renameBtn,
+.snapshotRow:hover .renameBtn,
+.snapshotRowFull:hover .renameBtn {
+  opacity: 1;
+}
+
+.renameBtn:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text-secondary);
+}
+
+.renameRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.renameInput {
+  font: inherit;
+  color: var(--color-text-primary);
+  padding: 4px 8px;
+  border: 1px solid var(--color-border, rgba(0, 0, 0, 0.15));
+  border-radius: 6px;
+  background: var(--color-surface);
+  min-width: 160px;
+  max-width: 280px;
+  flex: 1;
+}
+
+.renameInput:focus {
+  outline: none;
+  border-color: #0058be;
+}
+
+.renameSave,
+.renameCancel {
+  padding: 4px 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.renameSave {
+  color: var(--color-success);
+}
+
+.renameCancel {
+  color: var(--color-text-tertiary);
+}
+
+.renameSave:hover {
+  background: rgba(0, 150, 104, 0.08);
+}
+
+.renameCancel:hover {
+  background: var(--color-surface-alt);
+}
+
+.renameOriginal {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+}
+
 /* ── Bottom Row ── */
 .bottomRow {
   display: grid;
