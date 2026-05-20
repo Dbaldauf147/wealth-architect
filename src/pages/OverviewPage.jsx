@@ -25,26 +25,44 @@ function relativeTime(date) {
 const DONUT_COLORS = ['#0058be', '#009668', '#e8a317', '#94a3b8', '#7c3aed', '#e11d48', '#06b6d4', '#f97316'];
 
 export function OverviewPage() {
-  const { balances, analytics, transactions, loading, error, lastSync, accountNicknames: ctxNicknames, setAccountNickname } = useData();
+  const {
+    balances, analytics, transactions, loading, error, lastSync,
+    accountNicknames: ctxNicknames, setAccountNickname,
+    accountGroups: ctxGroups, setAccountGroup, renameGroup, deleteGroup,
+  } = useData();
   const accountNicknames = ctxNicknames || {};
-  const [renamingAccount, setRenamingAccount] = useState(null);
+  const accountGroups = ctxGroups || {};
+  // rename target is keyed by bucket key: 'group:Name' or 'acct:Name'
+  const [renamingBucket, setRenamingBucket] = useState(null);
   const [renameValue, setRenameValue] = useState('');
+  // group picker open for which bucket key
+  const [groupPickerFor, setGroupPickerFor] = useState(null);
+  const [newGroupInput, setNewGroupInput] = useState('');
 
-  function startRename(originalName) {
-    setRenamingAccount(originalName);
-    setRenameValue(accountNicknames[originalName] || originalName);
+  function startRename(bucket) {
+    setRenamingBucket(bucket.key);
+    setRenameValue(bucket.displayName);
   }
   function saveRename() {
-    if (!renamingAccount) return;
+    if (!renamingBucket) return;
     const val = renameValue.trim();
-    setAccountNickname(renamingAccount, val && val !== renamingAccount ? val : null);
-    setRenamingAccount(null);
+    if (renamingBucket.startsWith('group:')) {
+      const oldName = renamingBucket.slice(6);
+      if (val && val !== oldName) renameGroup(oldName, val);
+    } else if (renamingBucket.startsWith('acct:')) {
+      const acct = renamingBucket.slice(5);
+      setAccountNickname(acct, val && val !== acct ? val : null);
+    }
+    setRenamingBucket(null);
     setRenameValue('');
   }
   function cancelRename() {
-    setRenamingAccount(null);
+    setRenamingBucket(null);
     setRenameValue('');
   }
+
+  // Distinct group names currently in use, for picker dropdowns.
+  const existingGroupNames = Array.from(new Set(Object.values(accountGroups))).filter(Boolean).sort();
   const [chartPeriod, setChartPeriod] = useState('6M');
   const [chartMode, setChartMode] = useState('bar');
   const [hoverPoint, setHoverPoint] = useState(null); // { kind: 'income'|'expense', i, x, y }
@@ -108,13 +126,16 @@ export function OverviewPage() {
     },
   ];
 
-  // Build asset allocation from real balances
+  // Build asset allocation from real balances — aggregated by group so a
+  // single donut slice / legend row covers all members of the group.
   const assetAccounts = balances?.assets || [];
   const totalAssetBalance = assetAccounts.reduce((sum, a) => sum + a.balance, 0) || 1;
-  const ALLOCATION = assetAccounts.map((a, i) => ({
-    label: a.name,
-    value: fmt(a.balance),
-    pct: Math.round((a.balance / totalAssetBalance) * 100),
+  const assetBuckets = aggregateByGroup(assetAccounts).sort((a, b) => b.balance - a.balance);
+  const ALLOCATION = assetBuckets.map((b, i) => ({
+    bucket: b,
+    label: b.displayName,
+    value: fmt(b.balance),
+    pct: Math.round((b.balance / totalAssetBalance) * 100),
     color: DONUT_COLORS[i % DONUT_COLORS.length],
   }));
 
@@ -176,13 +197,36 @@ export function OverviewPage() {
     return { income, expenses, net: income - expenses, incomeRows: sortRows(incomeByCat), expenseRows: sortRows(expensesByCat) };
   })();
 
-  // Resolve real assets/liabilities for breakdown rows
-  const displayAccount = (name) => accountNicknames[name] || name;
+  // Resolve real assets/liabilities for breakdown rows. effectiveDisplayName
+  // returns the group name when grouped, otherwise the nickname, otherwise raw.
+  const displayAccount = (name) => accountGroups[name] || accountNicknames[name] || name;
 
-  // Inline-rename row for snapshot breakdowns. Lives inside .snapshotRowName,
-  // which already stacks two lines (display name above, original below).
-  const renderAccountName = (name) => {
-    if (renamingAccount === name) {
+  // Aggregate a list of accounts into buckets keyed by their effective display
+  // name. Grouped accounts collapse into a single bucket whose balance is the
+  // sum of member balances; ungrouped accounts produce a one-member bucket.
+  function aggregateByGroup(accounts) {
+    const map = new Map();
+    for (const a of accounts) {
+      const group = accountGroups[a.name];
+      const key = group ? `group:${group}` : `acct:${a.name}`;
+      const displayName = group || accountNicknames[a.name] || a.name;
+      const isGroup = !!group;
+      if (!map.has(key)) {
+        map.set(key, { key, displayName, balance: 0, members: [], isGroup, groupName: group || null, accountName: isGroup ? null : a.name });
+      }
+      const bucket = map.get(key);
+      bucket.balance += a.balance || 0;
+      bucket.members.push(a.name);
+    }
+    return Array.from(map.values());
+  }
+
+  // Render an account or group row's name cell. Shows inline rename UI when
+  // renamingBucket matches; otherwise shows the display name with pencil +
+  // group-picker affordances. Members of a group are shown dimmed underneath.
+  const renderBucketName = (bucket) => {
+    const isEditing = renamingBucket === bucket.key;
+    if (isEditing) {
       return (
         <span className={styles.renameRow}>
           <input
@@ -204,19 +248,118 @@ export function OverviewPage() {
     return (
       <>
         <span className={styles.renameAware}>
-          <span className={styles.snapshotRowDisplay}>{displayAccount(name)}</span>
-          <button className={styles.renameBtn} onClick={() => startRename(name)} title="Rename account">
+          <span className={styles.snapshotRowDisplay}>
+            {bucket.isGroup && <span className={styles.groupBadge} title="Account group">group</span>}
+            {bucket.displayName}
+          </span>
+          <button className={styles.renameBtn} onClick={() => startRename(bucket)} title={bucket.isGroup ? 'Rename group' : 'Rename account'}>
             <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
           </button>
+          <button
+            className={styles.renameBtn}
+            onClick={() => { setGroupPickerFor(groupPickerFor === bucket.key ? null : bucket.key); setNewGroupInput(''); }}
+            title={bucket.isGroup ? 'Manage group' : 'Add to group'}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{bucket.isGroup ? 'workspaces' : 'add_link'}</span>
+          </button>
         </span>
-        {accountNicknames[name] && <span className={styles.snapshotRowOriginal}>{name}</span>}
+        {/* Original name(s) shown dimmed below */}
+        {bucket.isGroup ? (
+          <span className={styles.snapshotRowOriginal}>
+            {bucket.members.length} {bucket.members.length === 1 ? 'account' : 'accounts'}: {bucket.members.join(', ')}
+          </span>
+        ) : (
+          accountNicknames[bucket.accountName] && <span className={styles.snapshotRowOriginal}>{bucket.accountName}</span>
+        )}
+        {groupPickerFor === bucket.key && (
+          <div className={styles.groupPicker}>
+            {existingGroupNames.length > 0 && (
+              <div className={styles.groupPickerSection}>
+                <div className={styles.groupPickerLabel}>Move to group</div>
+                {existingGroupNames.map(g => (
+                  <button
+                    key={g}
+                    className={styles.groupPickerOption}
+                    disabled={bucket.isGroup && bucket.groupName === g}
+                    onClick={() => {
+                      if (bucket.isGroup) {
+                        // Move every member of this group to g
+                        for (const m of bucket.members) setAccountGroup(m, g);
+                      } else {
+                        setAccountGroup(bucket.accountName, g);
+                      }
+                      setGroupPickerFor(null);
+                    }}
+                  >
+                    {g}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className={styles.groupPickerSection}>
+              <div className={styles.groupPickerLabel}>{existingGroupNames.length > 0 ? 'Or create new group' : 'Create group'}</div>
+              <div className={styles.groupPickerNewRow}>
+                <input
+                  className={styles.groupPickerInput}
+                  value={newGroupInput}
+                  onChange={e => setNewGroupInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      const name = newGroupInput.trim();
+                      if (!name) return;
+                      if (bucket.isGroup) {
+                        for (const m of bucket.members) setAccountGroup(m, name);
+                      } else {
+                        setAccountGroup(bucket.accountName, name);
+                      }
+                      setNewGroupInput('');
+                      setGroupPickerFor(null);
+                    }
+                    if (e.key === 'Escape') setGroupPickerFor(null);
+                  }}
+                  placeholder="New group name"
+                  autoFocus
+                />
+                <button
+                  className={styles.groupPickerCreate}
+                  onClick={() => {
+                    const name = newGroupInput.trim();
+                    if (!name) return;
+                    if (bucket.isGroup) {
+                      for (const m of bucket.members) setAccountGroup(m, name);
+                    } else {
+                      setAccountGroup(bucket.accountName, name);
+                    }
+                    setNewGroupInput('');
+                    setGroupPickerFor(null);
+                  }}
+                >Create</button>
+              </div>
+            </div>
+            {bucket.isGroup ? (
+              <button
+                className={styles.groupPickerDanger}
+                onClick={() => { deleteGroup(bucket.groupName); setGroupPickerFor(null); }}
+              >Disband group</button>
+            ) : (
+              accountGroups[bucket.accountName] && (
+                <button
+                  className={styles.groupPickerDanger}
+                  onClick={() => { setAccountGroup(bucket.accountName, null); setGroupPickerFor(null); }}
+                >Remove from group</button>
+              )
+            )}
+          </div>
+        )}
       </>
     );
   };
-  const assetRows = (balances?.assets || []).slice().sort((a, b) => b.balance - a.balance);
-  const liabilityRows = (balances?.liabilities || []).slice().sort((a, b) => b.balance - a.balance);
-  const assetTotal = balances?.totalAssets || assetRows.reduce((s, a) => s + a.balance, 0);
-  const liabilityTotal = balances?.totalLiabilities || liabilityRows.reduce((s, l) => s + l.balance, 0);
+  const rawAssetRows = (balances?.assets || []).slice().sort((a, b) => b.balance - a.balance);
+  const rawLiabilityRows = (balances?.liabilities || []).slice().sort((a, b) => b.balance - a.balance);
+  const assetRowsBuckets = aggregateByGroup(rawAssetRows).sort((a, b) => b.balance - a.balance);
+  const liabilityRowsBuckets = aggregateByGroup(rawLiabilityRows).sort((a, b) => b.balance - a.balance);
+  const assetTotal = balances?.totalAssets || rawAssetRows.reduce((s, a) => s + a.balance, 0);
+  const liabilityTotal = balances?.totalLiabilities || rawLiabilityRows.reduce((s, l) => s + l.balance, 0);
 
   return (
     <div className={styles.page}>
@@ -270,13 +413,13 @@ export function OverviewPage() {
                     <span>Assets</span>
                     <span style={{ color: 'var(--color-success)' }}>{fmt(assetTotal)}</span>
                   </div>
-                  {assetRows.length === 0 && <div className={styles.snapshotEmpty}>No linked assets</div>}
-                  {assetRows.map(a => (
-                    <div key={a.name} className={styles.snapshotRow}>
+                  {assetRowsBuckets.length === 0 && <div className={styles.snapshotEmpty}>No linked assets</div>}
+                  {assetRowsBuckets.map(b => (
+                    <div key={b.key} className={styles.snapshotRow}>
                       <span className={styles.snapshotRowName}>
-                        {renderAccountName(a.name)}
+                        {renderBucketName(b)}
                       </span>
-                      <span className={styles.snapshotRowValue}>{fmt(a.balance)}</span>
+                      <span className={styles.snapshotRowValue}>{fmt(b.balance)}</span>
                     </div>
                   ))}
                 </div>
@@ -285,13 +428,13 @@ export function OverviewPage() {
                     <span>Liabilities</span>
                     <span style={{ color: 'var(--color-error)' }}>{fmt(liabilityTotal)}</span>
                   </div>
-                  {liabilityRows.length === 0 && <div className={styles.snapshotEmpty}>No linked liabilities</div>}
-                  {liabilityRows.map(l => (
-                    <div key={l.name} className={styles.snapshotRow}>
+                  {liabilityRowsBuckets.length === 0 && <div className={styles.snapshotEmpty}>No linked liabilities</div>}
+                  {liabilityRowsBuckets.map(b => (
+                    <div key={b.key} className={styles.snapshotRow}>
                       <span className={styles.snapshotRowName}>
-                        {renderAccountName(l.name)}
+                        {renderBucketName(b)}
                       </span>
-                      <span className={styles.snapshotRowValue}>{fmt(l.balance)}</span>
+                      <span className={styles.snapshotRowValue}>{fmt(b.balance)}</span>
                     </div>
                   ))}
                 </div>
@@ -299,16 +442,16 @@ export function OverviewPage() {
             )}
             {selectedSnapshot === 'Total Assets' && (
               <div className={styles.snapshotList}>
-                {assetRows.length === 0 && <div className={styles.snapshotEmpty}>No linked assets</div>}
-                {assetRows.map(a => {
-                  const pct = assetTotal > 0 ? (a.balance / assetTotal) * 100 : 0;
+                {assetRowsBuckets.length === 0 && <div className={styles.snapshotEmpty}>No linked assets</div>}
+                {assetRowsBuckets.map(b => {
+                  const pct = assetTotal > 0 ? (b.balance / assetTotal) * 100 : 0;
                   return (
-                    <div key={a.name} className={styles.snapshotRowFull}>
+                    <div key={b.key} className={styles.snapshotRowFull}>
                       <div className={styles.snapshotRowFullHeader}>
                         <span className={styles.snapshotRowName}>
-                        {renderAccountName(a.name)}
-                      </span>
-                        <span className={styles.snapshotRowValue}>{fmt(a.balance)} <span className={styles.snapshotPct}>{pct.toFixed(1)}%</span></span>
+                          {renderBucketName(b)}
+                        </span>
+                        <span className={styles.snapshotRowValue}>{fmt(b.balance)} <span className={styles.snapshotPct}>{pct.toFixed(1)}%</span></span>
                       </div>
                       <div className={styles.snapshotBar}>
                         <div className={styles.snapshotBarFill} style={{ width: `${pct}%`, background: 'var(--color-success)' }} />
@@ -320,16 +463,16 @@ export function OverviewPage() {
             )}
             {selectedSnapshot === 'Total Liabilities' && (
               <div className={styles.snapshotList}>
-                {liabilityRows.length === 0 && <div className={styles.snapshotEmpty}>No linked liabilities</div>}
-                {liabilityRows.map(l => {
-                  const pct = liabilityTotal > 0 ? (l.balance / liabilityTotal) * 100 : 0;
+                {liabilityRowsBuckets.length === 0 && <div className={styles.snapshotEmpty}>No linked liabilities</div>}
+                {liabilityRowsBuckets.map(b => {
+                  const pct = liabilityTotal > 0 ? (b.balance / liabilityTotal) * 100 : 0;
                   return (
-                    <div key={l.name} className={styles.snapshotRowFull}>
+                    <div key={b.key} className={styles.snapshotRowFull}>
                       <div className={styles.snapshotRowFullHeader}>
                         <span className={styles.snapshotRowName}>
-                        {renderAccountName(l.name)}
-                      </span>
-                        <span className={styles.snapshotRowValue}>{fmt(l.balance)} <span className={styles.snapshotPct}>{pct.toFixed(1)}%</span></span>
+                          {renderBucketName(b)}
+                        </span>
+                        <span className={styles.snapshotRowValue}>{fmt(b.balance)} <span className={styles.snapshotPct}>{pct.toFixed(1)}%</span></span>
                       </div>
                       <div className={styles.snapshotBar}>
                         <div className={styles.snapshotBarFill} style={{ width: `${pct}%`, background: 'var(--color-error)' }} />
@@ -631,43 +774,17 @@ export function OverviewPage() {
             </svg>
           </div>
           <div className={styles.donutLegend}>
-            {ALLOCATION.map((a) => {
-              const isEditing = renamingAccount === a.label;
-              const hasNickname = !!accountNicknames[a.label];
-              return (
-                <div key={a.label} className={styles.donutLegendItem}>
-                  <div className={styles.donutLegendLeft}>
-                    <div className={styles.donutLegendDot} style={{ background: a.color }} />
-                    {isEditing ? (
-                      <span className={styles.renameRow}>
-                        <input
-                          className={styles.renameInput}
-                          value={renameValue}
-                          onChange={e => setRenameValue(e.target.value)}
-                          onKeyDown={e => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') cancelRename(); }}
-                          autoFocus
-                        />
-                        <button className={styles.renameSave} onClick={saveRename} title="Save">
-                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span>
-                        </button>
-                        <button className={styles.renameCancel} onClick={cancelRename} title="Cancel">
-                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
-                        </button>
-                      </span>
-                    ) : (
-                      <span className={styles.renameAware}>
-                        <span>{displayAccount(a.label)}</span>
-                        <button className={styles.renameBtn} onClick={() => startRename(a.label)} title="Rename account">
-                          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
-                        </button>
-                        {hasNickname && <span className={styles.renameOriginal}>{a.label}</span>}
-                      </span>
-                    )}
+            {ALLOCATION.map((a) => (
+              <div key={a.bucket.key} className={styles.donutLegendItem}>
+                <div className={styles.donutLegendLeft}>
+                  <div className={styles.donutLegendDot} style={{ background: a.color }} />
+                  <div className={styles.donutLegendNameWrap}>
+                    {renderBucketName(a.bucket)}
                   </div>
-                  <span className={styles.donutLegendValue}>{a.pct}%</span>
                 </div>
-              );
-            })}
+                <span className={styles.donutLegendValue}>{a.pct}%</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>

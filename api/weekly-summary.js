@@ -112,6 +112,7 @@ export default async function handler(req, res) {
       start,
       end,
       accountNicknames: (config && config.accountNicknames) || {},
+      accountGroups: (config && config.accountGroups) || {},
     });
     const html = renderWeeklyEmailHtml(summary);
 

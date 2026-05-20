@@ -136,8 +136,8 @@ function savePromos(promos) {
 }
 
 export function CardPromosPage() {
-  const { transactions, accountNicknames } = useData();
-  const displayName = (name) => (accountNicknames && accountNicknames[name]) || name;
+  const { transactions, accountNicknames, accountGroups } = useData();
+  const displayName = (name) => (accountGroups && accountGroups[name]) || (accountNicknames && accountNicknames[name]) || name;
   const [promos, setPromos] = useState(loadPromos);
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState({});

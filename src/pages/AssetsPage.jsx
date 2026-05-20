@@ -17,8 +17,9 @@ function loadJSON(key, fallback) {
 function saveJSON(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
 
 export function AssetsPage() {
-  const { balances, loading, accountNicknames, setAccountNickname } = useData();
+  const { balances, loading, accountNicknames, setAccountNickname, accountGroups } = useData();
   const nicknames = accountNicknames || {};
+  const groups = accountGroups || {};
   const [hidden, setHidden] = useState(() => loadJSON(HIDDEN_KEY, []));
   const [customAssets, setCustomAssets] = useState(() => loadJSON(CUSTOM_ASSETS_KEY, []));
   const [customLiabilities, setCustomLiabilities] = useState(() => loadJSON(CUSTOM_LIABILITIES_KEY, []));
@@ -89,7 +90,7 @@ export function AssetsPage() {
   }
 
   function displayName(originalName) {
-    return nicknames[originalName] || originalName;
+    return groups[originalName] || nicknames[originalName] || originalName;
   }
 
   if (loading) {

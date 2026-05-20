@@ -675,7 +675,7 @@ const SUBCATEGORIES = {
 };
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, categoryRules, subcategoryRules, customCategories, addCustomCategory, hiddenCategories, renameCategory, removeCategory, unhideCategory, transactionNotes, updateTransactionNote, accountNicknames, setAccountNickname, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
+  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, categoryRules, subcategoryRules, customCategories, addCustomCategory, hiddenCategories, renameCategory, removeCategory, unhideCategory, transactionNotes, updateTransactionNote, accountNicknames, setAccountNickname, accountGroups, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
   const subDropdownRef = useRef(null);
@@ -1802,7 +1802,7 @@ export function TransactionsPage() {
               className={`${styles.filterPill} ${activeAccount === acc ? styles.filterPillActive : ''}`}
               onClick={() => { setActiveAccount(acc); setPage(0); }}
             >
-              {accountNicknames[acc] || acc}
+              {(accountGroups && accountGroups[acc]) || accountNicknames[acc] || acc}
             </div>
           ))}
         </div>

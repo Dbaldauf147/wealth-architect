@@ -57,6 +57,8 @@ const loadAccountNicknames = () => {
   return current || {};
 };
 const saveAccountNicknames = (v) => saveJSON('accountNicknames', v);
+const loadAccountGroups = () => loadJSON('accountGroups', {});
+const saveAccountGroups = (v) => saveJSON('accountGroups', v);
 const loadCustomCategories = () => loadJSON('customCategories', []);
 const saveCustomCategories = (v) => saveJSON('customCategories', v);
 const loadHiddenCategories = () => new Set(loadJSON('hiddenCategories', []));
@@ -124,6 +126,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.dateOverrides, remote.dateOverrides],
     [merged.transactionNotes, remote.transactionNotes],
     [merged.accountNicknames, remote.accountNicknames],
+    [merged.accountGroups, remote.accountGroups],
   ];
   for (const [a, b] of maps) {
     const bObj = b && typeof b === 'object' ? b : {};
@@ -149,6 +152,7 @@ export function DataProvider({ children }) {
   const [hiddenCategories, setHiddenCategories] = useState(loadHiddenCategories);
   const [transactionNotes, setTransactionNotes] = useState(loadNotes);
   const [accountNicknames, setAccountNicknames] = useState(loadAccountNicknames);
+  const [accountGroups, setAccountGroups] = useState(loadAccountGroups);
   const [balances, setBalances] = useState(null);
   const [dataLoading, setDataLoading] = useState(true);
   const [configHydrated, setConfigHydrated] = useState(false);
@@ -181,6 +185,7 @@ export function DataProvider({ children }) {
         const localDateOv = loadDateOverrides();
         const localNotes = loadNotes();
         const localNicks = loadAccountNicknames();
+        const localGroups = loadAccountGroups();
         const localCustomCats = loadCustomCategories();
         const localHiddenCats = loadHiddenCategories();
         const localHiddenIds = loadHiddenIds();
@@ -193,6 +198,7 @@ export function DataProvider({ children }) {
           dateOverrides: unionMap(localDateOv, remote.dateOverrides),
           transactionNotes: unionMap(localNotes, remote.transactionNotes),
           accountNicknames: unionMap(localNicks, remote.accountNicknames),
+          accountGroups: unionMap(localGroups, remote.accountGroups),
           customCategories: unionStringArray(localCustomCats, remote.customCategories),
           hiddenCategories: unionSet(localHiddenCats, remote.hiddenCategories),
           hiddenTransactionIds: unionSet(localHiddenIds, remote.hiddenTransactionIds),
@@ -206,6 +212,7 @@ export function DataProvider({ children }) {
         setDateOverrides(merged.dateOverrides); saveDateOverrides(merged.dateOverrides);
         setTransactionNotes(merged.transactionNotes); saveNotes(merged.transactionNotes);
         setAccountNicknames(merged.accountNicknames); saveAccountNicknames(merged.accountNicknames);
+        setAccountGroups(merged.accountGroups); saveAccountGroups(merged.accountGroups);
         setCustomCategories(merged.customCategories); saveCustomCategories(merged.customCategories);
         setHiddenCategories(merged.hiddenCategories); saveHiddenCategories(merged.hiddenCategories);
         setHiddenIds(merged.hiddenTransactionIds); saveHiddenIds(merged.hiddenTransactionIds);
@@ -223,6 +230,7 @@ export function DataProvider({ children }) {
             dateOverrides: merged.dateOverrides,
             transactionNotes: merged.transactionNotes,
             accountNicknames: merged.accountNicknames,
+            accountGroups: merged.accountGroups,
             customCategories: merged.customCategories,
             hiddenCategories: [...merged.hiddenCategories],
             hiddenTransactionIds: [...merged.hiddenTransactionIds],
@@ -252,6 +260,7 @@ export function DataProvider({ children }) {
         dateOverrides,
         transactionNotes,
         accountNicknames,
+        accountGroups,
         customCategories,
         hiddenCategories: [...hiddenCategories],
         hiddenTransactionIds: [...hiddenIds],
@@ -267,6 +276,7 @@ export function DataProvider({ children }) {
     dateOverrides,
     transactionNotes,
     accountNicknames,
+    accountGroups,
     customCategories,
     hiddenCategories,
     hiddenIds,
@@ -386,6 +396,44 @@ export function DataProvider({ children }) {
       if (nickname) next[accountName] = nickname;
       else delete next[accountName];
       saveAccountNicknames(next);
+      return next;
+    });
+  }, []);
+
+  // Assign `accountName` to `groupName`, or remove from any group when null.
+  const setAccountGroup = useCallback((accountName, groupName) => {
+    setAccountGroups(prev => {
+      const next = { ...prev };
+      const trimmed = (groupName || '').trim();
+      if (trimmed) next[accountName] = trimmed;
+      else delete next[accountName];
+      saveAccountGroups(next);
+      return next;
+    });
+  }, []);
+
+  // Rename a group: every account that points at oldName now points at newName.
+  const renameGroup = useCallback((oldName, newName) => {
+    const trimmed = (newName || '').trim();
+    if (!trimmed || trimmed === oldName) return;
+    setAccountGroups(prev => {
+      const next = {};
+      for (const [acct, g] of Object.entries(prev)) {
+        next[acct] = g === oldName ? trimmed : g;
+      }
+      saveAccountGroups(next);
+      return next;
+    });
+  }, []);
+
+  // Disband a group: clear membership for every member.
+  const deleteGroup = useCallback((groupName) => {
+    setAccountGroups(prev => {
+      const next = {};
+      for (const [acct, g] of Object.entries(prev)) {
+        if (g !== groupName) next[acct] = g;
+      }
+      saveAccountGroups(next);
       return next;
     });
   }, []);
@@ -618,6 +666,10 @@ export function DataProvider({ children }) {
       updateTransactionNote,
       accountNicknames,
       setAccountNickname,
+      accountGroups,
+      setAccountGroup,
+      renameGroup,
+      deleteGroup,
       getMatchCount,
       toggleHideTransaction,
       hiddenTransactions,

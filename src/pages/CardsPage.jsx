@@ -42,7 +42,7 @@ function parseAccountName(s) {
 }
 
 export function CardsPage() {
-  const { transactions, balances, accountNicknames, setAccountNickname, loading } = useData();
+  const { transactions, balances, accountNicknames, setAccountNickname, accountGroups, loading } = useData();
   const [view, setView] = useState('optimizer');
   const [scheduleView, setScheduleView] = useState('calendar');
   const [expanded, setExpanded] = useState(() => new Set());
@@ -66,8 +66,8 @@ export function CardsPage() {
   }
 
   const displayName = useCallback(
-    (name) => (accountNicknames && accountNicknames[name]) || name,
-    [accountNicknames],
+    (name) => (accountGroups && accountGroups[name]) || (accountNicknames && accountNicknames[name]) || name,
+    [accountNicknames, accountGroups],
   );
 
   // Derive credit card accounts from liabilities. Tiller's Balances tab

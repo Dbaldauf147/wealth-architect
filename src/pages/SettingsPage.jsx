@@ -34,7 +34,7 @@ function saveEmailPrefs(prefs) {
 }
 
 export function SettingsPage() {
-  const { loading, error, lastSync, refresh, analytics, balances, transactions, accountNicknames } = useData();
+  const { loading, error, lastSync, refresh, analytics, balances, transactions, accountNicknames, accountGroups } = useData();
   const [emailPrefs, setEmailPrefs] = useState(loadEmailPrefs);
   const [sendStatus, setSendStatus] = useState(null); // null | 'sending' | 'ok' | 'err'
 
@@ -45,9 +45,10 @@ export function SettingsPage() {
       start,
       end,
       accountNicknames: accountNicknames || {},
+      accountGroups: accountGroups || {},
     });
     return renderWeeklyEmailHtml(summary);
-  }, [transactions, accountNicknames]);
+  }, [transactions, accountNicknames, accountGroups]);
 
   function updatePrefs(patch) {
     setEmailPrefs(prev => {
