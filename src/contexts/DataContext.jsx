@@ -41,7 +41,21 @@ const loadDateOverrides = () => loadJSON('dateOverrides', {});
 const saveDateOverrides = (v) => saveJSON('dateOverrides', v);
 const loadNotes = () => loadJSON('transactionNotes', {});
 const saveNotes = (v) => saveJSON('transactionNotes', v);
-const loadAccountNicknames = () => loadJSON('accountNicknames', {});
+const loadAccountNicknames = () => {
+  // One-time migration: the Assets/Overview pages historically wrote to
+  // 'wa-account-nicknames' (localStorage only, no Firestore sync). Pull any
+  // existing data into the synced 'accountNicknames' store the first time we
+  // see it.
+  const current = loadJSON('accountNicknames', null);
+  if (current && Object.keys(current).length > 0) return current;
+  const legacy = loadJSON('wa-account-nicknames', null);
+  if (legacy && Object.keys(legacy).length > 0) {
+    saveJSON('accountNicknames', legacy);
+    try { localStorage.removeItem('wa-account-nicknames'); } catch { /* ignore */ }
+    return legacy;
+  }
+  return current || {};
+};
 const saveAccountNicknames = (v) => saveJSON('accountNicknames', v);
 const loadCustomCategories = () => loadJSON('customCategories', []);
 const saveCustomCategories = (v) => saveJSON('customCategories', v);

@@ -24,13 +24,9 @@ function relativeTime(date) {
 
 const DONUT_COLORS = ['#0058be', '#009668', '#e8a317', '#94a3b8', '#7c3aed', '#e11d48', '#06b6d4', '#f97316'];
 
-function loadAccountNicknames() {
-  // Same key the Assets page writes to.
-  try { return JSON.parse(localStorage.getItem('wa-account-nicknames')) || {}; } catch { return {}; }
-}
-
 export function OverviewPage() {
-  const { balances, analytics, transactions, loading, error, lastSync } = useData();
+  const { balances, analytics, transactions, loading, error, lastSync, accountNicknames: ctxNicknames } = useData();
+  const accountNicknames = ctxNicknames || {};
   const [chartPeriod, setChartPeriod] = useState('6M');
   const [chartMode, setChartMode] = useState('bar');
   const [hoverPoint, setHoverPoint] = useState(null); // { kind: 'income'|'expense', i, x, y }
@@ -163,7 +159,6 @@ export function OverviewPage() {
   })();
 
   // Resolve real assets/liabilities for breakdown rows
-  const accountNicknames = loadAccountNicknames();
   const displayAccount = (name) => accountNicknames[name] || name;
   const assetRows = (balances?.assets || []).slice().sort((a, b) => b.balance - a.balance);
   const liabilityRows = (balances?.liabilities || []).slice().sort((a, b) => b.balance - a.balance);

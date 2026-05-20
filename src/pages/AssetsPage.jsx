@@ -7,7 +7,6 @@ function fmt(n) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
 }
 
-const NICKNAMES_KEY = 'wa-account-nicknames';
 const HIDDEN_KEY = 'wa-hidden-accounts';
 const CUSTOM_ASSETS_KEY = 'wa-custom-assets';
 const CUSTOM_LIABILITIES_KEY = 'wa-custom-liabilities';
@@ -18,8 +17,8 @@ function loadJSON(key, fallback) {
 function saveJSON(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
 
 export function AssetsPage() {
-  const { balances, loading } = useData();
-  const [nicknames, setNicknames] = useState(() => loadJSON(NICKNAMES_KEY, {}));
+  const { balances, loading, accountNicknames, setAccountNickname } = useData();
+  const nicknames = accountNicknames || {};
   const [hidden, setHidden] = useState(() => loadJSON(HIDDEN_KEY, []));
   const [customAssets, setCustomAssets] = useState(() => loadJSON(CUSTOM_ASSETS_KEY, []));
   const [customLiabilities, setCustomLiabilities] = useState(() => loadJSON(CUSTOM_LIABILITIES_KEY, []));
@@ -79,14 +78,7 @@ export function AssetsPage() {
   function saveRename() {
     if (!editingKey) return;
     const val = editValue.trim();
-    const next = { ...nicknames };
-    if (val && val !== editingKey) {
-      next[editingKey] = val;
-    } else {
-      delete next[editingKey];
-    }
-    setNicknames(next);
-    saveJSON(NICKNAMES_KEY, next);
+    setAccountNickname(editingKey, val && val !== editingKey ? val : null);
     setEditingKey(null);
     setEditValue('');
   }

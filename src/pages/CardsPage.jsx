@@ -42,10 +42,28 @@ function parseAccountName(s) {
 }
 
 export function CardsPage() {
-  const { transactions, balances, accountNicknames, loading } = useData();
+  const { transactions, balances, accountNicknames, setAccountNickname, loading } = useData();
   const [view, setView] = useState('optimizer');
   const [scheduleView, setScheduleView] = useState('calendar');
   const [expanded, setExpanded] = useState(() => new Set());
+  const [renamingCard, setRenamingCard] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  function startRename(originalName) {
+    setRenamingCard(originalName);
+    setRenameValue((accountNicknames && accountNicknames[originalName]) || originalName);
+  }
+  function saveRename() {
+    if (!renamingCard) return;
+    const val = renameValue.trim();
+    setAccountNickname(renamingCard, val && val !== renamingCard ? val : null);
+    setRenamingCard(null);
+    setRenameValue('');
+  }
+  function cancelRename() {
+    setRenamingCard(null);
+    setRenameValue('');
+  }
 
   const displayName = useCallback(
     (name) => (accountNicknames && accountNicknames[name]) || name,
@@ -448,8 +466,34 @@ export function CardsPage() {
                   <td>
                     <div className={styles.cardIdent}>
                       <div className={styles.cardStripe} style={{ background: c.color }} />
-                      <div>
-                        <div className={styles.cardName}>{displayName(c.name)}</div>
+                      <div className={styles.cardNameWrap}>
+                        {renamingCard === c.name ? (
+                          <div className={styles.cardRenameRow}>
+                            <input
+                              className={styles.cardRenameInput}
+                              value={renameValue}
+                              onChange={e => setRenameValue(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') cancelRename(); }}
+                              autoFocus
+                            />
+                            <button className={styles.cardRenameSave} onClick={saveRename} title="Save">
+                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span>
+                            </button>
+                            <button className={styles.cardRenameCancel} onClick={cancelRename} title="Cancel">
+                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <div className={styles.cardNameRow}>
+                            <span className={styles.cardName}>{displayName(c.name)}</span>
+                            <button className={styles.cardRenameBtn} onClick={() => startRename(c.name)} title="Rename card">
+                              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
+                            </button>
+                          </div>
+                        )}
+                        {accountNicknames && accountNicknames[c.name] && (
+                          <div className={styles.cardOriginalName}>{c.name}</div>
+                        )}
                       </div>
                     </div>
                   </td>
