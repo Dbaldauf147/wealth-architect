@@ -18,14 +18,27 @@ const CARD_COLORS = [
   '#475569', '#0891b2', '#c026d3', '#ea580c', '#059669',
 ];
 
-// Normalize an account name for tolerant matching across Tiller's Balances vs
-// Transactions tabs (case, whitespace, trailing "...4567" suffix).
-function normalizeAccountName(s) {
-  return (s || '')
-    .toLowerCase()
-    .replace(/\.{2,}\s*\d+\s*$/, '')   // drop trailing "...4567"
+// Tolerant matching across Tiller's Balances vs Transactions tabs. The two
+// tabs commonly write the same card differently — e.g. "Cash Rewards
+// (xxxx9568)" in Balances and "Cash Rewards 9568" in Transactions, or
+// "CREDIT CARD (-0664) (xxxx0664)" vs "CREDIT CARD (-0664)". We extract two
+// signals from a raw name:
+//   • core   — alphabetic word run with digits/punctuation/x/* stripped
+//   • digits — last 4 digits found anywhere in the string
+// A "full" key combines both for the strong match; the digit suffix alone
+// serves as a fallback when one side omits the alphabetic core, etc.
+function parseAccountName(s) {
+  const lower = (s || '').toLowerCase();
+  const digitMatch = lower.match(/\d{4,}(?!.*\d)/);
+  const digits = digitMatch ? digitMatch[0].slice(-4) : '';
+  const core = lower
+    .replace(/[(){}\[\],./\\_*×-]+/g, ' ')
+    .replace(/\d+/g, ' ')
+    .replace(/\bx+\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+  const full = digits ? `${core}#${digits}` : core;
+  return { full, core, digits };
 }
 
 export function CardsPage() {
@@ -39,43 +52,68 @@ export function CardsPage() {
     [accountNicknames],
   );
 
-  // Derive credit card accounts from liabilities
+  // Derive credit card accounts from liabilities. Tiller's Balances tab
+  // sometimes lists the same card on multiple rows; dedup by parsed identity
+  // so each card renders once.
   const creditCards = useMemo(() => {
     if (!balances?.liabilities) return [];
-    return balances.liabilities.map((l, i) => ({
-      name: l.name,
-      balance: l.balance,
-      updated: l.updated,
-      color: CARD_COLORS[i % CARD_COLORS.length],
-    }));
+    const seen = new Set();
+    const out = [];
+    for (const l of balances.liabilities) {
+      const key = parseAccountName(l.name).full;
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        name: l.name,
+        balance: l.balance,
+        updated: l.updated,
+        color: CARD_COLORS[out.length % CARD_COLORS.length],
+      });
+    }
+    return out;
   }, [balances]);
 
-  // Map normalized card name → canonical liability name (so transactions whose
-  // .account is "CHASE FREEDOM ...4567" still match the "Chase Freedom" card).
-  const cardNameByNormalized = useMemo(() => {
-    const m = new Map();
+  // Build two lookup maps from the canonical card list:
+  //  • by full key (core+digits) — strong match
+  //  • by last-4 digits — fallback for cases where the alphabetic core diverges
+  //    between Balances ("Cash Rewards (xxxx9568)") and Transactions
+  //    ("BoA Cash Rewards 9568"). Ambiguous digit collisions are skipped.
+  const cardLookup = useMemo(() => {
+    const byFull = new Map();
+    const byDigits = new Map();
+    const ambiguousDigits = new Set();
     for (const c of creditCards) {
-      const norm = normalizeAccountName(c.name);
-      if (norm) m.set(norm, c.name);
+      const { full, digits } = parseAccountName(c.name);
+      if (full) byFull.set(full, c.name);
+      if (digits) {
+        if (byDigits.has(digits) && byDigits.get(digits) !== c.name) {
+          ambiguousDigits.add(digits);
+        } else {
+          byDigits.set(digits, c.name);
+        }
+      }
     }
-    return m;
+    return { byFull, byDigits, ambiguousDigits };
   }, [creditCards]);
 
   // Transactions that belong to credit card accounts, with t.account rewritten
   // to the canonical card name so every downstream lookup just works.
   const cardTransactions = useMemo(() => {
-    if (!transactions?.length || !cardNameByNormalized.size) return [];
+    const { byFull, byDigits, ambiguousDigits } = cardLookup;
+    if (!transactions?.length || (!byFull.size && !byDigits.size)) return [];
     const out = [];
     for (const t of transactions) {
-      const norm = normalizeAccountName(t.account);
-      if (!norm) continue;
-      const canonical = cardNameByNormalized.get(norm);
+      const { full, digits } = parseAccountName(t.account);
+      let canonical = byFull.get(full);
+      if (!canonical && digits && !ambiguousDigits.has(digits)) {
+        canonical = byDigits.get(digits);
+      }
       if (canonical) {
         out.push(t.account === canonical ? t : { ...t, account: canonical });
       }
     }
     return out;
-  }, [transactions, cardNameByNormalized]);
+  }, [transactions, cardLookup]);
 
   // Spending by card account (only expenses, i.e. negative amounts)
   const spendByCard = useMemo(() => {
