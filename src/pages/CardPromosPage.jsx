@@ -136,7 +136,8 @@ function savePromos(promos) {
 }
 
 export function CardPromosPage() {
-  const { transactions } = useData();
+  const { transactions, accountNicknames } = useData();
+  const displayName = (name) => (accountNicknames && accountNicknames[name]) || name;
   const [promos, setPromos] = useState(loadPromos);
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState({});
@@ -292,7 +293,7 @@ export function CardPromosPage() {
                 <span className="material-symbols-outlined" style={{ fontSize: 22 }}>credit_card</span>
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontFamily: 'var(--font-headline)', fontSize: 16, fontWeight: 700 }}>{cardName || '(Unnamed card)'}</div>
+                <div style={{ fontFamily: 'var(--font-headline)', fontSize: 16, fontWeight: 700 }}>{displayName(cardName) || '(Unnamed card)'}</div>
                 <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
                   {fmt(cardUsed)} used of {fmt(cardValue)} ({cardValue > 0 ? Math.round((cardUsed / cardValue) * 100) : 0}%)
                 </div>

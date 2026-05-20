@@ -34,15 +34,20 @@ function saveEmailPrefs(prefs) {
 }
 
 export function SettingsPage() {
-  const { loading, error, lastSync, refresh, analytics, balances, transactions } = useData();
+  const { loading, error, lastSync, refresh, analytics, balances, transactions, accountNicknames } = useData();
   const [emailPrefs, setEmailPrefs] = useState(loadEmailPrefs);
   const [sendStatus, setSendStatus] = useState(null); // null | 'sending' | 'ok' | 'err'
 
   const previewHtml = useMemo(() => {
     const { start, end } = lastCompletedWeek();
-    const summary = buildWeeklySummary({ transactions: transactions || [], start, end });
+    const summary = buildWeeklySummary({
+      transactions: transactions || [],
+      start,
+      end,
+      accountNicknames: accountNicknames || {},
+    });
     return renderWeeklyEmailHtml(summary);
-  }, [transactions]);
+  }, [transactions, accountNicknames]);
 
   function updatePrefs(patch) {
     setEmailPrefs(prev => {

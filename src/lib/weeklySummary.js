@@ -178,8 +178,10 @@ export function monthlyTrends({ transactions, weekEnd }) {
 }
 
 /** Build a weekly summary object.
- *  `transactions` is the full transaction list; we filter to the given range. */
-export function buildWeeklySummary({ transactions, start, end, asOf = new Date() }) {
+ *  `transactions` is the full transaction list; we filter to the given range.
+ *  `accountNicknames` is an optional { [originalName]: nickname } map applied
+ *  to user-visible account names so the email matches the in-app rename. */
+export function buildWeeklySummary({ transactions, start, end, asOf = new Date(), accountNicknames = {} }) {
   const inRange = (transactions || []).filter(t => withinRange(t, start, end) && !isTransferLike(t));
   // Prior week of the same length for week-over-week comparison
   const spanMs = end.getTime() - start.getTime();
@@ -227,7 +229,10 @@ export function buildWeeklySummary({ transactions, start, end, asOf = new Date()
     .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
 
   const upcomingPayments = upcomingCardPayments({ transactions, asOf });
-  const nextCardPayment = upcomingPayments[0] || null;
+  const nextCardPaymentRaw = upcomingPayments[0] || null;
+  const nextCardPayment = nextCardPaymentRaw
+    ? { ...nextCardPaymentRaw, card: accountNicknames[nextCardPaymentRaw.card] || nextCardPaymentRaw.card }
+    : null;
 
   const trends = monthlyTrends({ transactions, weekEnd: end });
 

@@ -107,7 +107,12 @@ export default async function handler(req, res) {
     }
 
     const { start, end } = lastCompletedWeek();
-    const summary = buildWeeklySummary({ transactions, start, end });
+    const summary = buildWeeklySummary({
+      transactions,
+      start,
+      end,
+      accountNicknames: (config && config.accountNicknames) || {},
+    });
     const html = renderWeeklyEmailHtml(summary);
 
     const user = process.env.GMAIL_USER;

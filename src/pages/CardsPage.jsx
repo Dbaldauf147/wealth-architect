@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useCallback, useMemo, useState } from 'react';
 import { useData } from '../contexts/DataContext';
 import { buildCardSchedule } from '../lib/cardSchedule';
 import styles from './CardsPage.module.css';
@@ -18,10 +18,26 @@ const CARD_COLORS = [
   '#475569', '#0891b2', '#c026d3', '#ea580c', '#059669',
 ];
 
+// Normalize an account name for tolerant matching across Tiller's Balances vs
+// Transactions tabs (case, whitespace, trailing "...4567" suffix).
+function normalizeAccountName(s) {
+  return (s || '')
+    .toLowerCase()
+    .replace(/\.{2,}\s*\d+\s*$/, '')   // drop trailing "...4567"
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function CardsPage() {
-  const { transactions, balances, loading } = useData();
+  const { transactions, balances, accountNicknames, loading } = useData();
   const [view, setView] = useState('optimizer');
+  const [scheduleView, setScheduleView] = useState('calendar');
   const [expanded, setExpanded] = useState(() => new Set());
+
+  const displayName = useCallback(
+    (name) => (accountNicknames && accountNicknames[name]) || name,
+    [accountNicknames],
+  );
 
   // Derive credit card accounts from liabilities
   const creditCards = useMemo(() => {
@@ -34,14 +50,32 @@ export function CardsPage() {
     }));
   }, [balances]);
 
-  // Build a set of credit card account names for filtering transactions
-  const cardNames = useMemo(() => new Set(creditCards.map(c => c.name)), [creditCards]);
+  // Map normalized card name → canonical liability name (so transactions whose
+  // .account is "CHASE FREEDOM ...4567" still match the "Chase Freedom" card).
+  const cardNameByNormalized = useMemo(() => {
+    const m = new Map();
+    for (const c of creditCards) {
+      const norm = normalizeAccountName(c.name);
+      if (norm) m.set(norm, c.name);
+    }
+    return m;
+  }, [creditCards]);
 
-  // Transactions that belong to credit card accounts
+  // Transactions that belong to credit card accounts, with t.account rewritten
+  // to the canonical card name so every downstream lookup just works.
   const cardTransactions = useMemo(() => {
-    if (!transactions?.length || !cardNames.size) return [];
-    return transactions.filter(t => cardNames.has(t.account));
-  }, [transactions, cardNames]);
+    if (!transactions?.length || !cardNameByNormalized.size) return [];
+    const out = [];
+    for (const t of transactions) {
+      const norm = normalizeAccountName(t.account);
+      if (!norm) continue;
+      const canonical = cardNameByNormalized.get(norm);
+      if (canonical) {
+        out.push(t.account === canonical ? t : { ...t, account: canonical });
+      }
+    }
+    return out;
+  }, [transactions, cardNameByNormalized]);
 
   // Spending by card account (only expenses, i.e. negative amounts)
   const spendByCard = useMemo(() => {
@@ -119,8 +153,8 @@ export function CardsPage() {
 
   // ── Schedule view data ────────────────────────────────────────────────────
   const schedule = useMemo(
-    () => buildCardSchedule({ cards: creditCards, transactions: transactions || [] }),
-    [creditCards, transactions],
+    () => buildCardSchedule({ cards: creditCards, transactions: cardTransactions }),
+    [creditCards, cardTransactions],
   );
 
   // Sort schedule rows by next-payment-date asc (no-payment-history rows last).
@@ -174,6 +208,58 @@ export function CardsPage() {
     return { dots, weekMarks };
   }, [schedule]);
 
+  // Two-month calendar: current month + next month, with payments slotted into day cells.
+  const calendarMonths = useMemo(() => {
+    const now = new Date();
+    const sameDay = (a, b) =>
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate();
+
+    const months = [];
+    for (let m = 0; m < 2; m++) {
+      const monthDate = new Date(now.getFullYear(), now.getMonth() + m, 1);
+      const year = monthDate.getFullYear();
+      const monthIdx = monthDate.getMonth();
+      const firstDow = monthDate.getDay();
+      const daysInMonth = new Date(year, monthIdx + 1, 0).getDate();
+
+      const cells = [];
+      for (let i = 0; i < 42; i++) {
+        const dayOffset = i - firstDow + 1; // 1..daysInMonth for in-month
+        const cellDate = new Date(year, monthIdx, dayOffset);
+        cells.push({
+          date: cellDate,
+          dayNum: cellDate.getDate(),
+          inMonth: dayOffset >= 1 && dayOffset <= daysInMonth,
+          isToday: sameDay(cellDate, now),
+          payments: [],
+        });
+      }
+      // Drop the trailing week if every cell in it is out-of-month (keeps the grid tighter).
+      while (cells.length > 35 && cells.slice(-7).every(c => !c.inMonth)) {
+        cells.length -= 7;
+      }
+
+      months.push({
+        label: monthDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+        cells,
+      });
+    }
+
+    for (const s of schedule) {
+      if (!s.nextPaymentDate) continue;
+      for (const m of months) {
+        for (const c of m.cells) {
+          if (c.inMonth && sameDay(c.date, s.nextPaymentDate)) {
+            c.payments.push({ card: s.card, color: s.color, amount: s.estimatedNextAmount });
+          }
+        }
+      }
+    }
+    return months;
+  }, [schedule]);
+
   function toggleExpand(cardName) {
     setExpanded(prev => {
       const next = new Set(prev);
@@ -203,8 +289,10 @@ export function CardsPage() {
   // Chart data: spending by card
   const yieldData = spendByCard.map((d, i) => {
     const card = creditCards.find(c => c.name === d.name);
+    const label = displayName(d.name);
     return {
-      card: d.name.length > 18 ? d.name.slice(0, 16) + '...' : d.name,
+      key: d.name,
+      card: label.length > 18 ? label.slice(0, 16) + '...' : label,
       amount: d.total,
       color: card?.color || CARD_COLORS[i % CARD_COLORS.length],
     };
@@ -258,7 +346,7 @@ export function CardsPage() {
           <div className={styles.heroLabel}>Optimization Alert</div>
           <div className={styles.heroTitle}>
             {optimization
-              ? `Consolidate "${optimization.category}" spending to ${optimization.bestCard} for maximum rewards`
+              ? `Consolidate "${optimization.category}" spending to ${displayName(optimization.bestCard)} for maximum rewards`
               : 'Connect credit card accounts to see optimization tips'}
           </div>
           <div className={styles.heroSubtitle}>
@@ -280,7 +368,7 @@ export function CardsPage() {
         </div>
         <div className={styles.barChart}>
           {yieldData.length > 0 ? yieldData.map((d) => (
-            <div key={d.card} className={styles.barGroup}>
+            <div key={d.key} className={styles.barGroup}>
               <div className={styles.barValue}>{fmt(d.amount)}</div>
               <div
                 className={styles.bar}
@@ -323,7 +411,7 @@ export function CardsPage() {
                     <div className={styles.cardIdent}>
                       <div className={styles.cardStripe} style={{ background: c.color }} />
                       <div>
-                        <div className={styles.cardName}>{c.name}</div>
+                        <div className={styles.cardName}>{displayName(c.name)}</div>
                       </div>
                     </div>
                   </td>
@@ -366,7 +454,7 @@ export function CardsPage() {
             return (
               <div key={i} className={styles.perfItem}>
                 <div className={styles.perfHeader}>
-                  <span className={styles.perfLabel}>{c.name}</span>
+                  <span className={styles.perfLabel}>{displayName(c.name)}</span>
                   <span className={styles.perfValue}>{fmt(c.balance)}</span>
                 </div>
                 <div className={styles.perfBar}>
@@ -421,7 +509,7 @@ export function CardsPage() {
                 <div className={styles.infoIcon} style={{ background: `${card.color}14`, color: card.color }}>
                   <span className="material-symbols-outlined">credit_card</span>
                 </div>
-                <div className={styles.infoTitle}>{card.name}</div>
+                <div className={styles.infoTitle}>{displayName(card.name)}</div>
               </div>
               {sorted.length > 0 ? sorted.map(([cat, amt], j) => (
                 <div key={j} className={styles.perfItem}>
@@ -456,7 +544,7 @@ export function CardsPage() {
                 <div className={styles.infoIcon} style={{ background: `${card.color}14`, color: card.color }}>
                   <span className="material-symbols-outlined">credit_card</span>
                 </div>
-                <div className={styles.infoTitle}>{card.name}</div>
+                <div className={styles.infoTitle}>{displayName(card.name)}</div>
               </div>
               {sorted.length > 0 ? sorted.map(([cat, amt], j) => (
                 <div key={j} className={styles.perfItem}>
@@ -483,39 +571,100 @@ export function CardsPage() {
       </>)}
 
       {view === 'schedule' && (<>
-      {/* Timeline strip — next 60 days */}
+      {/* Upcoming payments — Calendar or Timeline */}
       <div className={styles.chartCard}>
         <div className={styles.chartHeader}>
           <div>
-            <div className={styles.chartTitle}>Upcoming Payments — Next 60 Days</div>
+            <div className={styles.chartTitle}>
+              {scheduleView === 'calendar' ? 'Upcoming Payments — Next 2 Months' : 'Upcoming Payments — Next 60 Days'}
+            </div>
             <div className={styles.chartSubtitle}>Projected from each card's historical payment cadence</div>
           </div>
+          <div style={{ display: 'inline-flex', gap: 2, background: 'var(--color-surface-alt)', padding: 2, borderRadius: 10 }}>
+            {[{ key: 'calendar', label: 'Calendar' }, { key: 'timeline', label: 'Timeline' }].map(t => (
+              <button
+                key={t.key}
+                onClick={() => setScheduleView(t.key)}
+                style={{
+                  padding: '5px 12px',
+                  border: 'none',
+                  background: scheduleView === t.key ? 'var(--color-surface)' : 'transparent',
+                  boxShadow: scheduleView === t.key ? 'var(--shadow-xs)' : 'none',
+                  borderRadius: 8,
+                  cursor: 'pointer',
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  color: scheduleView === t.key ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className={styles.timeline}>
-          {timeline.weekMarks.map((w, i) => (
-            <div key={i} className={styles.weekMark} style={{ left: `${w.pct}%` }}>
-              <div className={styles.weekTick} />
-              <div className={styles.weekLabel}>{w.label}</div>
-            </div>
-          ))}
-          {timeline.dots.length === 0 ? (
-            <div className={styles.timelineEmpty}>
-              No projected payments fall within the next 60 days.
-            </div>
-          ) : timeline.dots.map((d, i) => (
-            <div
-              key={i}
-              className={styles.paymentDot}
-              style={{ left: `${d.pct}%`, top: `${20 + (d.row || 0) * 28}px`, background: d.color }}
-              title={`${d.card} — ${fmt(d.amount)} on ${fmtDate(d.date)}`}
-            >
-              <div className={styles.paymentDotInfo}>
-                <div className={styles.paymentDotAmount}>{fmt(d.amount)}</div>
-                <div className={styles.paymentDotCard}>{d.card}</div>
+
+        {scheduleView === 'timeline' ? (
+          <div className={styles.timeline}>
+            {timeline.weekMarks.map((w, i) => (
+              <div key={i} className={styles.weekMark} style={{ left: `${w.pct}%` }}>
+                <div className={styles.weekTick} />
+                <div className={styles.weekLabel}>{w.label}</div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+            {timeline.dots.length === 0 ? (
+              <div className={styles.timelineEmpty}>
+                No projected payments fall within the next 60 days.
+              </div>
+            ) : timeline.dots.map((d, i) => (
+              <div
+                key={i}
+                className={styles.paymentDot}
+                style={{ left: `${d.pct}%`, top: `${20 + (d.row || 0) * 28}px`, background: d.color }}
+                title={`${displayName(d.card)} — ${fmt(d.amount)} on ${fmtDate(d.date)}`}
+              >
+                <div className={styles.paymentDotInfo}>
+                  <div className={styles.paymentDotAmount}>{fmt(d.amount)}</div>
+                  <div className={styles.paymentDotCard}>{displayName(d.card)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className={styles.calendarWrap}>
+            {calendarMonths.map((m, mi) => (
+              <div key={mi} className={styles.calendarMonth}>
+                <div className={styles.calendarMonthTitle}>{m.label}</div>
+                <div className={styles.calendarDow}>
+                  {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+                    <div key={d} className={styles.calendarDowCell}>{d}</div>
+                  ))}
+                </div>
+                <div className={styles.calendarGrid}>
+                  {m.cells.map((c, ci) => {
+                    const classes = [styles.calendarDay];
+                    if (!c.inMonth) classes.push(styles.calendarDayOut);
+                    if (c.isToday) classes.push(styles.calendarDayToday);
+                    return (
+                      <div key={ci} className={classes.join(' ')}>
+                        <div className={styles.calendarDayNum}>{c.dayNum}</div>
+                        {c.inMonth && c.payments.map((p, pi) => (
+                          <div
+                            key={pi}
+                            className={styles.calendarChip}
+                            style={{ background: p.color }}
+                            title={`${displayName(p.card)} — ${fmt(p.amount)} on ${fmtDate(c.date)}`}
+                          >
+                            {fmt(p.amount)}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Per-card schedule table */}
@@ -548,7 +697,7 @@ export function CardsPage() {
                     <td>
                       <div className={styles.cardIdent}>
                         <div className={styles.cardStripe} style={{ background: s.color }} />
-                        <div className={styles.cardName}>{s.card}</div>
+                        <div className={styles.cardName}>{displayName(s.card)}</div>
                       </div>
                     </td>
                     <td>
