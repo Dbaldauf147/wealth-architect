@@ -179,8 +179,19 @@ export default async function handler(req, res) {
       );
     }
 
+    const prefs = (config && config.paymentReminderPrefs) || {};
+    // User can disable from the Settings page. The cron still fires but we
+    // bail before sending. Env var override forces send for testing.
+    if (prefs.enabled === false && !isTest) {
+      return res.status(200).json({ skipped: true, reason: 'Disabled in Settings' });
+    }
+
     const cards = deriveCardsFromLiabilities(balances);
     transactions = canonicalizeTransactionAccounts(transactions, cards);
+
+    const last4 = process.env.PAYMENT_REMINDER_ACCOUNT_LAST4
+      || prefs.payingAccountLast4
+      || '1118';
 
     const payload = buildPaymentReminder({
       cards,
@@ -188,7 +199,7 @@ export default async function handler(req, res) {
       balances,
       asOf: new Date(),
       tz,
-      payingAccountLast4: process.env.PAYMENT_REMINDER_ACCOUNT_LAST4 || '1118',
+      payingAccountLast4: last4,
       hiddenCards: (config && Array.isArray(config.hiddenCards)) ? config.hiddenCards : [],
       nicknames: (config && config.accountNicknames) || {},
     });

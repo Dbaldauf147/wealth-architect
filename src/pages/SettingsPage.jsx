@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { buildWeeklySummary, lastCompletedWeek } from '../lib/weeklySummary';
 import { renderWeeklyEmailHtml } from '../lib/renderWeeklyEmail';
+import { previewPaymentReminder, renderPaymentReminderHtml } from '../lib/paymentReminder';
 import styles from './SettingsPage.module.css';
 
 function relTime(date) {
@@ -34,10 +35,11 @@ function saveEmailPrefs(prefs) {
 }
 
 export function SettingsPage() {
-  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups } = useData();
-  const { refresh } = useDataActions();
+  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs } = useData();
+  const { refresh, updatePaymentReminderPrefs } = useDataActions();
   const [emailPrefs, setEmailPrefs] = useState(loadEmailPrefs);
   const [sendStatus, setSendStatus] = useState(null); // null | 'sending' | 'ok' | 'err'
+  const [reminderTestStatus, setReminderTestStatus] = useState(null); // null | 'sending' | 'ok' | 'err' | 'none'
 
   const previewHtml = useMemo(() => {
     const { start, end } = lastCompletedWeek();
@@ -73,6 +75,45 @@ export function SettingsPage() {
       setSendStatus('err');
     }
     setTimeout(() => setSendStatus(null), 4000);
+  }
+
+  // Build the "what would this email look like" preview from current
+  // transactions/balances, dated to (next projected payment - 1 day).
+  const reminderPreview = useMemo(() => {
+    if (!balances || !transactions) return null;
+    return previewPaymentReminder({
+      transactions,
+      balances,
+      hiddenCards: hiddenCards || [],
+      nicknames: accountNicknames || {},
+      payingAccountLast4: (paymentReminderPrefs && paymentReminderPrefs.payingAccountLast4) || '1118',
+    });
+  }, [transactions, balances, hiddenCards, accountNicknames, paymentReminderPrefs]);
+
+  const reminderPreviewHtml = useMemo(
+    () => (reminderPreview && reminderPreview.payload) ? renderPaymentReminderHtml(reminderPreview.payload) : null,
+    [reminderPreview],
+  );
+
+  async function sendReminderTest() {
+    setReminderTestStatus('sending');
+    try {
+      const res = await fetch('/api/payment-reminder?test=1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipient: emailPrefs.recipient }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json().catch(() => ({}));
+      // The endpoint returns { skipped: true, reason: ... } when nothing is
+      // due tomorrow even in test mode (well — test bypasses the disable
+      // flag but still respects "no cards due"). Surface that distinctly so
+      // the user knows it ran but had nothing to send.
+      setReminderTestStatus(data && data.skipped ? 'none' : 'ok');
+    } catch {
+      setReminderTestStatus('err');
+    }
+    setTimeout(() => setReminderTestStatus(null), 5000);
   }
 
   return (
@@ -257,6 +298,131 @@ export function SettingsPage() {
                 borderRadius: 10, background: '#f8fafc',
               }}
             />
+          </div>
+        </div>
+      </section>
+
+      {/* Card Payment Reminder */}
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Card Payment Reminder</h3>
+        <div className={styles.card}>
+          <div className={styles.cardRow}>
+            <div className={styles.cardRowIcon}>
+              <span className="material-symbols-outlined">credit_score</span>
+            </div>
+            <div className={styles.cardRowContent}>
+              <div className={styles.cardRowLabel}>Enabled</div>
+              <div className={styles.cardRowValue}>
+                Send an email the day before any non-hidden card has a projected payment.
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={paymentReminderPrefs?.enabled !== false}
+                    onChange={e => updatePaymentReminderPrefs({ enabled: e.target.checked })}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                    {paymentReminderPrefs?.enabled !== false ? 'On' : 'Off'}
+                  </span>
+                </label>
+              </div>
+            </div>
+            <div className={paymentReminderPrefs?.enabled !== false ? styles.statusBadgeGreen : ''} style={paymentReminderPrefs?.enabled === false ? { fontSize: 11, fontWeight: 700, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5 } : undefined}>
+              {paymentReminderPrefs?.enabled !== false ? 'Active' : 'Off'}
+            </div>
+          </div>
+
+          <div className={styles.divider} />
+
+          <div className={styles.cardRow}>
+            <div className={styles.cardRowIcon}>
+              <span className="material-symbols-outlined">account_balance</span>
+            </div>
+            <div className={styles.cardRowContent}>
+              <div className={styles.cardRowLabel}>Paying account (last 4 digits)</div>
+              <div className={styles.cardRowValue}>
+                Matched against your asset names — the email shows this account's balance and after-payment runway.
+              </div>
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={4}
+                value={paymentReminderPrefs?.payingAccountLast4 || ''}
+                onChange={e => updatePaymentReminderPrefs({ payingAccountLast4: e.target.value.replace(/\D/g, '').slice(0, 4) })}
+                placeholder="1118"
+                style={{
+                  marginTop: 6, width: 100, padding: '6px 10px',
+                  border: '1px solid var(--border-ghost)', borderRadius: 8,
+                  fontSize: 13, outline: 'none', background: 'var(--color-surface-alt)',
+                  fontFamily: 'monospace', letterSpacing: 1,
+                }}
+              />
+            </div>
+          </div>
+
+          <div className={styles.divider} />
+
+          <div className={styles.cardRow}>
+            <div className={styles.cardRowIcon}>
+              <span className="material-symbols-outlined">schedule</span>
+            </div>
+            <div className={styles.cardRowContent}>
+              <div className={styles.cardRowLabel}>Schedule</div>
+              <div className={styles.cardRowValue}>
+                Daily check at 10:00 AM ET. Triggers only when a card's projected next payment date is tomorrow. Hidden cards from the Cards page are ignored.
+              </div>
+              {reminderPreview?.projectedDate && (
+                <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 6 }}>
+                  Next projected payment: <strong style={{ color: 'var(--color-text-secondary)' }}>{reminderPreview.projectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</strong>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className={styles.divider} />
+
+          <div className={styles.cardActions}>
+            <button
+              className={styles.primaryBtn}
+              onClick={sendReminderTest}
+              disabled={reminderTestStatus === 'sending'}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                {reminderTestStatus === 'sending' ? 'hourglass_empty' : 'send'}
+              </span>
+              {reminderTestStatus === 'sending' ? 'Sending...' : 'Send test reminder now'}
+            </button>
+            {reminderTestStatus === 'ok' && <span style={{ color: '#16a34a', fontSize: 12, fontWeight: 600 }}>✓ Sent — check your inbox.</span>}
+            {reminderTestStatus === 'none' && <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12, fontWeight: 600 }}>Ran successfully, but nothing's due tomorrow — no email sent.</span>}
+            {reminderTestStatus === 'err' && <span style={{ color: '#b91c1c', fontSize: 12, fontWeight: 600 }}>Send failed.</span>}
+          </div>
+
+          <div className={styles.divider} />
+
+          <div style={{ padding: '4px 2px 12px' }}>
+            <div className={styles.cardRowLabel} style={{ marginBottom: 8 }}>
+              Preview {reminderPreview?.projectedDate ? `(as it would arrive the day before ${reminderPreview.projectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})` : ''}
+            </div>
+            {reminderPreviewHtml ? (
+              <iframe
+                title="Payment reminder preview"
+                srcDoc={reminderPreviewHtml}
+                style={{
+                  width: '100%', height: 540, border: '1px solid var(--border-ghost)',
+                  borderRadius: 10, background: '#f8fafc',
+                }}
+              />
+            ) : (
+              <div style={{
+                padding: 24, fontSize: 13, color: 'var(--color-text-tertiary)',
+                border: '1px dashed var(--border-ghost)', borderRadius: 10, textAlign: 'center',
+              }}>
+                {reminderPreview === null
+                  ? 'No projected card payments yet — once you have payment history on a card, the preview will show here.'
+                  : 'Building preview…'}
+              </div>
+            )}
           </div>
         </div>
       </section>

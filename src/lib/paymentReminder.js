@@ -8,6 +8,59 @@
 
 import { buildCardSchedule } from './cardSchedule.js';
 
+// Tolerant card-name parser, mirrors the one in CardsPage and the API
+// payment-reminder function. Kept here so the client preview path
+// doesn't have to import either of those.
+function parseAccountName(s) {
+  const lower = (s || '').toLowerCase();
+  const digitMatch = lower.match(/\d{4,}(?!.*\d)/);
+  const digits = digitMatch ? digitMatch[0].slice(-4) : '';
+  const core = lower
+    .replace(/[(){}\[\],./\\_*×-]+/g, ' ')
+    .replace(/\d+/g, ' ')
+    .replace(/\bx+\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const full = digits ? `${core}#${digits}` : core;
+  return { full, core, digits };
+}
+
+function deriveCardsFromLiabilities(balances) {
+  if (!balances || !Array.isArray(balances.liabilities)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const l of balances.liabilities) {
+    const key = parseAccountName(l.name).full;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name: l.name });
+  }
+  return out;
+}
+
+function canonicalizeTransactionAccounts(transactions, cards) {
+  const byFull = new Map();
+  const byDigits = new Map();
+  const ambiguous = new Set();
+  for (const c of cards) {
+    const { full, digits } = parseAccountName(c.name);
+    if (full) byFull.set(full, c.name);
+    if (digits) {
+      if (byDigits.has(digits) && byDigits.get(digits) !== c.name) ambiguous.add(digits);
+      else byDigits.set(digits, c.name);
+    }
+  }
+  const out = [];
+  for (const t of transactions || []) {
+    const { full, digits } = parseAccountName(t.account);
+    let canonical = byFull.get(full);
+    if (!canonical && digits && !ambiguous.has(digits)) canonical = byDigits.get(digits);
+    if (canonical) out.push(t.account === canonical ? t : { ...t, account: canonical });
+    else out.push(t);
+  }
+  return out;
+}
+
 // Return YYYY-MM-DD for the given Date as seen in `tz`. We use this for
 // equality comparisons so a payment projected for 11:30pm Eastern on day X
 // doesn't get treated as day X+1 by a server running in UTC.
@@ -180,6 +233,57 @@ export function renderPaymentReminderHtml(payload) {
     </div>
   </div>
 </body></html>`;
+}
+
+/**
+ * Settings-page preview: derive the cards list from balances, find the
+ * earliest non-hidden projected payment, and run buildPaymentReminder
+ * with asOf set to (that date - 1 day). Mirrors what the cron will do
+ * once that day actually arrives, so the user gets a real preview even
+ * when nothing is due tomorrow today.
+ *
+ * Returns { payload, previewAsOf, projectedDate } or null if there are
+ * no projected payments at all.
+ */
+export function previewPaymentReminder(opts) {
+  const {
+    transactions,
+    balances,
+    hiddenCards,
+    nicknames = {},
+    payingAccountLast4 = '1118',
+    tz = 'America/New_York',
+  } = opts || {};
+
+  const cards = deriveCardsFromLiabilities(balances);
+  if (cards.length === 0) return null;
+
+  const canonical = canonicalizeTransactionAccounts(transactions, cards);
+  const schedule = buildCardSchedule({ cards, transactions: canonical });
+  const hiddenSet = new Set(hiddenCards || []);
+
+  // Earliest non-hidden upcoming payment becomes the target preview day.
+  const upcoming = schedule
+    .filter(s => s.nextPaymentDate && !hiddenSet.has(s.card))
+    .map(s => s.nextPaymentDate)
+    .sort((a, b) => a - b);
+  if (upcoming.length === 0) return null;
+
+  const projectedDate = upcoming[0];
+  const previewAsOf = new Date(projectedDate.getTime() - 86400000);
+
+  const payload = buildPaymentReminder({
+    cards,
+    transactions: canonical,
+    balances,
+    asOf: previewAsOf,
+    tz,
+    payingAccountLast4,
+    hiddenCards: [...hiddenSet],
+    nicknames,
+  });
+
+  return { payload, previewAsOf, projectedDate };
 }
 
 function escapeHtml(s) {

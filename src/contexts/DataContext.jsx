@@ -111,6 +111,15 @@ const loadHiddenCards = () => {
   return Array.isArray(current) ? current : [];
 };
 const saveHiddenCards = (v) => saveJSON('hiddenCards', v);
+
+// Card payment reminder preferences — synced via Firestore so the
+// server cron honors enable/disable and paying-account changes.
+const DEFAULT_PAYMENT_REMINDER_PREFS = { enabled: true, payingAccountLast4: '1118' };
+const loadPaymentReminderPrefs = () => {
+  const stored = loadJSON('paymentReminderPrefs', null);
+  return { ...DEFAULT_PAYMENT_REMINDER_PREFS, ...(stored || {}) };
+};
+const savePaymentReminderPrefs = (v) => saveJSON('paymentReminderPrefs', v);
 const loadCustomCategories = () => loadJSON('customCategories', []);
 const saveCustomCategories = (v) => saveJSON('customCategories', v);
 const loadHiddenCategories = () => new Set(loadJSON('hiddenCategories', []));
@@ -198,6 +207,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.accountNicknames, remote.accountNicknames],
     [merged.accountGroups, remote.accountGroups],
     [merged.assetClasses, remote.assetClasses],
+    [merged.paymentReminderPrefs, remote.paymentReminderPrefs],
   ];
   for (const [a, b] of maps) {
     const bObj = b && typeof b === 'object' ? b : {};
@@ -229,6 +239,7 @@ export function DataProvider({ children }) {
   const [customLiabilities, setCustomLiabilities] = useState(loadCustomLiabilities);
   const [customAssetClasses, setCustomAssetClasses] = useState(loadCustomAssetClasses);
   const [hiddenCards, setHiddenCards] = useState(loadHiddenCards);
+  const [paymentReminderPrefs, setPaymentReminderPrefs] = useState(loadPaymentReminderPrefs);
   const [rawBalances, setRawBalances] = useState(null);
   const [dataLoading, setDataLoading] = useState(true);
   const [configHydrated, setConfigHydrated] = useState(false);
@@ -267,6 +278,7 @@ export function DataProvider({ children }) {
         const localCustomLiabilities = loadCustomLiabilities();
         const localCustomAssetClasses = loadCustomAssetClasses();
         const localHiddenCards = loadHiddenCards();
+        const localPaymentReminderPrefs = loadPaymentReminderPrefs();
         const localCustomCats = loadCustomCategories();
         const localHiddenCats = loadHiddenCategories();
         const localHiddenIds = loadHiddenIds();
@@ -285,6 +297,7 @@ export function DataProvider({ children }) {
           customLiabilities: unionByName(localCustomLiabilities, Array.isArray(remote.customLiabilities) ? remote.customLiabilities : []),
           customAssetClasses: unionStringArray(localCustomAssetClasses, remote.customAssetClasses),
           hiddenCards: unionStringArray(localHiddenCards, remote.hiddenCards),
+          paymentReminderPrefs: { ...DEFAULT_PAYMENT_REMINDER_PREFS, ...(remote.paymentReminderPrefs || {}), ...localPaymentReminderPrefs },
           customCategories: unionStringArray(localCustomCats, remote.customCategories),
           hiddenCategories: unionSet(localHiddenCats, remote.hiddenCategories),
           hiddenTransactionIds: unionSet(localHiddenIds, remote.hiddenTransactionIds),
@@ -304,6 +317,7 @@ export function DataProvider({ children }) {
         setCustomLiabilities(merged.customLiabilities); saveCustomLiabilities(merged.customLiabilities);
         setCustomAssetClasses(merged.customAssetClasses); saveCustomAssetClasses(merged.customAssetClasses);
         setHiddenCards(merged.hiddenCards); saveHiddenCards(merged.hiddenCards);
+        setPaymentReminderPrefs(merged.paymentReminderPrefs); savePaymentReminderPrefs(merged.paymentReminderPrefs);
         setCustomCategories(merged.customCategories); saveCustomCategories(merged.customCategories);
         setHiddenCategories(merged.hiddenCategories); saveHiddenCategories(merged.hiddenCategories);
         setHiddenIds(merged.hiddenTransactionIds); saveHiddenIds(merged.hiddenTransactionIds);
@@ -327,6 +341,7 @@ export function DataProvider({ children }) {
             customLiabilities: merged.customLiabilities,
             customAssetClasses: merged.customAssetClasses,
             hiddenCards: merged.hiddenCards,
+            paymentReminderPrefs: merged.paymentReminderPrefs,
             customCategories: merged.customCategories,
             hiddenCategories: [...merged.hiddenCategories],
             hiddenTransactionIds: [...merged.hiddenTransactionIds],
@@ -362,6 +377,7 @@ export function DataProvider({ children }) {
         customLiabilities,
         customAssetClasses,
         hiddenCards,
+        paymentReminderPrefs,
         customCategories,
         hiddenCategories: [...hiddenCategories],
         hiddenTransactionIds: [...hiddenIds],
@@ -383,6 +399,7 @@ export function DataProvider({ children }) {
     customLiabilities,
     customAssetClasses,
     hiddenCards,
+    paymentReminderPrefs,
     customCategories,
     hiddenCategories,
     hiddenIds,
@@ -617,6 +634,14 @@ export function DataProvider({ children }) {
     setCustomLiabilities(prev => {
       const next = prev.filter(a => a.name !== name);
       saveCustomLiabilities(next);
+      return next;
+    });
+  }, []);
+
+  const updatePaymentReminderPrefs = useCallback((patch) => {
+    setPaymentReminderPrefs(prev => {
+      const next = { ...prev, ...(patch || {}) };
+      savePaymentReminderPrefs(next);
       return next;
     });
   }, []);
@@ -946,6 +971,7 @@ export function DataProvider({ children }) {
     addCustomAssetClass,
     removeCustomAssetClass,
     toggleHideCard,
+    updatePaymentReminderPrefs,
     renameGroup,
     deleteGroup,
     toggleHideTransaction,
@@ -979,6 +1005,7 @@ export function DataProvider({ children }) {
     addCustomAssetClass,
     removeCustomAssetClass,
     toggleHideCard,
+    updatePaymentReminderPrefs,
     renameGroup,
     deleteGroup,
     toggleHideTransaction,
@@ -1006,6 +1033,7 @@ export function DataProvider({ children }) {
     customLiabilities,
     customAssetClasses,
     hiddenCards,
+    paymentReminderPrefs,
     hiddenTransactions,
     hiddenCount: hiddenIds.size,
   }), [
@@ -1027,6 +1055,7 @@ export function DataProvider({ children }) {
     customLiabilities,
     customAssetClasses,
     hiddenCards,
+    paymentReminderPrefs,
     hiddenTransactions,
     hiddenIds,
   ]);
