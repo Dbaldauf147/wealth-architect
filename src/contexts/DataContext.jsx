@@ -60,6 +60,41 @@ const loadAccountNicknames = () => {
 const saveAccountNicknames = (v) => saveJSON('accountNicknames', v);
 const loadAccountGroups = () => loadJSON('accountGroups', {});
 const saveAccountGroups = (v) => saveJSON('accountGroups', v);
+const loadAssetClasses = () => loadJSON('assetClasses', {});
+const saveAssetClasses = (v) => saveJSON('assetClasses', v);
+
+// Custom user-entered assets and liabilities — for things Tiller doesn't
+// see (real estate, vehicles, private holdings, etc.). The values used to
+// live on AssetsPage in localStorage only ('wa-custom-assets' /
+// 'wa-custom-liabilities'); we now sync them through Firestore so they
+// follow the user across devices, and migrate the legacy keys on first
+// hydration if the user has anything stored there.
+const loadCustomAssets = () => {
+  const current = loadJSON('customAssets', null);
+  if (Array.isArray(current) && current.length > 0) return current;
+  const legacy = loadJSON('wa-custom-assets', null);
+  if (Array.isArray(legacy) && legacy.length > 0) {
+    saveJSON('customAssets', legacy);
+    try { localStorage.removeItem('wa-custom-assets'); } catch { /* ignore */ }
+    return legacy;
+  }
+  return Array.isArray(current) ? current : [];
+};
+const saveCustomAssets = (v) => saveJSON('customAssets', v);
+const loadCustomLiabilities = () => {
+  const current = loadJSON('customLiabilities', null);
+  if (Array.isArray(current) && current.length > 0) return current;
+  const legacy = loadJSON('wa-custom-liabilities', null);
+  if (Array.isArray(legacy) && legacy.length > 0) {
+    saveJSON('customLiabilities', legacy);
+    try { localStorage.removeItem('wa-custom-liabilities'); } catch { /* ignore */ }
+    return legacy;
+  }
+  return Array.isArray(current) ? current : [];
+};
+const saveCustomLiabilities = (v) => saveJSON('customLiabilities', v);
+const loadCustomAssetClasses = () => loadJSON('customAssetClasses', []);
+const saveCustomAssetClasses = (v) => saveJSON('customAssetClasses', v);
 const loadCustomCategories = () => loadJSON('customCategories', []);
 const saveCustomCategories = (v) => saveJSON('customCategories', v);
 const loadHiddenCategories = () => new Set(loadJSON('hiddenCategories', []));
@@ -110,11 +145,28 @@ function unionSet(localSet, remoteArray) {
   return out;
 }
 
+// Merge arrays of objects keyed by `name`. Local entries win on conflict —
+// the assumption is that any edit happened on the device with the more
+// recent local copy. Used for customAssets / customLiabilities.
+function unionByName(local, remote) {
+  const byName = new Map();
+  for (const item of remote || []) {
+    if (item && item.name) byName.set(item.name, item);
+  }
+  for (const item of local || []) {
+    if (item && item.name) byName.set(item.name, item);
+  }
+  return Array.from(byName.values());
+}
+
 function mergedDiffersFromRemote(merged, remote) {
   const checks = [
     [merged.categoryRules, remote.categoryRules],
     [merged.subcategoryRules, remote.subcategoryRules],
     [merged.customCategories, remote.customCategories],
+    [merged.customAssets, remote.customAssets],
+    [merged.customLiabilities, remote.customLiabilities],
+    [merged.customAssetClasses, remote.customAssetClasses],
     [[...merged.hiddenCategories], remote.hiddenCategories],
     [[...merged.hiddenTransactionIds], remote.hiddenTransactionIds],
   ];
@@ -128,6 +180,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.transactionNotes, remote.transactionNotes],
     [merged.accountNicknames, remote.accountNicknames],
     [merged.accountGroups, remote.accountGroups],
+    [merged.assetClasses, remote.assetClasses],
   ];
   for (const [a, b] of maps) {
     const bObj = b && typeof b === 'object' ? b : {};
@@ -154,7 +207,11 @@ export function DataProvider({ children }) {
   const [transactionNotes, setTransactionNotes] = useState(loadNotes);
   const [accountNicknames, setAccountNicknames] = useState(loadAccountNicknames);
   const [accountGroups, setAccountGroups] = useState(loadAccountGroups);
-  const [balances, setBalances] = useState(null);
+  const [assetClasses, setAssetClasses] = useState(loadAssetClasses);
+  const [customAssets, setCustomAssets] = useState(loadCustomAssets);
+  const [customLiabilities, setCustomLiabilities] = useState(loadCustomLiabilities);
+  const [customAssetClasses, setCustomAssetClasses] = useState(loadCustomAssetClasses);
+  const [rawBalances, setRawBalances] = useState(null);
   const [dataLoading, setDataLoading] = useState(true);
   const [configHydrated, setConfigHydrated] = useState(false);
   const [error, setError] = useState(null);
@@ -187,6 +244,10 @@ export function DataProvider({ children }) {
         const localNotes = loadNotes();
         const localNicks = loadAccountNicknames();
         const localGroups = loadAccountGroups();
+        const localAssetClasses = loadAssetClasses();
+        const localCustomAssets = loadCustomAssets();
+        const localCustomLiabilities = loadCustomLiabilities();
+        const localCustomAssetClasses = loadCustomAssetClasses();
         const localCustomCats = loadCustomCategories();
         const localHiddenCats = loadHiddenCategories();
         const localHiddenIds = loadHiddenIds();
@@ -200,6 +261,10 @@ export function DataProvider({ children }) {
           transactionNotes: unionMap(localNotes, remote.transactionNotes),
           accountNicknames: unionMap(localNicks, remote.accountNicknames),
           accountGroups: unionMap(localGroups, remote.accountGroups),
+          assetClasses: unionMap(localAssetClasses, remote.assetClasses),
+          customAssets: unionByName(localCustomAssets, Array.isArray(remote.customAssets) ? remote.customAssets : []),
+          customLiabilities: unionByName(localCustomLiabilities, Array.isArray(remote.customLiabilities) ? remote.customLiabilities : []),
+          customAssetClasses: unionStringArray(localCustomAssetClasses, remote.customAssetClasses),
           customCategories: unionStringArray(localCustomCats, remote.customCategories),
           hiddenCategories: unionSet(localHiddenCats, remote.hiddenCategories),
           hiddenTransactionIds: unionSet(localHiddenIds, remote.hiddenTransactionIds),
@@ -214,6 +279,10 @@ export function DataProvider({ children }) {
         setTransactionNotes(merged.transactionNotes); saveNotes(merged.transactionNotes);
         setAccountNicknames(merged.accountNicknames); saveAccountNicknames(merged.accountNicknames);
         setAccountGroups(merged.accountGroups); saveAccountGroups(merged.accountGroups);
+        setAssetClasses(merged.assetClasses); saveAssetClasses(merged.assetClasses);
+        setCustomAssets(merged.customAssets); saveCustomAssets(merged.customAssets);
+        setCustomLiabilities(merged.customLiabilities); saveCustomLiabilities(merged.customLiabilities);
+        setCustomAssetClasses(merged.customAssetClasses); saveCustomAssetClasses(merged.customAssetClasses);
         setCustomCategories(merged.customCategories); saveCustomCategories(merged.customCategories);
         setHiddenCategories(merged.hiddenCategories); saveHiddenCategories(merged.hiddenCategories);
         setHiddenIds(merged.hiddenTransactionIds); saveHiddenIds(merged.hiddenTransactionIds);
@@ -232,6 +301,10 @@ export function DataProvider({ children }) {
             transactionNotes: merged.transactionNotes,
             accountNicknames: merged.accountNicknames,
             accountGroups: merged.accountGroups,
+            assetClasses: merged.assetClasses,
+            customAssets: merged.customAssets,
+            customLiabilities: merged.customLiabilities,
+            customAssetClasses: merged.customAssetClasses,
             customCategories: merged.customCategories,
             hiddenCategories: [...merged.hiddenCategories],
             hiddenTransactionIds: [...merged.hiddenTransactionIds],
@@ -262,6 +335,10 @@ export function DataProvider({ children }) {
         transactionNotes,
         accountNicknames,
         accountGroups,
+        assetClasses,
+        customAssets,
+        customLiabilities,
+        customAssetClasses,
         customCategories,
         hiddenCategories: [...hiddenCategories],
         hiddenTransactionIds: [...hiddenIds],
@@ -278,6 +355,10 @@ export function DataProvider({ children }) {
     transactionNotes,
     accountNicknames,
     accountGroups,
+    assetClasses,
+    customAssets,
+    customLiabilities,
+    customAssetClasses,
     customCategories,
     hiddenCategories,
     hiddenIds,
@@ -312,6 +393,26 @@ export function DataProvider({ children }) {
   const allTransactionsRef = useRef(allTransactions);
   allTransactionsRef.current = allTransactions;
 
+  // Merge user-entered customs into the sheet-derived balances so every
+  // consumer (Overview Net Worth, Asset Allocation, etc.) sees them
+  // automatically. Recomputes totals + netWorth so custom entries are
+  // first-class instead of a separate sidecar.
+  const balances = useMemo(() => {
+    if (!rawBalances) return rawBalances;
+    const assets = [...(rawBalances.assets || []), ...(customAssets || [])];
+    const liabilities = [...(rawBalances.liabilities || []), ...(customLiabilities || [])];
+    const totalAssets = assets.reduce((s, a) => s + (a.balance || 0), 0);
+    const totalLiabilities = liabilities.reduce((s, l) => s + (l.balance || 0), 0);
+    return {
+      ...rawBalances,
+      assets,
+      liabilities,
+      totalAssets,
+      totalLiabilities,
+      netWorth: totalAssets - totalLiabilities,
+    };
+  }, [rawBalances, customAssets, customLiabilities]);
+
   const loadData = useCallback(async () => {
     setDataLoading(true);
     setError(null);
@@ -321,7 +422,7 @@ export function DataProvider({ children }) {
         fetchBalances(),
       ]);
       setRawTransactions(txns);
-      setBalances(bal);
+      setRawBalances(bal);
       setLastSync(new Date());
     } catch (err) {
       console.error('Failed to load sheet data:', err);
@@ -405,6 +506,138 @@ export function DataProvider({ children }) {
       if (nickname) next[accountName] = nickname;
       else delete next[accountName];
       saveAccountNicknames(next);
+      return next;
+    });
+  }, []);
+
+  // ── Custom assets / liabilities — user-entered items that aren't pulled
+  // from the sheet feed. Used for things like real estate, vehicles,
+  // private holdings, etc. Each entry is { name, balance, updated, custom: true }.
+  const addCustomAsset = useCallback(({ name, balance, className }) => {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return;
+    const item = { name: trimmed, balance: Number(balance) || 0, updated: 'Manual', custom: true };
+    setCustomAssets(prev => {
+      // Replace by name if it already exists, else append.
+      const idx = prev.findIndex(a => a.name === trimmed);
+      const next = idx === -1 ? [...prev, item] : prev.map((a, i) => i === idx ? { ...a, ...item } : a);
+      saveCustomAssets(next);
+      return next;
+    });
+    if (className) {
+      setAssetClasses(prev => {
+        const next = { ...prev, [trimmed]: className };
+        saveAssetClasses(next);
+        return next;
+      });
+    }
+  }, []);
+
+  const updateCustomAsset = useCallback((name, patch) => {
+    if (!name) return;
+    setCustomAssets(prev => {
+      const next = prev.map(a => a.name === name ? { ...a, ...patch, balance: patch.balance != null ? Number(patch.balance) || 0 : a.balance } : a);
+      saveCustomAssets(next);
+      return next;
+    });
+    if (patch && patch.name && patch.name !== name) {
+      setAssetClasses(prev => {
+        if (!prev[name]) return prev;
+        const next = { ...prev, [patch.name]: prev[name] };
+        delete next[name];
+        saveAssetClasses(next);
+        return next;
+      });
+    }
+  }, []);
+
+  const removeCustomAsset = useCallback((name) => {
+    if (!name) return;
+    setCustomAssets(prev => {
+      const next = prev.filter(a => a.name !== name);
+      saveCustomAssets(next);
+      return next;
+    });
+    setAssetClasses(prev => {
+      if (!prev[name]) return prev;
+      const next = { ...prev };
+      delete next[name];
+      saveAssetClasses(next);
+      return next;
+    });
+  }, []);
+
+  const addCustomLiability = useCallback(({ name, balance }) => {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return;
+    const item = { name: trimmed, balance: Number(balance) || 0, updated: 'Manual', custom: true };
+    setCustomLiabilities(prev => {
+      const idx = prev.findIndex(a => a.name === trimmed);
+      const next = idx === -1 ? [...prev, item] : prev.map((a, i) => i === idx ? { ...a, ...item } : a);
+      saveCustomLiabilities(next);
+      return next;
+    });
+  }, []);
+
+  const updateCustomLiability = useCallback((name, patch) => {
+    if (!name) return;
+    setCustomLiabilities(prev => {
+      const next = prev.map(a => a.name === name ? { ...a, ...patch, balance: patch.balance != null ? Number(patch.balance) || 0 : a.balance } : a);
+      saveCustomLiabilities(next);
+      return next;
+    });
+  }, []);
+
+  const removeCustomLiability = useCallback((name) => {
+    if (!name) return;
+    setCustomLiabilities(prev => {
+      const next = prev.filter(a => a.name !== name);
+      saveCustomLiabilities(next);
+      return next;
+    });
+  }, []);
+
+  const addCustomAssetClass = useCallback((className) => {
+    const trimmed = (className || '').trim();
+    if (!trimmed) return;
+    setCustomAssetClasses(prev => {
+      if (prev.includes(trimmed)) return prev;
+      const next = [...prev, trimmed];
+      saveCustomAssetClasses(next);
+      return next;
+    });
+  }, []);
+
+  const removeCustomAssetClass = useCallback((className) => {
+    if (!className) return;
+    setCustomAssetClasses(prev => {
+      const next = prev.filter(c => c !== className);
+      saveCustomAssetClasses(next);
+      return next;
+    });
+    // Also clear any account assignments to that class.
+    setAssetClasses(prev => {
+      const next = {};
+      let changed = false;
+      for (const [k, v] of Object.entries(prev)) {
+        if (v === className) { changed = true; continue; }
+        next[k] = v;
+      }
+      if (!changed) return prev;
+      saveAssetClasses(next);
+      return next;
+    });
+  }, []);
+
+  // Assign `accountName` to an asset class (Cash / Stocks / Retirement), or
+  // remove the assignment when className is falsy.
+  const setAssetClass = useCallback((accountName, className) => {
+    setAssetClasses(prev => {
+      const next = { ...prev };
+      const trimmed = (className || '').trim();
+      if (trimmed) next[accountName] = trimmed;
+      else delete next[accountName];
+      saveAssetClasses(next);
       return next;
     });
   }, []);
@@ -668,6 +901,15 @@ export function DataProvider({ children }) {
     updateTransactionNote,
     setAccountNickname,
     setAccountGroup,
+    setAssetClass,
+    addCustomAsset,
+    updateCustomAsset,
+    removeCustomAsset,
+    addCustomLiability,
+    updateCustomLiability,
+    removeCustomLiability,
+    addCustomAssetClass,
+    removeCustomAssetClass,
     renameGroup,
     deleteGroup,
     toggleHideTransaction,
@@ -691,6 +933,15 @@ export function DataProvider({ children }) {
     updateTransactionNote,
     setAccountNickname,
     setAccountGroup,
+    setAssetClass,
+    addCustomAsset,
+    updateCustomAsset,
+    removeCustomAsset,
+    addCustomLiability,
+    updateCustomLiability,
+    removeCustomLiability,
+    addCustomAssetClass,
+    removeCustomAssetClass,
     renameGroup,
     deleteGroup,
     toggleHideTransaction,
@@ -713,6 +964,10 @@ export function DataProvider({ children }) {
     transactionNotes,
     accountNicknames,
     accountGroups,
+    assetClasses,
+    customAssets,
+    customLiabilities,
+    customAssetClasses,
     hiddenTransactions,
     hiddenCount: hiddenIds.size,
   }), [
@@ -729,6 +984,10 @@ export function DataProvider({ children }) {
     transactionNotes,
     accountNicknames,
     accountGroups,
+    assetClasses,
+    customAssets,
+    customLiabilities,
+    customAssetClasses,
     hiddenTransactions,
     hiddenIds,
   ]);

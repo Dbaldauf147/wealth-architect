@@ -23,22 +23,68 @@ function relativeTime(date) {
 }
 
 const DONUT_COLORS = ['#0058be', '#009668', '#e8a317', '#94a3b8', '#7c3aed', '#e11d48', '#06b6d4', '#f97316'];
+const BUILT_IN_ASSET_CLASSES = ['Cash', 'Stocks', 'Retirement'];
+// Distinct, semantically-meaningful colours used when the donut is in
+// "By class" mode so Cash / Stocks / Retirement stay visually stable
+// regardless of sort order. Custom classes fall back to a stable
+// hash-based color via classColor() so they don't reshuffle either.
+const CLASS_COLORS = {
+  Cash: '#009668',
+  Stocks: '#0058be',
+  Retirement: '#7c3aed',
+  Unclassified: '#94a3b8',
+};
+function classColor(name) {
+  if (CLASS_COLORS[name]) return CLASS_COLORS[name];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  return DONUT_COLORS[Math.abs(hash) % DONUT_COLORS.length];
+}
 
 export function OverviewPage() {
   const {
     balances, analytics, transactions, loading, error, lastSync,
     accountNicknames: ctxNicknames,
     accountGroups: ctxGroups,
+    assetClasses: ctxAssetClasses,
+    customAssetClasses: ctxCustomAssetClasses,
   } = useData();
-  const { setAccountNickname, setAccountGroup, renameGroup, deleteGroup } = useDataActions();
+  const {
+    setAccountNickname, setAccountGroup, setAssetClass,
+    addCustomAsset, addCustomAssetClass,
+    renameGroup, deleteGroup,
+  } = useDataActions();
   const accountNicknames = ctxNicknames || {};
   const accountGroups = ctxGroups || {};
+  const assetClasses = ctxAssetClasses || {};
+  const customAssetClasses = ctxCustomAssetClasses || [];
+  // Built-in + user-added classes, deduped, in canonical order.
+  const allAssetClasses = [...BUILT_IN_ASSET_CLASSES, ...customAssetClasses.filter(c => !BUILT_IN_ASSET_CLASSES.includes(c))];
   // rename target is keyed by bucket key: 'group:Name' or 'acct:Name'
   const [renamingBucket, setRenamingBucket] = useState(null);
   const [renameValue, setRenameValue] = useState('');
   // group picker open for which bucket key
   const [groupPickerFor, setGroupPickerFor] = useState(null);
   const [newGroupInput, setNewGroupInput] = useState('');
+  // Asset Allocation card view mode + per-row class picker open state.
+  const [allocationView, setAllocationView] = useState('account'); // 'account' | 'class'
+  const [classPickerFor, setClassPickerFor] = useState(null);
+  // Quick-add custom asset form (collapsed by default).
+  const [addingCustomAsset, setAddingCustomAsset] = useState(false);
+  const [customAssetName, setCustomAssetName] = useState('');
+  const [customAssetBalance, setCustomAssetBalance] = useState('');
+  const [customAssetClass, setCustomAssetClass] = useState('');
+
+  function submitCustomAsset() {
+    const name = customAssetName.trim();
+    if (!name) return;
+    const balance = parseFloat(String(customAssetBalance).replace(/[$,]/g, '')) || 0;
+    addCustomAsset({ name, balance, className: customAssetClass || null });
+    setCustomAssetName('');
+    setCustomAssetBalance('');
+    setCustomAssetClass('');
+    setAddingCustomAsset(false);
+  }
 
   function startRename(bucket) {
     setRenamingBucket(bucket.key);
@@ -127,17 +173,23 @@ export function OverviewPage() {
     },
   ];
 
-  // Build asset allocation from real balances — aggregated by group so a
-  // single donut slice / legend row covers all members of the group.
+  // Build asset allocation from real balances. Two view modes:
+  //  • 'account' — aggregated by user group / individual account
+  //  • 'class'   — aggregated by Cash / Stocks / Retirement taxonomy
   const assetAccounts = balances?.assets || [];
   const totalAssetBalance = assetAccounts.reduce((sum, a) => sum + a.balance, 0) || 1;
-  const assetBuckets = aggregateByGroup(assetAccounts).sort((a, b) => b.balance - a.balance);
-  const ALLOCATION = assetBuckets.map((b, i) => ({
+  const allocationBuckets = allocationView === 'class'
+    ? aggregateByClass(assetAccounts)
+    : aggregateByGroup(assetAccounts).sort((a, b) => b.balance - a.balance);
+  const ALLOCATION = allocationBuckets.map((b, i) => ({
     bucket: b,
     label: b.displayName,
     value: fmt(b.balance),
+    balance: b.balance,
     pct: Math.round((b.balance / totalAssetBalance) * 100),
-    color: DONUT_COLORS[i % DONUT_COLORS.length],
+    color: b.isClass
+      ? classColor(b.className)
+      : DONUT_COLORS[i % DONUT_COLORS.length],
   }));
 
   // Build spending data from analytics byMonth
@@ -222,10 +274,40 @@ export function OverviewPage() {
     return Array.from(map.values());
   }
 
+  // Bucket accounts into the broader Cash / Stocks / Retirement taxonomy
+  // (plus Unclassified for assets the user hasn't tagged yet). The class
+  // assignment lives in assetClasses[accountName] and is synced via
+  // Firestore — see DataContext.
+  function aggregateByClass(accounts) {
+    const order = [...allAssetClasses, 'Unclassified'];
+    const map = new Map();
+    for (const a of accounts) {
+      const assigned = assetClasses[a.name];
+      const cls = assigned && allAssetClasses.includes(assigned) ? assigned : 'Unclassified';
+      const key = `class:${cls}`;
+      if (!map.has(key)) {
+        map.set(key, { key, displayName: cls, className: cls, balance: 0, members: [], isClass: true });
+      }
+      const bucket = map.get(key);
+      bucket.balance += a.balance || 0;
+      bucket.members.push(a.name);
+    }
+    // Only return buckets that actually have members, sorted by canonical order.
+    return Array.from(map.values()).sort((a, b) => order.indexOf(a.className) - order.indexOf(b.className));
+  }
+
   // Render an account or group row's name cell. Shows inline rename UI when
   // renamingBucket matches; otherwise shows the display name with pencil +
   // group-picker affordances. Members of a group are shown dimmed underneath.
-  const renderBucketName = (bucket) => {
+  //
+  // opts.showOriginal (default true) controls whether we render the dimmed
+  // raw-account-name line beneath a nicknamed row. The Asset Allocation
+  // legend passes false so the legend stays compact.
+  // opts.showClass (default false) injects a class-picker icon next to the
+  // group-picker icon — only the Asset Allocation card opts into this.
+  const renderBucketName = (bucket, opts = {}) => {
+    const showOriginal = opts.showOriginal !== false;
+    const showClass = !!opts.showClass;
     const isEditing = renamingBucket === bucket.key;
     if (isEditing) {
       return (
@@ -263,14 +345,85 @@ export function OverviewPage() {
           >
             <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{bucket.isGroup ? 'workspaces' : 'add_link'}</span>
           </button>
+          {showClass && !bucket.isGroup && bucket.accountName && (
+            <button
+              className={styles.renameBtn}
+              onClick={() => setClassPickerFor(classPickerFor === bucket.key ? null : bucket.key)}
+              title="Assign asset class"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>category</span>
+            </button>
+          )}
+          {showClass && !bucket.isGroup && bucket.accountName && assetClasses[bucket.accountName] && (
+            <span
+              title={`Asset class: ${assetClasses[bucket.accountName]}`}
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                padding: '2px 6px',
+                borderRadius: 4,
+                background: `${classColor(assetClasses[bucket.accountName])}22`,
+                color: classColor(assetClasses[bucket.accountName]),
+                textTransform: 'uppercase',
+                letterSpacing: 0.3,
+                marginLeft: 4,
+              }}
+            >
+              {assetClasses[bucket.accountName]}
+            </span>
+          )}
         </span>
-        {/* Original name(s) shown dimmed below */}
-        {bucket.isGroup ? (
-          <span className={styles.snapshotRowOriginal}>
-            {bucket.members.length} {bucket.members.length === 1 ? 'account' : 'accounts'}: {bucket.members.join(', ')}
-          </span>
-        ) : (
-          accountNicknames[bucket.accountName] && <span className={styles.snapshotRowOriginal}>{bucket.accountName}</span>
+        {/* Original name(s) shown dimmed below — suppressed for compact legends */}
+        {showOriginal && (
+          bucket.isGroup ? (
+            <span className={styles.snapshotRowOriginal}>
+              {bucket.members.length} {bucket.members.length === 1 ? 'account' : 'accounts'}: {bucket.members.join(', ')}
+            </span>
+          ) : (
+            accountNicknames[bucket.accountName] && <span className={styles.snapshotRowOriginal}>{bucket.accountName}</span>
+          )
+        )}
+        {showClass && classPickerFor === bucket.key && !bucket.isGroup && bucket.accountName && (
+          <div className={styles.groupPicker}>
+            <div className={styles.groupPickerSection}>
+              <div className={styles.groupPickerLabel}>Asset class</div>
+              {allAssetClasses.map(c => (
+                <button
+                  key={c}
+                  className={styles.groupPickerOption}
+                  disabled={assetClasses[bucket.accountName] === c}
+                  onClick={() => { setAssetClass(bucket.accountName, c); setClassPickerFor(null); }}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+            <div className={styles.groupPickerSection}>
+              <div className={styles.groupPickerLabel}>Or create new class</div>
+              <div className={styles.groupPickerNewRow}>
+                <input
+                  className={styles.groupPickerInput}
+                  placeholder="e.g. Real Estate, Vehicle, Crypto"
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      const name = e.currentTarget.value.trim();
+                      if (!name) return;
+                      addCustomAssetClass(name);
+                      setAssetClass(bucket.accountName, name);
+                      setClassPickerFor(null);
+                    }
+                    if (e.key === 'Escape') setClassPickerFor(null);
+                  }}
+                />
+              </div>
+            </div>
+            {assetClasses[bucket.accountName] && (
+              <button
+                className={styles.groupPickerDanger}
+                onClick={() => { setAssetClass(bucket.accountName, null); setClassPickerFor(null); }}
+              >Clear class</button>
+            )}
+          </div>
         )}
         {groupPickerFor === bucket.key && (
           <div className={styles.groupPicker}>
@@ -723,8 +876,30 @@ export function OverviewPage() {
 
         {/* Asset Allocation Donut */}
         <div className={styles.chartCard}>
-          <div className={styles.chartHeader}>
+          <div className={styles.chartHeader} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <span className={styles.chartTitle}>Asset Allocation</span>
+            <div style={{ display: 'inline-flex', gap: 2, background: 'var(--color-surface-alt)', padding: 2, borderRadius: 8 }}>
+              {[{ key: 'account', label: 'By account' }, { key: 'class', label: 'By class' }].map(t => (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setAllocationView(t.key)}
+                  style={{
+                    padding: '4px 10px',
+                    border: 'none',
+                    background: allocationView === t.key ? 'var(--color-surface)' : 'transparent',
+                    boxShadow: allocationView === t.key ? 'var(--shadow-xs)' : 'none',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: allocationView === t.key ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                  }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
           <div className={styles.donutWrapper}>
             <svg width="160" height="160" viewBox="0 0 160 160" onMouseLeave={() => setHoverDonut(null)}>
@@ -780,12 +955,91 @@ export function OverviewPage() {
                 <div className={styles.donutLegendLeft}>
                   <div className={styles.donutLegendDot} style={{ background: a.color }} />
                   <div className={styles.donutLegendNameWrap}>
-                    {renderBucketName(a.bucket)}
+                    {a.bucket.isClass ? (
+                      <span className={styles.snapshotRowDisplay}>{a.bucket.displayName}</span>
+                    ) : (
+                      renderBucketName(a.bucket, { showOriginal: false, showClass: true })
+                    )}
                   </div>
                 </div>
-                <span className={styles.donutLegendValue}>{a.pct}%</span>
+                <span className={styles.donutLegendValue}>
+                  <span style={{ color: 'var(--color-text-primary)', fontWeight: 600, marginRight: 8 }}>{a.value}</span>
+                  <span style={{ color: 'var(--color-text-tertiary)' }}>{a.pct}%</span>
+                </span>
               </div>
             ))}
+          </div>
+
+          {/* Quick-add custom asset — for items the sheet feed doesn't see
+              (real estate, vehicles, private holdings, etc.). */}
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--color-border, rgba(0,0,0,0.08))' }}>
+            {!addingCustomAsset ? (
+              <button
+                type="button"
+                onClick={() => setAddingCustomAsset(true)}
+                style={{
+                  width: '100%',
+                  background: 'transparent',
+                  border: '1px dashed var(--color-border, rgba(0,0,0,0.15))',
+                  borderRadius: 6,
+                  padding: '8px 10px',
+                  color: 'var(--color-text-tertiary)',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                }}
+                title="Add a manually-tracked asset (real estate, vehicle, etc.)"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
+                Add custom asset
+              </button>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <input
+                  className={styles.groupPickerInput}
+                  placeholder="Asset name (e.g. Home, Tesla, Gold)"
+                  value={customAssetName}
+                  onChange={e => setCustomAssetName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') submitCustomAsset(); if (e.key === 'Escape') setAddingCustomAsset(false); }}
+                  autoFocus
+                />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    className={styles.groupPickerInput}
+                    placeholder="$0"
+                    value={customAssetBalance}
+                    onChange={e => setCustomAssetBalance(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') submitCustomAsset(); if (e.key === 'Escape') setAddingCustomAsset(false); }}
+                    style={{ width: 100 }}
+                  />
+                  <select
+                    className={styles.groupPickerInput}
+                    value={customAssetClass}
+                    onChange={e => setCustomAssetClass(e.target.value)}
+                    style={{ flex: 1 }}
+                  >
+                    <option value="">No class</option>
+                    {allAssetClasses.map(c => (<option key={c} value={c}>{c}</option>))}
+                  </select>
+                </div>
+                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={() => { setAddingCustomAsset(false); setCustomAssetName(''); setCustomAssetBalance(''); setCustomAssetClass(''); }}
+                    style={{ background: 'transparent', border: 'none', fontSize: 12, color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 8px' }}
+                  >Cancel</button>
+                  <button
+                    type="button"
+                    onClick={submitCustomAsset}
+                    style={{ background: 'var(--color-secondary, #0058be)', color: '#fff', border: 'none', borderRadius: 4, padding: '4px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                  >Add</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

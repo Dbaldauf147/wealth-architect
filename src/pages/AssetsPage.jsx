@@ -8,8 +8,6 @@ function fmt(n) {
 }
 
 const HIDDEN_KEY = 'wa-hidden-accounts';
-const CUSTOM_ASSETS_KEY = 'wa-custom-assets';
-const CUSTOM_LIABILITIES_KEY = 'wa-custom-liabilities';
 
 function loadJSON(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; }
@@ -18,12 +16,10 @@ function saveJSON(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
 
 export function AssetsPage() {
   const { balances, loading, accountNicknames, accountGroups } = useData();
-  const { setAccountNickname } = useDataActions();
+  const { setAccountNickname, addCustomAsset, removeCustomAsset, addCustomLiability, removeCustomLiability } = useDataActions();
   const nicknames = accountNicknames || {};
   const groups = accountGroups || {};
   const [hidden, setHidden] = useState(() => loadJSON(HIDDEN_KEY, []));
-  const [customAssets, setCustomAssets] = useState(() => loadJSON(CUSTOM_ASSETS_KEY, []));
-  const [customLiabilities, setCustomLiabilities] = useState(() => loadJSON(CUSTOM_LIABILITIES_KEY, []));
   const [showHidden, setShowHidden] = useState(false);
   const [addingAsset, setAddingAsset] = useState(false);
   const [addingLiability, setAddingLiability] = useState(false);
@@ -40,36 +36,25 @@ export function AssetsPage() {
     saveJSON(HIDDEN_KEY, next);
   }
 
-  function addCustomAsset() {
+  function submitCustomAsset() {
     const name = newName.trim();
     if (!name) return;
     const bal = parseFloat(newBalance.replace(/[$,]/g, '')) || 0;
-    const next = [...customAssets, { name, balance: bal, updated: 'Manual', custom: true }];
-    setCustomAssets(next);
-    saveJSON(CUSTOM_ASSETS_KEY, next);
+    addCustomAsset({ name, balance: bal });
     setNewName(''); setNewBalance(''); setAddingAsset(false);
   }
 
-  function addCustomLiability() {
+  function submitCustomLiability() {
     const name = newName.trim();
     if (!name) return;
     const bal = parseFloat(newBalance.replace(/[$,]/g, '')) || 0;
-    const next = [...customLiabilities, { name, balance: bal, updated: 'Manual', custom: true }];
-    setCustomLiabilities(next);
-    saveJSON(CUSTOM_LIABILITIES_KEY, next);
+    addCustomLiability({ name, balance: bal });
     setNewName(''); setNewBalance(''); setAddingLiability(false);
   }
 
   function removeCustom(name, type) {
-    if (type === 'asset') {
-      const next = customAssets.filter(a => a.name !== name);
-      setCustomAssets(next);
-      saveJSON(CUSTOM_ASSETS_KEY, next);
-    } else {
-      const next = customLiabilities.filter(a => a.name !== name);
-      setCustomLiabilities(next);
-      saveJSON(CUSTOM_LIABILITIES_KEY, next);
-    }
+    if (type === 'asset') removeCustomAsset(name);
+    else removeCustomLiability(name);
   }
 
   function startRename(originalName) {
@@ -118,8 +103,10 @@ export function AssetsPage() {
     );
   }
 
-  const allAssets = [...(balances.assets || []), ...customAssets].sort((a, b) => (b.balance || 0) - (a.balance || 0));
-  const allLiabilities = [...(balances.liabilities || []), ...customLiabilities].sort((a, b) => (b.balance || 0) - (a.balance || 0));
+  // balances.assets/liabilities already include user-added customs (merged
+  // in DataContext), so we just sort the unified list.
+  const allAssets = [...(balances.assets || [])].sort((a, b) => (b.balance || 0) - (a.balance || 0));
+  const allLiabilities = [...(balances.liabilities || [])].sort((a, b) => (b.balance || 0) - (a.balance || 0));
   const assets = showHidden ? allAssets : allAssets.filter(a => !hiddenSet.has(a.name));
   const liabilities = showHidden ? allLiabilities : allLiabilities.filter(a => !hiddenSet.has(a.name));
   const hiddenCount = allAssets.filter(a => hiddenSet.has(a.name)).length + allLiabilities.filter(a => hiddenSet.has(a.name)).length;
@@ -268,7 +255,7 @@ export function AssetsPage() {
             <div className={styles.addForm}>
               <input className={styles.addInput} placeholder="Account name" value={newName} onChange={e => setNewName(e.target.value)} autoFocus />
               <input className={styles.addInput} placeholder="$0" value={newBalance} onChange={e => setNewBalance(e.target.value)} style={{ width: 100 }} />
-              <button className={styles.renameSave} onClick={addCustomAsset}><span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span></button>
+              <button className={styles.renameSave} onClick={submitCustomAsset}><span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span></button>
               <button className={styles.renameCancel} onClick={() => setAddingAsset(false)}><span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span></button>
             </div>
           )}
@@ -351,7 +338,7 @@ export function AssetsPage() {
             <div className={styles.addForm}>
               <input className={styles.addInput} placeholder="Account name" value={newName} onChange={e => setNewName(e.target.value)} autoFocus />
               <input className={styles.addInput} placeholder="$0" value={newBalance} onChange={e => setNewBalance(e.target.value)} style={{ width: 100 }} />
-              <button className={styles.renameSave} onClick={addCustomLiability}><span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span></button>
+              <button className={styles.renameSave} onClick={submitCustomLiability}><span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span></button>
               <button className={styles.renameCancel} onClick={() => setAddingLiability(false)}><span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span></button>
             </div>
           )}

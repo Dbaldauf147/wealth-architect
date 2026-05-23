@@ -247,6 +247,29 @@ export function CardsPage() {
     [creditCards, cardTransactions],
   );
 
+  // BoA Checking ending in 1118 — surfaced on the schedule view so the user
+  // can compare upcoming card payments against available cash. Matched by
+  // the last-4 digits in the asset's name so a rename or institution-format
+  // change in Tiller doesn't break the lookup.
+  const payingAccount = useMemo(() => {
+    const assets = balances?.assets;
+    if (!Array.isArray(assets)) return null;
+    return assets.find(a => /1118\b/.test(a.name || '')) || null;
+  }, [balances]);
+
+  // Total estimated outflow across all projected next payments — what the
+  // user needs to cover from their checking account this cycle.
+  const upcomingTotal = useMemo(() => {
+    let sum = 0;
+    let count = 0;
+    for (const s of schedule) {
+      if (!s.nextPaymentDate || !s.estimatedNextAmount) continue;
+      sum += s.estimatedNextAmount;
+      count += 1;
+    }
+    return { sum, count };
+  }, [schedule]);
+
   // Sort schedule rows by next-payment-date asc (no-payment-history rows last).
   const sortedSchedule = useMemo(() => {
     return [...schedule].sort((a, b) => {
@@ -723,6 +746,67 @@ export function CardsPage() {
       </>)}
 
       {view === 'schedule' && (<>
+      {/* Paying account: BoA Checking ••1118 vs. projected card outflow */}
+      {payingAccount && (
+        <div className={styles.matrixCard} style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+            <div
+              className={styles.infoIcon}
+              style={{ background: 'rgba(0, 150, 104, 0.12)', color: '#009668', flexShrink: 0 }}
+            >
+              <span className="material-symbols-outlined">account_balance</span>
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 2 }}>
+                Paying from
+              </div>
+              <div style={{ fontFamily: 'var(--font-headline)', fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {displayName(payingAccount.name)}
+              </div>
+              {payingAccount.updated && (
+                <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 2 }}>
+                  Updated {payingAccount.updated}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 24, marginLeft: 'auto', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                Balance
+              </div>
+              <div style={{ fontFamily: 'var(--font-headline)', fontSize: 22, fontWeight: 700, color: 'var(--color-text-primary)' }}>
+                {fmt(payingAccount.balance)}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                Projected outflow ({upcomingTotal.count})
+              </div>
+              <div style={{ fontFamily: 'var(--font-headline)', fontSize: 22, fontWeight: 700, color: 'var(--color-text-primary)' }}>
+                {fmt(upcomingTotal.sum)}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                After payments
+              </div>
+              <div
+                style={{
+                  fontFamily: 'var(--font-headline)',
+                  fontSize: 22,
+                  fontWeight: 700,
+                  color: (payingAccount.balance - upcomingTotal.sum) < 0 ? '#ba1a1a' : 'var(--color-text-primary)',
+                }}
+              >
+                {fmt(payingAccount.balance - upcomingTotal.sum)}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Upcoming payments — Calendar or Timeline */}
       <div className={styles.chartCard}>
         <div className={styles.chartHeader}>
