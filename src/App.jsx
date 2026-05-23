@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, lazy, Suspense, Component } from 'react';
 import styles from './App.module.css';
 
 function UpdatePill() {
@@ -56,18 +56,59 @@ function UpdatePill() {
     </div>
   );
 }
-import { OverviewPage } from './pages/OverviewPage';
-import { TransactionsPage } from './pages/TransactionsPage';
-import { CardsPage } from './pages/CardsPage';
-import { AssetsPage } from './pages/AssetsPage';
-import { SettingsPage } from './pages/SettingsPage';
-import { useData } from './contexts/DataContext';
+import { useData, useDataActions } from './contexts/DataContext';
 
-import { BudgetsPage } from './pages/BudgetsPage';
-import { RecurringPage } from './pages/RecurringPage';
-import { CashFlowPage } from './pages/CashFlowPage';
-import { CardPromosPage } from './pages/CardPromosPage';
-import { TrendsPage } from './pages/TrendsPage';
+// Pages are loaded on demand so the initial bundle doesn't include every
+// page upfront. React.lazy expects a default export, so we adapt the named
+// exports from each page module.
+const OverviewPage = lazy(() => import('./pages/OverviewPage').then(m => ({ default: m.OverviewPage })));
+const TransactionsPage = lazy(() => import('./pages/TransactionsPage').then(m => ({ default: m.TransactionsPage })));
+const CardsPage = lazy(() => import('./pages/CardsPage').then(m => ({ default: m.CardsPage })));
+const AssetsPage = lazy(() => import('./pages/AssetsPage').then(m => ({ default: m.AssetsPage })));
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
+const BudgetsPage = lazy(() => import('./pages/BudgetsPage').then(m => ({ default: m.BudgetsPage })));
+const RecurringPage = lazy(() => import('./pages/RecurringPage').then(m => ({ default: m.RecurringPage })));
+const CashFlowPage = lazy(() => import('./pages/CashFlowPage').then(m => ({ default: m.CashFlowPage })));
+const CardPromosPage = lazy(() => import('./pages/CardPromosPage').then(m => ({ default: m.CardPromosPage })));
+const TrendsPage = lazy(() => import('./pages/TrendsPage').then(m => ({ default: m.TrendsPage })));
+
+// Stale tabs after a deploy can throw ChunkLoadError when trying to fetch
+// a page chunk that no longer exists at the cached hash. Reload once to
+// pick up the fresh asset manifest; if it errors again we show a fallback.
+class PageBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { errored: false };
+  }
+  static getDerivedStateFromError() {
+    return { errored: true };
+  }
+  componentDidCatch(error) {
+    const msg = (error && (error.message || '')) + ' ' + (error && error.name || '');
+    const isChunk = /chunk|importing|dynamically imported module|failed to fetch/i.test(msg);
+    if (isChunk && !sessionStorage.getItem('chunkReloaded')) {
+      sessionStorage.setItem('chunkReloaded', '1');
+      window.location.reload();
+    }
+  }
+  render() {
+    if (this.state.errored) {
+      return (
+        <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
+          <p>Something went wrong loading this page.</p>
+          <button onClick={() => { sessionStorage.removeItem('chunkReloaded'); window.location.reload(); }}>
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function PageFallback() {
+  return <div style={{ padding: 40, color: 'var(--color-text-tertiary)' }}>Loading…</div>;
+}
 
 const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: 'dashboard' },
@@ -98,7 +139,8 @@ export function App() {
   const [view, setView] = useState(getHashView);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [headerTab, setHeaderTab] = useState('portfolio');
-  const { refresh, loading, lastSync } = useData();
+  const { loading, lastSync } = useData();
+  const { refresh } = useDataActions();
 
   useEffect(() => {
     const onHash = () => setView(getHashView());
@@ -231,7 +273,11 @@ export function App() {
 
         {/* Page Content */}
         <main className={styles.content}>
-          {renderPage()}
+          <PageBoundary>
+            <Suspense fallback={<PageFallback />}>
+              {renderPage()}
+            </Suspense>
+          </PageBoundary>
         </main>
       </div>
 

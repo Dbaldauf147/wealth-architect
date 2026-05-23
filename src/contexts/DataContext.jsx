@@ -15,6 +15,7 @@ import {
 const CONFIG_DOC_PATH = ['config', 'default'];
 
 const DataContext = createContext(null);
+const DataActionsContext = createContext(null);
 
 function loadJSON(key, fallback) {
   try {
@@ -303,6 +304,14 @@ export function DataProvider({ children }) {
     [transactions],
   );
 
+  // Stable handle on the latest `allTransactions` so action callbacks that
+  // need to inspect transactions (renameCategory, removeCategory,
+  // getMatchCount) don't have to list it in their deps. Without this, those
+  // callbacks would change identity on every transaction update, defeating
+  // the point of the stable actions context.
+  const allTransactionsRef = useRef(allTransactions);
+  allTransactionsRef.current = allTransactions;
+
   const loadData = useCallback(async () => {
     setDataLoading(true);
     setError(null);
@@ -533,7 +542,7 @@ export function DataProvider({ children }) {
   const renameCategory = useCallback((oldName, newName) => {
     const trimmed = (newName || '').trim();
     if (!trimmed || trimmed === oldName) return;
-    const affectedIds = allTransactions
+    const affectedIds = allTransactionsRef.current
       .filter(t => (t.category || '') === oldName && t.transactionId)
       .map(t => t.transactionId);
 
@@ -564,10 +573,10 @@ export function DataProvider({ children }) {
       saveCategoryRules(next);
       return next;
     });
-  }, [allTransactions]);
+  }, []);
 
   const removeCategory = useCallback((name, reassignTo = '') => {
-    const affectedIds = allTransactions
+    const affectedIds = allTransactionsRef.current
       .filter(t => (t.category || '') === name && t.transactionId)
       .map(t => t.transactionId);
 
@@ -596,7 +605,7 @@ export function DataProvider({ children }) {
       saveCategoryRules(next);
       return next;
     });
-  }, [allTransactions]);
+  }, []);
 
   const unhideCategory = useCallback((name) => {
     setHiddenCategories(prev => {
@@ -616,8 +625,8 @@ export function DataProvider({ children }) {
       minAmount: opts.minAmount != null && opts.minAmount !== '' ? Number(opts.minAmount) : null,
       maxAmount: opts.maxAmount != null && opts.maxAmount !== '' ? Number(opts.maxAmount) : null,
     };
-    return allTransactions.filter(t => ruleMatches(ruleLike, t)).length;
-  }, [allTransactions]);
+    return allTransactionsRef.current.filter(t => ruleMatches(ruleLike, t)).length;
+  }, []);
 
   const toggleHideTransaction = useCallback((transactionId) => {
     if (!transactionId) return;
@@ -635,53 +644,112 @@ export function DataProvider({ children }) {
     [allTransactions, hiddenIds],
   );
 
+  // Stable bag of action callbacks. Every callback is wrapped in useCallback
+  // with [] deps (or reads state via refs), so this object's identity never
+  // changes after mount. Components that only need to write can subscribe to
+  // DataActionsContext via useDataActions() and skip re-renders entirely
+  // when reads (transactions, overrides, etc.) change.
+  const actions = useMemo(() => ({
+    refresh: loadData,
+    updateTransactionCategory,
+    updateTransactionSubcategory,
+    updateTransactionDate,
+    bulkUpdateCategoryByIds,
+    addCategoryRule,
+    removeCategoryRule,
+    updateCategoryRule,
+    addSubcategoryRule,
+    removeSubcategoryRule,
+    updateSubcategoryRule,
+    addCustomCategory,
+    renameCategory,
+    removeCategory,
+    unhideCategory,
+    updateTransactionNote,
+    setAccountNickname,
+    setAccountGroup,
+    renameGroup,
+    deleteGroup,
+    toggleHideTransaction,
+    getMatchCount,
+  }), [
+    loadData,
+    updateTransactionCategory,
+    updateTransactionSubcategory,
+    updateTransactionDate,
+    bulkUpdateCategoryByIds,
+    addCategoryRule,
+    removeCategoryRule,
+    updateCategoryRule,
+    addSubcategoryRule,
+    removeSubcategoryRule,
+    updateSubcategoryRule,
+    addCustomCategory,
+    renameCategory,
+    removeCategory,
+    unhideCategory,
+    updateTransactionNote,
+    setAccountNickname,
+    setAccountGroup,
+    renameGroup,
+    deleteGroup,
+    toggleHideTransaction,
+    getMatchCount,
+  ]);
+
+  // Read-side value also memoized so consumers don't see a new object
+  // identity unless something they actually depend on changed.
+  const reads = useMemo(() => ({
+    transactions,
+    balances,
+    analytics,
+    loading,
+    error,
+    lastSync,
+    categoryRules,
+    subcategoryRules,
+    customCategories,
+    hiddenCategories,
+    transactionNotes,
+    accountNicknames,
+    accountGroups,
+    hiddenTransactions,
+    hiddenCount: hiddenIds.size,
+  }), [
+    transactions,
+    balances,
+    analytics,
+    loading,
+    error,
+    lastSync,
+    categoryRules,
+    subcategoryRules,
+    customCategories,
+    hiddenCategories,
+    transactionNotes,
+    accountNicknames,
+    accountGroups,
+    hiddenTransactions,
+    hiddenIds,
+  ]);
+
   return (
-    <DataContext.Provider value={{
-      transactions,
-      balances,
-      analytics,
-      loading,
-      error,
-      lastSync,
-      refresh: loadData,
-      updateTransactionCategory,
-      updateTransactionSubcategory,
-      updateTransactionDate,
-      bulkUpdateCategoryByIds,
-      addCategoryRule,
-      removeCategoryRule,
-      updateCategoryRule,
-      removeSubcategoryRule,
-      updateSubcategoryRule,
-      categoryRules,
-      addSubcategoryRule,
-      subcategoryRules,
-      customCategories,
-      addCustomCategory,
-      hiddenCategories,
-      renameCategory,
-      removeCategory,
-      unhideCategory,
-      transactionNotes,
-      updateTransactionNote,
-      accountNicknames,
-      setAccountNickname,
-      accountGroups,
-      setAccountGroup,
-      renameGroup,
-      deleteGroup,
-      getMatchCount,
-      toggleHideTransaction,
-      hiddenTransactions,
-      hiddenCount: hiddenIds.size,
-    }}>
-      {children}
-    </DataContext.Provider>
+    <DataActionsContext.Provider value={actions}>
+      <DataContext.Provider value={reads}>
+        {children}
+      </DataContext.Provider>
+    </DataActionsContext.Provider>
   );
 }
 
 export function useData() {
   const ctx = useContext(DataContext);
   if (!ctx) throw new Error('useData must be used within DataProvider');
+  return ctx;
+}
+
+export function useDataActions() {
+  const ctx = useContext(DataActionsContext);
+  if (!ctx) throw new Error('useDataActions must be used within DataProvider');
   return ctx;
 }

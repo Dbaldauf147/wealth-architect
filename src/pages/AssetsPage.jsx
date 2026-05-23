@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useData } from '../contexts/DataContext';
+import { useData, useDataActions } from '../contexts/DataContext';
 import styles from './AssetsPage.module.css';
 
 function fmt(n) {
@@ -17,7 +17,8 @@ function loadJSON(key, fallback) {
 function saveJSON(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
 
 export function AssetsPage() {
-  const { balances, loading, accountNicknames, setAccountNickname, accountGroups } = useData();
+  const { balances, loading, accountNicknames, accountGroups } = useData();
+  const { setAccountNickname } = useDataActions();
   const nicknames = accountNicknames || {};
   const groups = accountGroups || {};
   const [hidden, setHidden] = useState(() => loadJSON(HIDDEN_KEY, []));

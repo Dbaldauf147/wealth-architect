@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useData } from '../contexts/DataContext';
+import { useData, useDataActions } from '../contexts/DataContext';
 import styles from './OverviewPage.module.css';
 
 function fmt(n) {
@@ -27,9 +27,10 @@ const DONUT_COLORS = ['#0058be', '#009668', '#e8a317', '#94a3b8', '#7c3aed', '#e
 export function OverviewPage() {
   const {
     balances, analytics, transactions, loading, error, lastSync,
-    accountNicknames: ctxNicknames, setAccountNickname,
-    accountGroups: ctxGroups, setAccountGroup, renameGroup, deleteGroup,
+    accountNicknames: ctxNicknames,
+    accountGroups: ctxGroups,
   } = useData();
+  const { setAccountNickname, setAccountGroup, renameGroup, deleteGroup } = useDataActions();
   const accountNicknames = ctxNicknames || {};
   const accountGroups = ctxGroups || {};
   // rename target is keyed by bucket key: 'group:Name' or 'acct:Name'

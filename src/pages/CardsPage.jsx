@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useMemo, useState } from 'react';
-import { useData } from '../contexts/DataContext';
+import { useData, useDataActions } from '../contexts/DataContext';
 import { buildCardSchedule } from '../lib/cardSchedule';
 import styles from './CardsPage.module.css';
 
@@ -41,13 +41,30 @@ function parseAccountName(s) {
   return { full, core, digits };
 }
 
+const HIDDEN_CARDS_KEY = 'wa-hidden-cards';
+
 export function CardsPage() {
-  const { transactions, balances, accountNicknames, setAccountNickname, accountGroups, loading } = useData();
-  const [view, setView] = useState('optimizer');
+  const { transactions, balances, accountNicknames, accountGroups, loading } = useData();
+  const { setAccountNickname } = useDataActions();
+  const [view, setView] = useState('schedule');
   const [scheduleView, setScheduleView] = useState('calendar');
   const [expanded, setExpanded] = useState(() => new Set());
   const [renamingCard, setRenamingCard] = useState(null);
   const [renameValue, setRenameValue] = useState('');
+  const [hiddenCards, setHiddenCards] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(HIDDEN_CARDS_KEY) || '[]'); }
+    catch { return []; }
+  });
+  const [showHidden, setShowHidden] = useState(false);
+  const hiddenSet = useMemo(() => new Set(hiddenCards), [hiddenCards]);
+
+  function toggleHideCard(name) {
+    const next = hiddenSet.has(name)
+      ? hiddenCards.filter(n => n !== name)
+      : [...hiddenCards, name];
+    setHiddenCards(next);
+    try { localStorage.setItem(HIDDEN_CARDS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  }
 
   function startRename(originalName) {
     setRenamingCard(originalName);
@@ -72,8 +89,9 @@ export function CardsPage() {
 
   // Derive credit card accounts from liabilities. Tiller's Balances tab
   // sometimes lists the same card on multiple rows; dedup by parsed identity
-  // so each card renders once.
-  const creditCards = useMemo(() => {
+  // so each card renders once. Colors are assigned from this stable full
+  // list so toggling hide/show doesn't reshuffle a card's color.
+  const allCreditCards = useMemo(() => {
     if (!balances?.liabilities) return [];
     const seen = new Set();
     const out = [];
@@ -90,6 +108,22 @@ export function CardsPage() {
     }
     return out;
   }, [balances]);
+
+  // The list every downstream computation uses. When showHidden is on, the
+  // full list is exposed so the user sees what hiding currently affects;
+  // otherwise hidden cards are excluded from everything (spend charts,
+  // schedule, optimization).
+  const creditCards = useMemo(() => {
+    if (showHidden) {
+      return allCreditCards.map(c => ({ ...c, hidden: hiddenSet.has(c.name) }));
+    }
+    return allCreditCards.filter(c => !hiddenSet.has(c.name));
+  }, [allCreditCards, hiddenSet, showHidden]);
+
+  const hiddenCardCount = useMemo(
+    () => allCreditCards.reduce((n, c) => n + (hiddenSet.has(c.name) ? 1 : 0), 0),
+    [allCreditCards, hiddenSet],
+  );
 
   // Build two lookup maps from the canonical card list:
   //  • by full key (core+digits) — strong match
@@ -445,7 +479,34 @@ export function CardsPage() {
 
       {/* Active Portfolio Matrix — from liabilities */}
       <div className={styles.matrixCard}>
-        <div className={styles.matrixTitle}>Card Portfolio</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
+          <div className={styles.matrixTitle} style={{ marginBottom: 0 }}>Card Portfolio</div>
+          {hiddenCardCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowHidden(v => !v)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--color-text-tertiary)',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                padding: '4px 8px',
+                borderRadius: 6,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+              title={showHidden ? 'Hide inactive cards from view' : 'Show inactive cards'}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                {showHidden ? 'visibility_off' : 'visibility'}
+              </span>
+              {hiddenCardCount} hidden — {showHidden ? 'hide' : 'show'}
+            </button>
+          )}
+        </div>
         <table className={styles.matrixTable}>
           <thead>
             <tr>
@@ -462,7 +523,7 @@ export function CardsPage() {
                 .sort((a, b) => b[1] - a[1])
                 .slice(0, 3);
               return (
-                <tr key={i}>
+                <tr key={i} style={c.hidden ? { opacity: 0.55 } : undefined}>
                   <td>
                     <div className={styles.cardIdent}>
                       <div className={styles.cardStripe} style={{ background: c.color }} />
@@ -488,6 +549,15 @@ export function CardsPage() {
                             <span className={styles.cardName}>{displayName(c.name)}</span>
                             <button className={styles.cardRenameBtn} onClick={() => startRename(c.name)} title="Rename card">
                               <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
+                            </button>
+                            <button
+                              className={styles.cardRenameBtn}
+                              onClick={() => toggleHideCard(c.name)}
+                              title={c.hidden ? 'Show this card' : 'Hide this inactive card'}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                                {c.hidden ? 'visibility' : 'visibility_off'}
+                              </span>
                             </button>
                           </div>
                         )}

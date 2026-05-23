@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { useData } from '../contexts/DataContext';
+import { useData, useDataActions } from '../contexts/DataContext';
 import styles from './TransactionsPage.module.css';
 
 const PAGE_SIZE = 50;
@@ -675,7 +675,8 @@ const SUBCATEGORIES = {
 };
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, categoryRules, subcategoryRules, customCategories, addCustomCategory, hiddenCategories, renameCategory, removeCategory, unhideCategory, transactionNotes, updateTransactionNote, accountNicknames, setAccountNickname, accountGroups, getMatchCount, toggleHideTransaction, hiddenTransactions, hiddenCount } = useData();
+  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, accountNicknames, accountGroups, hiddenTransactions, hiddenCount } = useData();
+  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction } = useDataActions();
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
   const subDropdownRef = useRef(null);

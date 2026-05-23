@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useData } from '../contexts/DataContext';
+import { useData, useDataActions } from '../contexts/DataContext';
 import { buildWeeklySummary, lastCompletedWeek } from '../lib/weeklySummary';
 import { renderWeeklyEmailHtml } from '../lib/renderWeeklyEmail';
 import styles from './SettingsPage.module.css';
@@ -34,7 +34,8 @@ function saveEmailPrefs(prefs) {
 }
 
 export function SettingsPage() {
-  const { loading, error, lastSync, refresh, analytics, balances, transactions, accountNicknames, accountGroups } = useData();
+  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups } = useData();
+  const { refresh } = useDataActions();
   const [emailPrefs, setEmailPrefs] = useState(loadEmailPrefs);
   const [sendStatus, setSendStatus] = useState(null); // null | 'sending' | 'ok' | 'err'
 
