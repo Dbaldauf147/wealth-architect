@@ -3,6 +3,10 @@
     {
       "path": "/api/weekly-summary",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/payment-reminder",
+      "schedule": "0 14 * * *"
     }
   ],
   "headers": [

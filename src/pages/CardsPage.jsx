@@ -41,30 +41,16 @@ function parseAccountName(s) {
   return { full, core, digits };
 }
 
-const HIDDEN_CARDS_KEY = 'wa-hidden-cards';
-
 export function CardsPage() {
-  const { transactions, balances, accountNicknames, accountGroups, loading } = useData();
-  const { setAccountNickname } = useDataActions();
+  const { transactions, balances, accountNicknames, accountGroups, loading, hiddenCards } = useData();
+  const { setAccountNickname, toggleHideCard } = useDataActions();
   const [view, setView] = useState('schedule');
   const [scheduleView, setScheduleView] = useState('calendar');
   const [expanded, setExpanded] = useState(() => new Set());
   const [renamingCard, setRenamingCard] = useState(null);
   const [renameValue, setRenameValue] = useState('');
-  const [hiddenCards, setHiddenCards] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(HIDDEN_CARDS_KEY) || '[]'); }
-    catch { return []; }
-  });
   const [showHidden, setShowHidden] = useState(false);
-  const hiddenSet = useMemo(() => new Set(hiddenCards), [hiddenCards]);
-
-  function toggleHideCard(name) {
-    const next = hiddenSet.has(name)
-      ? hiddenCards.filter(n => n !== name)
-      : [...hiddenCards, name];
-    setHiddenCards(next);
-    try { localStorage.setItem(HIDDEN_CARDS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
-  }
+  const hiddenSet = useMemo(() => new Set(hiddenCards || []), [hiddenCards]);
 
   function startRename(originalName) {
     setRenamingCard(originalName);

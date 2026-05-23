@@ -95,6 +95,22 @@ const loadCustomLiabilities = () => {
 const saveCustomLiabilities = (v) => saveJSON('customLiabilities', v);
 const loadCustomAssetClasses = () => loadJSON('customAssetClasses', []);
 const saveCustomAssetClasses = (v) => saveJSON('customAssetClasses', v);
+
+// Cards the user has marked hidden on the Cards Optimizer / Schedule
+// pages. Synced via Firestore so the server-side payment-reminder cron
+// respects the same hide list. Legacy 'wa-hidden-cards' is migrated.
+const loadHiddenCards = () => {
+  const current = loadJSON('hiddenCards', null);
+  if (Array.isArray(current) && current.length > 0) return current;
+  const legacy = loadJSON('wa-hidden-cards', null);
+  if (Array.isArray(legacy) && legacy.length > 0) {
+    saveJSON('hiddenCards', legacy);
+    try { localStorage.removeItem('wa-hidden-cards'); } catch { /* ignore */ }
+    return legacy;
+  }
+  return Array.isArray(current) ? current : [];
+};
+const saveHiddenCards = (v) => saveJSON('hiddenCards', v);
 const loadCustomCategories = () => loadJSON('customCategories', []);
 const saveCustomCategories = (v) => saveJSON('customCategories', v);
 const loadHiddenCategories = () => new Set(loadJSON('hiddenCategories', []));
@@ -167,6 +183,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.customAssets, remote.customAssets],
     [merged.customLiabilities, remote.customLiabilities],
     [merged.customAssetClasses, remote.customAssetClasses],
+    [merged.hiddenCards, remote.hiddenCards],
     [[...merged.hiddenCategories], remote.hiddenCategories],
     [[...merged.hiddenTransactionIds], remote.hiddenTransactionIds],
   ];
@@ -211,6 +228,7 @@ export function DataProvider({ children }) {
   const [customAssets, setCustomAssets] = useState(loadCustomAssets);
   const [customLiabilities, setCustomLiabilities] = useState(loadCustomLiabilities);
   const [customAssetClasses, setCustomAssetClasses] = useState(loadCustomAssetClasses);
+  const [hiddenCards, setHiddenCards] = useState(loadHiddenCards);
   const [rawBalances, setRawBalances] = useState(null);
   const [dataLoading, setDataLoading] = useState(true);
   const [configHydrated, setConfigHydrated] = useState(false);
@@ -248,6 +266,7 @@ export function DataProvider({ children }) {
         const localCustomAssets = loadCustomAssets();
         const localCustomLiabilities = loadCustomLiabilities();
         const localCustomAssetClasses = loadCustomAssetClasses();
+        const localHiddenCards = loadHiddenCards();
         const localCustomCats = loadCustomCategories();
         const localHiddenCats = loadHiddenCategories();
         const localHiddenIds = loadHiddenIds();
@@ -265,6 +284,7 @@ export function DataProvider({ children }) {
           customAssets: unionByName(localCustomAssets, Array.isArray(remote.customAssets) ? remote.customAssets : []),
           customLiabilities: unionByName(localCustomLiabilities, Array.isArray(remote.customLiabilities) ? remote.customLiabilities : []),
           customAssetClasses: unionStringArray(localCustomAssetClasses, remote.customAssetClasses),
+          hiddenCards: unionStringArray(localHiddenCards, remote.hiddenCards),
           customCategories: unionStringArray(localCustomCats, remote.customCategories),
           hiddenCategories: unionSet(localHiddenCats, remote.hiddenCategories),
           hiddenTransactionIds: unionSet(localHiddenIds, remote.hiddenTransactionIds),
@@ -283,6 +303,7 @@ export function DataProvider({ children }) {
         setCustomAssets(merged.customAssets); saveCustomAssets(merged.customAssets);
         setCustomLiabilities(merged.customLiabilities); saveCustomLiabilities(merged.customLiabilities);
         setCustomAssetClasses(merged.customAssetClasses); saveCustomAssetClasses(merged.customAssetClasses);
+        setHiddenCards(merged.hiddenCards); saveHiddenCards(merged.hiddenCards);
         setCustomCategories(merged.customCategories); saveCustomCategories(merged.customCategories);
         setHiddenCategories(merged.hiddenCategories); saveHiddenCategories(merged.hiddenCategories);
         setHiddenIds(merged.hiddenTransactionIds); saveHiddenIds(merged.hiddenTransactionIds);
@@ -305,6 +326,7 @@ export function DataProvider({ children }) {
             customAssets: merged.customAssets,
             customLiabilities: merged.customLiabilities,
             customAssetClasses: merged.customAssetClasses,
+            hiddenCards: merged.hiddenCards,
             customCategories: merged.customCategories,
             hiddenCategories: [...merged.hiddenCategories],
             hiddenTransactionIds: [...merged.hiddenTransactionIds],
@@ -339,6 +361,7 @@ export function DataProvider({ children }) {
         customAssets,
         customLiabilities,
         customAssetClasses,
+        hiddenCards,
         customCategories,
         hiddenCategories: [...hiddenCategories],
         hiddenTransactionIds: [...hiddenIds],
@@ -359,6 +382,7 @@ export function DataProvider({ children }) {
     customAssets,
     customLiabilities,
     customAssetClasses,
+    hiddenCards,
     customCategories,
     hiddenCategories,
     hiddenIds,
@@ -593,6 +617,17 @@ export function DataProvider({ children }) {
     setCustomLiabilities(prev => {
       const next = prev.filter(a => a.name !== name);
       saveCustomLiabilities(next);
+      return next;
+    });
+  }, []);
+
+  const toggleHideCard = useCallback((cardName) => {
+    if (!cardName) return;
+    setHiddenCards(prev => {
+      const next = prev.includes(cardName)
+        ? prev.filter(n => n !== cardName)
+        : [...prev, cardName];
+      saveHiddenCards(next);
       return next;
     });
   }, []);
@@ -910,6 +945,7 @@ export function DataProvider({ children }) {
     removeCustomLiability,
     addCustomAssetClass,
     removeCustomAssetClass,
+    toggleHideCard,
     renameGroup,
     deleteGroup,
     toggleHideTransaction,
@@ -942,6 +978,7 @@ export function DataProvider({ children }) {
     removeCustomLiability,
     addCustomAssetClass,
     removeCustomAssetClass,
+    toggleHideCard,
     renameGroup,
     deleteGroup,
     toggleHideTransaction,
@@ -968,6 +1005,7 @@ export function DataProvider({ children }) {
     customAssets,
     customLiabilities,
     customAssetClasses,
+    hiddenCards,
     hiddenTransactions,
     hiddenCount: hiddenIds.size,
   }), [
@@ -988,6 +1026,7 @@ export function DataProvider({ children }) {
     customAssets,
     customLiabilities,
     customAssetClasses,
+    hiddenCards,
     hiddenTransactions,
     hiddenIds,
   ]);
