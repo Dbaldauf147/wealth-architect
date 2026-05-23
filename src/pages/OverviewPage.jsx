@@ -257,6 +257,78 @@ export function OverviewPage() {
     return Array.from(map.values()).sort((a, b) => classOrderIndex(a.className) - classOrderIndex(b.className));
   })();
 
+  // ── This Month vs Last Month — cumulative daily spend ──────────────────
+  // Lets the user see at a glance whether they're spending faster than the
+  // prior month at the same point in the cycle. Skips transfers, CC
+  // payments, investments, and retirement contributions to match the
+  // CashFlow expense definition.
+  const monthCompare = useMemo(() => {
+    const SKIP_CATS = new Set([
+      'transfer',
+      'credit card payment',
+      'credit card payments',
+      'investments',
+      'retirement',
+    ]);
+    const now = new Date();
+    const thisYear = now.getFullYear();
+    const thisMonth = now.getMonth();
+    const today = now.getDate();
+    const lastDate = new Date(thisYear, thisMonth, 0); // last day of prev month
+    const lastYear = lastDate.getFullYear();
+    const lastMonth = lastDate.getMonth();
+    const lastMonthDays = lastDate.getDate();
+    const thisMonthDays = new Date(thisYear, thisMonth + 1, 0).getDate();
+
+    const dailyThis = new Array(thisMonthDays + 1).fill(0);
+    const dailyLast = new Array(lastMonthDays + 1).fill(0);
+
+    for (const t of (transactions || [])) {
+      if (!t.date || !(t.amount < 0)) continue;
+      const cat = (t.category || '').toLowerCase();
+      if (SKIP_CATS.has(cat)) continue;
+      const d = new Date(t.date);
+      if (isNaN(d)) continue;
+      const y = d.getFullYear();
+      const m = d.getMonth();
+      const day = d.getDate();
+      const amt = Math.abs(t.amount);
+      if (y === thisYear && m === thisMonth && day <= thisMonthDays) {
+        dailyThis[day] += amt;
+      } else if (y === lastYear && m === lastMonth && day <= lastMonthDays) {
+        dailyLast[day] += amt;
+      }
+    }
+
+    // Cumulative through each day. We only project this-month up to today,
+    // last-month for the full month so the comparison line is complete.
+    const cumThis = new Array(today + 1).fill(0);
+    for (let i = 1; i <= today; i++) cumThis[i] = cumThis[i - 1] + dailyThis[i];
+    const cumLast = new Array(lastMonthDays + 1).fill(0);
+    for (let i = 1; i <= lastMonthDays; i++) cumLast[i] = cumLast[i - 1] + dailyLast[i];
+
+    const thisTotalToDate = cumThis[today] || 0;
+    const lastTotalSame = cumLast[Math.min(today, lastMonthDays)] || 0;
+    const lastTotalFinal = cumLast[lastMonthDays] || 0;
+    const paceDelta = thisTotalToDate - lastTotalSame;
+    const thisMonthLabel = now.toLocaleDateString('en-US', { month: 'long' });
+    const lastMonthLabel = lastDate.toLocaleDateString('en-US', { month: 'long' });
+
+    return {
+      thisMonthDays,
+      lastMonthDays,
+      today,
+      cumThis,
+      cumLast,
+      thisTotalToDate,
+      lastTotalSame,
+      lastTotalFinal,
+      paceDelta,
+      thisMonthLabel,
+      lastMonthLabel,
+    };
+  }, [transactions]);
+
   // Build spending data from analytics byMonth
   const byMonth = analytics?.byMonth || {};
   const monthEntries = Object.entries(byMonth).sort(([a], [b]) => a.localeCompare(b));
@@ -740,6 +812,139 @@ export function OverviewPage() {
             )}
           </div>
         )}
+      </div>
+
+      {/* This Month vs Last Month — Cumulative Spend */}
+      <div className={styles.chartCard} style={{ marginBottom: 16 }}>
+        <div className={styles.chartHeader} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div>
+            <div className={styles.chartTitle}>{monthCompare.thisMonthLabel} vs {monthCompare.lastMonthLabel} — Cumulative Spend</div>
+            <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 2 }}>
+              Excludes transfers, card payments, investments, and retirement contributions.
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 18, fontFamily: 'var(--font-body)' }}>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>{monthCompare.thisMonthLabel} so far</div>
+              <div style={{ fontFamily: 'var(--font-headline)', fontSize: 18, fontWeight: 700, color: 'var(--color-text-primary)' }}>{fmt(monthCompare.thisTotalToDate)}</div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>{monthCompare.lastMonthLabel} total</div>
+              <div style={{ fontFamily: 'var(--font-headline)', fontSize: 18, fontWeight: 700, color: 'var(--color-text-secondary)' }}>{fmt(monthCompare.lastTotalFinal)}</div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>Pace</div>
+              <div style={{
+                fontFamily: 'var(--font-headline)', fontSize: 18, fontWeight: 700,
+                color: monthCompare.paceDelta > 0 ? '#ba1a1a' : '#009668',
+              }}>
+                {monthCompare.paceDelta >= 0 ? '+' : '−'}{fmt(Math.abs(monthCompare.paceDelta))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {(() => {
+          const VB_W = 800;
+          const VB_H = 240;
+          const pad = { top: 16, right: 24, bottom: 32, left: 64 };
+          const cW = VB_W - pad.left - pad.right;
+          const cH = VB_H - pad.top - pad.bottom;
+          const maxDay = Math.max(monthCompare.thisMonthDays, monthCompare.lastMonthDays);
+          const yMax = Math.max(
+            monthCompare.cumThis[monthCompare.today] || 0,
+            monthCompare.cumLast[monthCompare.lastMonthDays] || 0,
+            1,
+          ) * 1.08;
+
+          const xPos = (day) => pad.left + ((day - 1) / Math.max(1, maxDay - 1)) * cW;
+          const yPos = (amt) => pad.top + cH - (amt / yMax) * cH;
+
+          const thisPts = [];
+          for (let i = 1; i <= monthCompare.today; i++) thisPts.push({ x: xPos(i), y: yPos(monthCompare.cumThis[i]) });
+          const lastPts = [];
+          for (let i = 1; i <= monthCompare.lastMonthDays; i++) lastPts.push({ x: xPos(i), y: yPos(monthCompare.cumLast[i]) });
+          const lastPath = lastPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+          const thisPath = thisPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+
+          // Y-axis ticks — 4 lines.
+          const tickCount = 4;
+          const yTicks = Array.from({ length: tickCount + 1 }, (_, i) => (yMax * i) / tickCount);
+          const xTickDays = [1, 5, 10, 15, 20, 25, maxDay].filter((v, i, a) => a.indexOf(v) === i);
+
+          return (
+            <div style={{ width: '100%' }}>
+              <svg viewBox={`0 0 ${VB_W} ${VB_H}`} preserveAspectRatio="none" style={{ width: '100%', height: 240, display: 'block' }}>
+                {/* horizontal grid */}
+                {yTicks.map((t, i) => (
+                  <g key={i}>
+                    <line
+                      x1={pad.left} x2={VB_W - pad.right}
+                      y1={yPos(t)} y2={yPos(t)}
+                      stroke="var(--color-border, #e2e8f0)" strokeWidth="1" strokeDasharray={i === 0 ? '0' : '2 4'}
+                    />
+                    <text
+                      x={pad.left - 8} y={yPos(t) + 4}
+                      textAnchor="end" fontSize="10"
+                      fill="var(--color-text-tertiary)"
+                      fontFamily="var(--font-body)"
+                    >
+                      {fmtCompact(t)}
+                    </text>
+                  </g>
+                ))}
+
+                {/* x-axis day labels */}
+                {xTickDays.map((d) => (
+                  <text
+                    key={d} x={xPos(d)} y={VB_H - pad.bottom + 18}
+                    textAnchor="middle" fontSize="10"
+                    fill="var(--color-text-tertiary)"
+                    fontFamily="var(--font-body)"
+                  >
+                    {d}
+                  </text>
+                ))}
+
+                {/* Last month line — dotted */}
+                {lastPts.length >= 2 && (
+                  <path d={lastPath} fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" />
+                )}
+                {/* This month line — solid */}
+                {thisPts.length >= 2 && (
+                  <path d={thisPath} fill="none" stroke="#0058be" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                )}
+
+                {/* Today marker */}
+                {thisPts.length > 0 && (() => {
+                  const last = thisPts[thisPts.length - 1];
+                  return (
+                    <>
+                      <line x1={last.x} x2={last.x} y1={pad.top} y2={VB_H - pad.bottom} stroke="#0058be" strokeWidth="1" strokeDasharray="2 3" opacity="0.4" />
+                      <circle cx={last.x} cy={last.y} r="5" fill="#0058be" stroke="var(--color-surface)" strokeWidth="2" />
+                    </>
+                  );
+                })()}
+                {/* Comparable point on last month at the same day */}
+                {monthCompare.today <= monthCompare.lastMonthDays && (() => {
+                  const x = xPos(monthCompare.today);
+                  const y = yPos(monthCompare.cumLast[monthCompare.today] || 0);
+                  return <circle cx={x} cy={y} r="4" fill="#94a3b8" stroke="var(--color-surface)" strokeWidth="2" />;
+                })()}
+              </svg>
+              <div style={{ display: 'flex', gap: 18, marginTop: 8, paddingLeft: 12, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ display: 'inline-block', width: 18, height: 2.5, background: '#0058be', borderRadius: 2 }} />
+                  {monthCompare.thisMonthLabel} (through day {monthCompare.today})
+                </div>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ display: 'inline-block', width: 18, height: 2, background: 'repeating-linear-gradient(90deg, #94a3b8 0 4px, transparent 4px 8px)' }} />
+                  {monthCompare.lastMonthLabel}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Charts Row */}
