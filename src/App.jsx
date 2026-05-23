@@ -118,7 +118,7 @@ const NAV_ITEMS = [
   { id: 'budgets', label: 'Budgets', icon: 'savings' },
   { id: 'recurring', label: 'Recurring', icon: 'autorenew' },
   { id: 'assets', label: 'Assets & Liabilities', icon: 'account_balance' },
-  { id: 'cards', label: 'Cards Optimizer', icon: 'credit_card' },
+  { id: 'cards', label: 'Cards Overview', icon: 'credit_card' },
   { id: 'promos', label: 'Card Promotions', icon: 'redeem' },
 ];
 
