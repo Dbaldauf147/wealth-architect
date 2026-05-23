@@ -86,6 +86,31 @@ export function OverviewPage() {
     setAddingCustomAsset(false);
   }
 
+  // Resolve the class to show on a bucket. For an individual account, that's
+  // assetClasses[name]. For a group, return the class only if every member
+  // shares the same class — otherwise return null (rendered as "Mixed" or no
+  // badge), so the user can see at a glance whether the group is coherent.
+  function bucketClass(bucket) {
+    if (!bucket.isGroup && bucket.accountName) return assetClasses[bucket.accountName] || null;
+    if (bucket.isGroup) {
+      const classes = bucket.members.map(m => assetClasses[m] || null);
+      const first = classes[0];
+      if (first && classes.every(c => c === first)) return first;
+      if (classes.some(Boolean)) return 'Mixed';
+    }
+    return null;
+  }
+
+  // Assign a class to a bucket — fans out across every member when the
+  // bucket is a group, so the user can tag a whole brokerage in one click.
+  function applyBucketClass(bucket, className) {
+    if (bucket.isGroup) {
+      for (const m of bucket.members) setAssetClass(m, className);
+    } else if (bucket.accountName) {
+      setAssetClass(bucket.accountName, className);
+    }
+  }
+
   function startRename(bucket) {
     setRenamingBucket(bucket.key);
     setRenameValue(bucket.displayName);
@@ -174,13 +199,35 @@ export function OverviewPage() {
   ];
 
   // Build asset allocation from real balances. Two view modes:
-  //  • 'account' — aggregated by user group / individual account
-  //  • 'class'   — aggregated by Cash / Stocks / Retirement taxonomy
+  //  • 'account' — individual accounts/groups, organized under their asset
+  //    class with class headers, largest-to-smallest within each class
+  //  • 'class'   — one row per Cash / Stocks / Retirement bucket (summary)
   const assetAccounts = balances?.assets || [];
   const totalAssetBalance = assetAccounts.reduce((sum, a) => sum + a.balance, 0) || 1;
+
+  // Canonical ordering of asset class sections: built-ins first, then any
+  // user-defined classes in the order they were added, then Unclassified.
+  const classOrderIndex = (name) => {
+    if (name === 'Unclassified') return 9999;
+    const builtIn = BUILT_IN_ASSET_CLASSES.indexOf(name);
+    if (builtIn !== -1) return builtIn;
+    const custom = customAssetClasses.indexOf(name);
+    if (custom !== -1) return BUILT_IN_ASSET_CLASSES.length + custom;
+    return 9998;
+  };
+
   const allocationBuckets = allocationView === 'class'
     ? aggregateByClass(assetAccounts)
-    : aggregateByGroup(assetAccounts).sort((a, b) => b.balance - a.balance);
+    : aggregateByGroup(assetAccounts).sort((a, b) => {
+        const ca = bucketClass(a) || 'Unclassified';
+        const cb = bucketClass(b) || 'Unclassified';
+        // Mixed groups land in Unclassified for the purpose of grouping the
+        // legend — the badge still calls them out as "Mixed."
+        const ka = classOrderIndex(ca === 'Mixed' ? 'Unclassified' : ca);
+        const kb = classOrderIndex(cb === 'Mixed' ? 'Unclassified' : cb);
+        if (ka !== kb) return ka - kb;
+        return b.balance - a.balance;
+      });
   const ALLOCATION = allocationBuckets.map((b, i) => ({
     bucket: b,
     label: b.displayName,
@@ -191,6 +238,24 @@ export function OverviewPage() {
       ? classColor(b.className)
       : DONUT_COLORS[i % DONUT_COLORS.length],
   }));
+
+  // For the account view, group ALLOCATION into class sections so the legend
+  // can render class headers (with totals) above their member rows.
+  const legendSections = (() => {
+    if (allocationView !== 'account') return null;
+    const map = new Map();
+    for (const item of ALLOCATION) {
+      const c = bucketClass(item.bucket) || 'Unclassified';
+      const sectionKey = c === 'Mixed' ? 'Unclassified' : c;
+      if (!map.has(sectionKey)) {
+        map.set(sectionKey, { className: sectionKey, total: 0, items: [] });
+      }
+      const section = map.get(sectionKey);
+      section.total += item.balance;
+      section.items.push(item);
+    }
+    return Array.from(map.values()).sort((a, b) => classOrderIndex(a.className) - classOrderIndex(b.className));
+  })();
 
   // Build spending data from analytics byMonth
   const byMonth = analytics?.byMonth || {};
@@ -308,6 +373,7 @@ export function OverviewPage() {
   const renderBucketName = (bucket, opts = {}) => {
     const showOriginal = opts.showOriginal !== false;
     const showClass = !!opts.showClass;
+    const hideClassBadge = !!opts.hideClassBadge;
     const isEditing = renamingBucket === bucket.key;
     if (isEditing) {
       return (
@@ -345,31 +411,33 @@ export function OverviewPage() {
           >
             <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{bucket.isGroup ? 'workspaces' : 'add_link'}</span>
           </button>
-          {showClass && !bucket.isGroup && bucket.accountName && (
+          {showClass && (bucket.accountName || bucket.isGroup) && (
             <button
               className={styles.renameBtn}
               onClick={() => setClassPickerFor(classPickerFor === bucket.key ? null : bucket.key)}
-              title="Assign asset class"
+              title={bucket.isGroup ? 'Assign asset class to this group' : 'Assign asset class'}
             >
               <span className="material-symbols-outlined" style={{ fontSize: 14 }}>category</span>
             </button>
           )}
-          {showClass && !bucket.isGroup && bucket.accountName && assetClasses[bucket.accountName] && (
+          {showClass && !hideClassBadge && bucketClass(bucket) && (
             <span
-              title={`Asset class: ${assetClasses[bucket.accountName]}`}
+              title={bucketClass(bucket) === 'Mixed'
+                ? 'Group members are assigned to different classes'
+                : `Asset class: ${bucketClass(bucket)}`}
               style={{
                 fontSize: 10,
                 fontWeight: 700,
                 padding: '2px 6px',
                 borderRadius: 4,
-                background: `${classColor(assetClasses[bucket.accountName])}22`,
-                color: classColor(assetClasses[bucket.accountName]),
+                background: `${classColor(bucketClass(bucket))}22`,
+                color: classColor(bucketClass(bucket)),
                 textTransform: 'uppercase',
                 letterSpacing: 0.3,
                 marginLeft: 4,
               }}
             >
-              {assetClasses[bucket.accountName]}
+              {bucketClass(bucket)}
             </span>
           )}
         </span>
@@ -383,16 +451,20 @@ export function OverviewPage() {
             accountNicknames[bucket.accountName] && <span className={styles.snapshotRowOriginal}>{bucket.accountName}</span>
           )
         )}
-        {showClass && classPickerFor === bucket.key && !bucket.isGroup && bucket.accountName && (
+        {showClass && classPickerFor === bucket.key && (bucket.accountName || bucket.isGroup) && (
           <div className={styles.groupPicker}>
             <div className={styles.groupPickerSection}>
-              <div className={styles.groupPickerLabel}>Asset class</div>
+              <div className={styles.groupPickerLabel}>
+                {bucket.isGroup
+                  ? `Asset class for "${bucket.displayName}" group (${bucket.members.length} ${bucket.members.length === 1 ? 'account' : 'accounts'})`
+                  : 'Asset class'}
+              </div>
               {allAssetClasses.map(c => (
                 <button
                   key={c}
                   className={styles.groupPickerOption}
-                  disabled={assetClasses[bucket.accountName] === c}
-                  onClick={() => { setAssetClass(bucket.accountName, c); setClassPickerFor(null); }}
+                  disabled={bucketClass(bucket) === c}
+                  onClick={() => { applyBucketClass(bucket, c); setClassPickerFor(null); }}
                 >
                   {c}
                 </button>
@@ -409,7 +481,7 @@ export function OverviewPage() {
                       const name = e.currentTarget.value.trim();
                       if (!name) return;
                       addCustomAssetClass(name);
-                      setAssetClass(bucket.accountName, name);
+                      applyBucketClass(bucket, name);
                       setClassPickerFor(null);
                     }
                     if (e.key === 'Escape') setClassPickerFor(null);
@@ -417,11 +489,11 @@ export function OverviewPage() {
                 />
               </div>
             </div>
-            {assetClasses[bucket.accountName] && (
+            {bucketClass(bucket) && (
               <button
                 className={styles.groupPickerDanger}
-                onClick={() => { setAssetClass(bucket.accountName, null); setClassPickerFor(null); }}
-              >Clear class</button>
+                onClick={() => { applyBucketClass(bucket, null); setClassPickerFor(null); }}
+              >Clear class{bucket.isGroup ? ' for all members' : ''}</button>
             )}
           </div>
         )}
@@ -950,24 +1022,68 @@ export function OverviewPage() {
             </svg>
           </div>
           <div className={styles.donutLegend}>
-            {ALLOCATION.map((a) => (
-              <div key={a.bucket.key} className={styles.donutLegendItem}>
-                <div className={styles.donutLegendLeft}>
-                  <div className={styles.donutLegendDot} style={{ background: a.color }} />
-                  <div className={styles.donutLegendNameWrap}>
-                    {a.bucket.isClass ? (
+            {allocationView === 'class' ? (
+              // Compact summary: one row per class.
+              ALLOCATION.map((a) => (
+                <div key={a.bucket.key} className={styles.donutLegendItem}>
+                  <div className={styles.donutLegendLeft}>
+                    <div className={styles.donutLegendDot} style={{ background: a.color }} />
+                    <div className={styles.donutLegendNameWrap}>
                       <span className={styles.snapshotRowDisplay}>{a.bucket.displayName}</span>
-                    ) : (
-                      renderBucketName(a.bucket, { showOriginal: false, showClass: true })
-                    )}
+                    </div>
                   </div>
+                  <span className={styles.donutLegendValue}>
+                    <span style={{ color: 'var(--color-text-primary)', fontWeight: 600, marginRight: 8 }}>{a.value}</span>
+                    <span style={{ color: 'var(--color-text-tertiary)' }}>{a.pct}%</span>
+                  </span>
                 </div>
-                <span className={styles.donutLegendValue}>
-                  <span style={{ color: 'var(--color-text-primary)', fontWeight: 600, marginRight: 8 }}>{a.value}</span>
-                  <span style={{ color: 'var(--color-text-tertiary)' }}>{a.pct}%</span>
-                </span>
-              </div>
-            ))}
+              ))
+            ) : (
+              // Account detail organized into class sections — accounts within
+              // each class are pre-sorted largest-to-smallest by ALLOCATION.
+              legendSections.map((section) => {
+                const sectionPct = Math.round((section.total / totalAssetBalance) * 100);
+                const headerColor = classColor(section.className);
+                return (
+                  <div key={section.className} style={{ marginTop: 12 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'baseline',
+                        justifyContent: 'space-between',
+                        padding: '4px 6px',
+                        marginBottom: 4,
+                        borderLeft: `3px solid ${headerColor}`,
+                        background: `${headerColor}10`,
+                        borderRadius: 4,
+                      }}
+                    >
+                      <span style={{ fontFamily: 'var(--font-headline)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: headerColor }}>
+                        {section.className}
+                      </span>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                        {fmt(section.total)}
+                        <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 500, marginLeft: 6 }}>{sectionPct}%</span>
+                      </span>
+                    </div>
+                    {section.items.map((a) => (
+                      <div key={a.bucket.key} className={styles.donutLegendItem} style={{ paddingLeft: 8 }}>
+                        <div className={styles.donutLegendLeft}>
+                          <div className={styles.donutLegendDot} style={{ background: a.color }} />
+                          <div className={styles.donutLegendNameWrap}>
+                            {renderBucketName(a.bucket, { showOriginal: false, showClass: true, hideClassBadge: true })}
+                          </div>
+                        </div>
+                        <span className={styles.donutLegendValue}>
+                          <span style={{ color: 'var(--color-text-primary)', fontWeight: 600, marginRight: 8 }}>{a.value}</span>
+                          <span style={{ color: 'var(--color-text-tertiary)' }}>{a.pct}%</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })
+            )}
           </div>
 
           {/* Quick-add custom asset — for items the sheet feed doesn't see
