@@ -845,8 +845,8 @@ export function OverviewPage() {
 
         {(() => {
           const VB_W = 800;
-          const VB_H = 240;
-          const pad = { top: 16, right: 24, bottom: 32, left: 64 };
+          const VB_H = 340;
+          const pad = { top: 20, right: 24, bottom: 36, left: 64 };
           const cW = VB_W - pad.left - pad.right;
           const cH = VB_H - pad.top - pad.bottom;
           const maxDay = Math.max(monthCompare.thisMonthDays, monthCompare.lastMonthDays);
@@ -873,7 +873,7 @@ export function OverviewPage() {
 
           return (
             <div style={{ width: '100%' }}>
-              <svg viewBox={`0 0 ${VB_W} ${VB_H}`} preserveAspectRatio="none" style={{ width: '100%', height: 240, display: 'block' }}>
+              <svg viewBox={`0 0 ${VB_W} ${VB_H}`} preserveAspectRatio="xMidYMid meet" style={{ width: '100%', height: 'auto', display: 'block' }}>
                 {/* horizontal grid */}
                 {yTicks.map((t, i) => (
                   <g key={i}>
