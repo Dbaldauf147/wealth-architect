@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import styles from './OverviewPage.module.css';
 
