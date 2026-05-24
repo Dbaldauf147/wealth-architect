@@ -58,8 +58,21 @@ function smoothPath(points) {
   return d;
 }
 
+// Bank-account suffix whose month-end balance we surface in the Monthly
+// Breakdown so the user can sanity-check that the account actually moved by
+// the Net amount each month. (Net here is Income − Expenses, which excludes
+// transfers, CC payments, investments, and retirement — those flows still
+// move the balance.) Bumping this constant changes which account is tracked.
+const TRACK_ACCOUNT_SUFFIX = '1118';
+
+function accountNumberMatches(rawAcctNum, suffix) {
+  if (!rawAcctNum) return false;
+  const digits = String(rawAcctNum).replace(/\D+/g, '');
+  return digits.endsWith(suffix);
+}
+
 export function CashFlowPage() {
-  const { transactions, loading } = useData();
+  const { transactions, balanceHistory, loading } = useData();
   const [monthCount, setMonthCount] = useState(13);
   const [drilldown, setDrilldown] = useState(null); // { monthKey, kind: 'income'|'expenses' }
   const [expandedDrillCats, setExpandedDrillCats] = useState(new Set());
@@ -171,6 +184,58 @@ export function CashFlowPage() {
       expSignedByCat,
     };
   }, [transactions, monthCount]);
+
+  // Month-end balance lookup for the tracked bank account (…1118). For each
+  // visible month, find the latest Balance History snapshot dated within
+  // that calendar month. Returns { [monthKey]: { balance, date } | null }.
+  // Also logs each found datapoint to the console so the user can sanity-
+  // check why the balance change doesn't equal the Cash Flow Net amount.
+  const trackedAccountMonthly = useMemo(() => {
+    const out = {};
+    if (!balanceHistory || balanceHistory.length === 0) return out;
+
+    // Filter to snapshots for our target account, parse dates, and group by
+    // year-month. We sort within each month and pick the last snapshot.
+    const matching = [];
+    for (const row of balanceHistory) {
+      if (!accountNumberMatches(row.accountNum, TRACK_ACCOUNT_SUFFIX)) continue;
+      const d = new Date(row.date);
+      if (isNaN(d)) continue;
+      matching.push({
+        ts: d.getTime(),
+        date: row.date,
+        balance: row.balance,
+        monthKey: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+        account: row.account,
+      });
+    }
+    matching.sort((a, b) => a.ts - b.ts);
+
+    const byMonth = {};
+    for (const r of matching) {
+      // Last snapshot for the month wins because matching is sorted ascending.
+      byMonth[r.monthKey] = r;
+    }
+
+    const visibleKeys = (data.months || []).map(m => m.key);
+    let prevBalance = null;
+    for (const key of visibleKeys) {
+      const hit = byMonth[key];
+      if (hit) {
+        const delta = prevBalance == null ? null : hit.balance - prevBalance;
+        out[key] = { balance: hit.balance, date: hit.date, account: hit.account, delta };
+        // eslint-disable-next-line no-console
+        console.log(
+          `[CashFlow] …${TRACK_ACCOUNT_SUFFIX} month-end`,
+          { month: key, date: hit.date, balance: hit.balance, deltaFromPrior: delta, account: hit.account },
+        );
+        prevBalance = hit.balance;
+      } else {
+        out[key] = null;
+      }
+    }
+    return out;
+  }, [balanceHistory, data.months]);
 
   /* Category breakdown for clicked cell — mirrors the table semantics:
      - kind='expenses': only categories qualifying as expenses (net-negative
@@ -654,6 +719,12 @@ export function CashFlowPage() {
               <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Invested</th>
               <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Retirement</th>
               <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Net</th>
+              <th
+                style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}
+                title={`Last balance snapshot in each month for the bank account ending in ${TRACK_ACCOUNT_SUFFIX}. The Δ underneath is the change vs. the prior month's snapshot — if it doesn't match Net, transfers / CC payments / investments / retirement are likely moving money you wouldn't see in the Cash Flow Net column.`}
+              >
+                End Bal · …{TRACK_ACCOUNT_SUFFIX}
+              </th>
               <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Savings %</th>
             </tr>
           </thead>
@@ -710,6 +781,35 @@ export function CashFlowPage() {
                   <td style={{ padding: '10px 12px', textAlign: 'right', color: m.net >= 0 ? incomeColor : expenseColor, fontFamily: 'var(--font-headline)', fontWeight: 700 }}>
                     {m.net >= 0 ? '+' : ''}{fmt(m.net)}
                   </td>
+                  {(() => {
+                    const bh = trackedAccountMonthly[m.key];
+                    if (!bh) {
+                      return (
+                        <td style={{ padding: '10px 12px', textAlign: 'right', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-headline)', fontWeight: 600 }}>
+                          —
+                        </td>
+                      );
+                    }
+                    const deltaMatchesNet = bh.delta != null && Math.abs(bh.delta - m.net) < 1;
+                    const deltaColor = bh.delta == null
+                      ? 'var(--color-text-tertiary)'
+                      : deltaMatchesNet
+                        ? incomeColor
+                        : bh.delta >= 0 ? 'var(--color-text-secondary)' : expenseColor;
+                    return (
+                      <td
+                        style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'var(--font-headline)', fontWeight: 600 }}
+                        title={`Snapshot from ${bh.date}${bh.account ? ` · ${bh.account}` : ''}`}
+                      >
+                        <div>{fmt(bh.balance)}</div>
+                        {bh.delta != null && (
+                          <div style={{ fontSize: 11, fontWeight: 600, color: deltaColor, marginTop: 2 }}>
+                            Δ {bh.delta >= 0 ? '+' : ''}{fmt(bh.delta)}
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })()}
                   <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: m.income === 0 ? 'var(--color-text-tertiary)' : savings >= 0.2 ? incomeColor : savings >= 0 ? '#e8a317' : expenseColor }}>
                     {m.income > 0 ? `${Math.round(savings * 100)}%` : '—'}
                   </td>

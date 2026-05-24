@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { fetchTransactions, fetchBalances, computeAnalytics } from '../utils/sheets';
+import { fetchTransactions, fetchBalances, fetchBalanceHistory, computeAnalytics } from '../utils/sheets';
 import { db } from '../firebase';
 import {
   normalizeDesc,
@@ -241,6 +241,7 @@ export function DataProvider({ children }) {
   const [hiddenCards, setHiddenCards] = useState(loadHiddenCards);
   const [paymentReminderPrefs, setPaymentReminderPrefs] = useState(loadPaymentReminderPrefs);
   const [rawBalances, setRawBalances] = useState(null);
+  const [balanceHistory, setBalanceHistory] = useState([]);
   const [dataLoading, setDataLoading] = useState(true);
   const [configHydrated, setConfigHydrated] = useState(false);
   const [error, setError] = useState(null);
@@ -458,12 +459,14 @@ export function DataProvider({ children }) {
     setDataLoading(true);
     setError(null);
     try {
-      const [txns, bal] = await Promise.all([
+      const [txns, bal, hist] = await Promise.all([
         fetchTransactions(),
         fetchBalances(),
+        fetchBalanceHistory(),
       ]);
       setRawTransactions(txns);
       setRawBalances(bal);
+      setBalanceHistory(hist || []);
       setLastSync(new Date());
     } catch (err) {
       console.error('Failed to load sheet data:', err);
@@ -1017,6 +1020,7 @@ export function DataProvider({ children }) {
   const reads = useMemo(() => ({
     transactions,
     balances,
+    balanceHistory,
     analytics,
     loading,
     error,
@@ -1039,6 +1043,7 @@ export function DataProvider({ children }) {
   }), [
     transactions,
     balances,
+    balanceHistory,
     analytics,
     loading,
     error,

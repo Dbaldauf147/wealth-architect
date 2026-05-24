@@ -111,6 +111,60 @@ function parseMoney(str) {
   return parseFloat(cleaned) || 0;
 }
 
+// Parse Tiller's "Balance History" tab. Standard columns:
+// Date | Time | Account | Account # | Account ID | Institution | Account Type
+// | Account Status | Class | Balance | ...
+// Layout varies between Tiller templates (some prepend an empty col A, some
+// don't), so we locate the header row and resolve column indices by name
+// instead of hard-coding positions.
+export async function fetchBalanceHistory() {
+  let rows;
+  try {
+    rows = await fetchSheet('Balance History', 'A1:Z20000');
+  } catch (err) {
+    // Tab not present on this user's spreadsheet — return empty so callers
+    // can render gracefully.
+    console.warn('Balance History sheet not available:', err.message);
+    return [];
+  }
+  if (rows.length < 2) return [];
+
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(5, rows.length); i++) {
+    const r = rows[i] || [];
+    const hasDate = r.some(c => /^date$/i.test((c || '').trim()));
+    const hasBalance = r.some(c => /^balance$/i.test((c || '').trim()));
+    if (hasDate && hasBalance) { headerIdx = i; break; }
+  }
+  if (headerIdx === -1) return [];
+
+  const headers = rows[headerIdx].map(h => (h || '').trim());
+  const idxOf = name => headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
+  const dateI = idxOf('Date');
+  const balI = idxOf('Balance');
+  const acctI = idxOf('Account');
+  const acctNumI = idxOf('Account #');
+  const acctIdI = idxOf('Account ID');
+  const instI = idxOf('Institution');
+  if (dateI === -1 || balI === -1) return [];
+
+  const out = [];
+  for (let r = headerIdx + 1; r < rows.length; r++) {
+    const row = rows[r] || [];
+    const date = (row[dateI] || '').trim();
+    if (!date) continue;
+    out.push({
+      date,
+      account: acctI !== -1 ? (row[acctI] || '').trim() : '',
+      accountNum: acctNumI !== -1 ? (row[acctNumI] || '').trim() : '',
+      accountId: acctIdI !== -1 ? (row[acctIdI] || '').trim() : '',
+      institution: instI !== -1 ? (row[instI] || '').trim() : '',
+      balance: parseMoney((row[balI] || '').trim()),
+    });
+  }
+  return out;
+}
+
 // Derived analytics
 export function computeAnalytics(transactions) {
   const byCategory = {};
