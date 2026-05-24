@@ -141,6 +141,77 @@ export function OverviewPage() {
   const [hoverDonut, setHoverDonut] = useState(null); // index in ALLOCATION
   const [selectedSnapshot, setSelectedSnapshot] = useState(null); // 'Net Worth' | 'Total Assets' | 'Total Liabilities' | '30D Cash Flow' | null
 
+  // ── This Month vs Last Month — cumulative daily spend ──────────────────
+  // Lets the user see at a glance whether they're spending faster than the
+  // prior month at the same point in the cycle. Skips transfers, CC
+  // payments, investments, and retirement contributions to match the
+  // CashFlow expense definition. Lives above the loading guard so the hook
+  // order stays stable across loading transitions.
+  const monthCompare = useMemo(() => {
+    const SKIP_CATS = new Set([
+      'transfer',
+      'credit card payment',
+      'credit card payments',
+      'investments',
+      'retirement',
+    ]);
+    const now = new Date();
+    const thisYear = now.getFullYear();
+    const thisMonth = now.getMonth();
+    const today = now.getDate();
+    const lastDate = new Date(thisYear, thisMonth, 0); // last day of prev month
+    const lastYear = lastDate.getFullYear();
+    const lastMonth = lastDate.getMonth();
+    const lastMonthDays = lastDate.getDate();
+    const thisMonthDays = new Date(thisYear, thisMonth + 1, 0).getDate();
+
+    const dailyThis = new Array(thisMonthDays + 1).fill(0);
+    const dailyLast = new Array(lastMonthDays + 1).fill(0);
+
+    for (const t of (transactions || [])) {
+      if (!t.date || !(t.amount < 0)) continue;
+      const cat = (t.category || '').toLowerCase();
+      if (SKIP_CATS.has(cat)) continue;
+      const d = new Date(t.date);
+      if (isNaN(d)) continue;
+      const y = d.getFullYear();
+      const m = d.getMonth();
+      const day = d.getDate();
+      const amt = Math.abs(t.amount);
+      if (y === thisYear && m === thisMonth && day <= thisMonthDays) {
+        dailyThis[day] += amt;
+      } else if (y === lastYear && m === lastMonth && day <= lastMonthDays) {
+        dailyLast[day] += amt;
+      }
+    }
+
+    const cumThis = new Array(today + 1).fill(0);
+    for (let i = 1; i <= today; i++) cumThis[i] = cumThis[i - 1] + dailyThis[i];
+    const cumLast = new Array(lastMonthDays + 1).fill(0);
+    for (let i = 1; i <= lastMonthDays; i++) cumLast[i] = cumLast[i - 1] + dailyLast[i];
+
+    const thisTotalToDate = cumThis[today] || 0;
+    const lastTotalSame = cumLast[Math.min(today, lastMonthDays)] || 0;
+    const lastTotalFinal = cumLast[lastMonthDays] || 0;
+    const paceDelta = thisTotalToDate - lastTotalSame;
+    const thisMonthLabel = now.toLocaleDateString('en-US', { month: 'long' });
+    const lastMonthLabel = lastDate.toLocaleDateString('en-US', { month: 'long' });
+
+    return {
+      thisMonthDays,
+      lastMonthDays,
+      today,
+      cumThis,
+      cumLast,
+      thisTotalToDate,
+      lastTotalSame,
+      lastTotalFinal,
+      paceDelta,
+      thisMonthLabel,
+      lastMonthLabel,
+    };
+  }, [transactions]);
+
   // Loading state
   if (loading) {
     return (
@@ -256,78 +327,6 @@ export function OverviewPage() {
     }
     return Array.from(map.values()).sort((a, b) => classOrderIndex(a.className) - classOrderIndex(b.className));
   })();
-
-  // ── This Month vs Last Month — cumulative daily spend ──────────────────
-  // Lets the user see at a glance whether they're spending faster than the
-  // prior month at the same point in the cycle. Skips transfers, CC
-  // payments, investments, and retirement contributions to match the
-  // CashFlow expense definition.
-  const monthCompare = useMemo(() => {
-    const SKIP_CATS = new Set([
-      'transfer',
-      'credit card payment',
-      'credit card payments',
-      'investments',
-      'retirement',
-    ]);
-    const now = new Date();
-    const thisYear = now.getFullYear();
-    const thisMonth = now.getMonth();
-    const today = now.getDate();
-    const lastDate = new Date(thisYear, thisMonth, 0); // last day of prev month
-    const lastYear = lastDate.getFullYear();
-    const lastMonth = lastDate.getMonth();
-    const lastMonthDays = lastDate.getDate();
-    const thisMonthDays = new Date(thisYear, thisMonth + 1, 0).getDate();
-
-    const dailyThis = new Array(thisMonthDays + 1).fill(0);
-    const dailyLast = new Array(lastMonthDays + 1).fill(0);
-
-    for (const t of (transactions || [])) {
-      if (!t.date || !(t.amount < 0)) continue;
-      const cat = (t.category || '').toLowerCase();
-      if (SKIP_CATS.has(cat)) continue;
-      const d = new Date(t.date);
-      if (isNaN(d)) continue;
-      const y = d.getFullYear();
-      const m = d.getMonth();
-      const day = d.getDate();
-      const amt = Math.abs(t.amount);
-      if (y === thisYear && m === thisMonth && day <= thisMonthDays) {
-        dailyThis[day] += amt;
-      } else if (y === lastYear && m === lastMonth && day <= lastMonthDays) {
-        dailyLast[day] += amt;
-      }
-    }
-
-    // Cumulative through each day. We only project this-month up to today,
-    // last-month for the full month so the comparison line is complete.
-    const cumThis = new Array(today + 1).fill(0);
-    for (let i = 1; i <= today; i++) cumThis[i] = cumThis[i - 1] + dailyThis[i];
-    const cumLast = new Array(lastMonthDays + 1).fill(0);
-    for (let i = 1; i <= lastMonthDays; i++) cumLast[i] = cumLast[i - 1] + dailyLast[i];
-
-    const thisTotalToDate = cumThis[today] || 0;
-    const lastTotalSame = cumLast[Math.min(today, lastMonthDays)] || 0;
-    const lastTotalFinal = cumLast[lastMonthDays] || 0;
-    const paceDelta = thisTotalToDate - lastTotalSame;
-    const thisMonthLabel = now.toLocaleDateString('en-US', { month: 'long' });
-    const lastMonthLabel = lastDate.toLocaleDateString('en-US', { month: 'long' });
-
-    return {
-      thisMonthDays,
-      lastMonthDays,
-      today,
-      cumThis,
-      cumLast,
-      thisTotalToDate,
-      lastTotalSame,
-      lastTotalFinal,
-      paceDelta,
-      thisMonthLabel,
-      lastMonthLabel,
-    };
-  }, [transactions]);
 
   // Build spending data from analytics byMonth
   const byMonth = analytics?.byMonth || {};
