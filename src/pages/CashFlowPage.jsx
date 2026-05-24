@@ -725,6 +725,12 @@ export function CashFlowPage() {
               >
                 End Bal · …{TRACK_ACCOUNT_SUFFIX}
               </th>
+              <th
+                style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}
+                title={`Date of the snapshot used for End Bal · …${TRACK_ACCOUNT_SUFFIX}. Earlier than month-end means Balance History stopped logging mid-month.`}
+              >
+                Snapshot Date
+              </th>
               <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Savings %</th>
             </tr>
           </thead>
@@ -785,9 +791,14 @@ export function CashFlowPage() {
                     const bh = trackedAccountMonthly[m.key];
                     if (!bh) {
                       return (
-                        <td style={{ padding: '10px 12px', textAlign: 'right', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-headline)', fontWeight: 600 }}>
-                          —
-                        </td>
+                        <>
+                          <td style={{ padding: '10px 12px', textAlign: 'right', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-headline)', fontWeight: 600 }}>
+                            —
+                          </td>
+                          <td style={{ padding: '10px 12px', textAlign: 'right', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-headline)', fontWeight: 600 }}>
+                            —
+                          </td>
+                        </>
                       );
                     }
                     const deltaMatchesNet = bh.delta != null && Math.abs(bh.delta - m.net) < 1;
@@ -797,17 +808,25 @@ export function CashFlowPage() {
                         ? incomeColor
                         : bh.delta >= 0 ? 'var(--color-text-secondary)' : expenseColor;
                     return (
-                      <td
-                        style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'var(--font-headline)', fontWeight: 600 }}
-                        title={`Snapshot from ${bh.date}${bh.account ? ` · ${bh.account}` : ''}`}
-                      >
-                        <div>{fmt(bh.balance)}</div>
-                        {bh.delta != null && (
-                          <div style={{ fontSize: 11, fontWeight: 600, color: deltaColor, marginTop: 2 }}>
-                            Δ {bh.delta >= 0 ? '+' : ''}{fmt(bh.delta)}
-                          </div>
-                        )}
-                      </td>
+                      <>
+                        <td
+                          style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'var(--font-headline)', fontWeight: 600 }}
+                          title={`Snapshot from ${bh.date}${bh.account ? ` · ${bh.account}` : ''}`}
+                        >
+                          <div>{fmt(bh.balance)}</div>
+                          {bh.delta != null && (
+                            <div style={{ fontSize: 11, fontWeight: 600, color: deltaColor, marginTop: 2 }}>
+                              Δ {bh.delta >= 0 ? '+' : ''}{fmt(bh.delta)}
+                            </div>
+                          )}
+                        </td>
+                        <td
+                          style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'var(--font-headline)', fontWeight: 600, color: 'var(--color-text-secondary)' }}
+                          title={bh.account ? `Account: ${bh.account}` : undefined}
+                        >
+                          {bh.date}
+                        </td>
+                      </>
                     );
                   })()}
                   <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: m.income === 0 ? 'var(--color-text-tertiary)' : savings >= 0.2 ? incomeColor : savings >= 0 ? '#e8a317' : expenseColor }}>
