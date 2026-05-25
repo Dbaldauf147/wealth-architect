@@ -139,8 +139,9 @@ export function App() {
   const [view, setView] = useState(getHashView);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [headerTab, setHeaderTab] = useState('portfolio');
-  const { loading, lastSync } = useData();
+  const { loading, syncing, lastSync } = useData();
   const { refresh } = useDataActions();
+  const busy = loading || syncing;
 
   useEffect(() => {
     const onHash = () => setView(getHashView());
@@ -205,9 +206,9 @@ export function App() {
             <span className="material-symbols-outlined">settings</span>
             Settings
           </div>
-          <button className={styles.syncButton} onClick={refresh} disabled={loading}>
-            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>{loading ? 'hourglass_empty' : 'sync'}</span>
-            {loading ? 'Syncing...' : 'Force Sync Sheets'}
+          <button className={styles.syncButton} onClick={refresh} disabled={busy}>
+            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>{busy ? 'hourglass_empty' : 'sync'}</span>
+            {busy ? 'Syncing...' : 'Force Sync Sheets'}
           </button>
         </div>
 

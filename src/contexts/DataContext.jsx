@@ -125,6 +125,36 @@ const saveCustomCategories = (v) => saveJSON('customCategories', v);
 const loadHiddenCategories = () => new Set(loadJSON('hiddenCategories', []));
 const saveHiddenCategories = (cats) => saveJSON('hiddenCategories', [...cats]);
 
+// ── Stale-while-revalidate cache for sheet data ─────────────────────────
+// The Google Sheets fetch is the slowest part of a cold load. We persist
+// the last successful result here so subsequent visits render instantly
+// from disk while a fresh fetch runs in the background. Stored as a
+// single blob so reads/writes stay atomic across the three datasets.
+const SHEET_CACHE_KEY = 'sheetDataCache:v1';
+function loadSheetCache() {
+  const raw = loadJSON(SHEET_CACHE_KEY, null);
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    transactions: Array.isArray(raw.transactions) ? raw.transactions : [],
+    balances: raw.balances || null,
+    balanceHistory: Array.isArray(raw.balanceHistory) ? raw.balanceHistory : [],
+    lastSync: raw.lastSync || null,
+  };
+}
+function saveSheetCache(payload) {
+  try {
+    saveJSON(SHEET_CACHE_KEY, {
+      transactions: payload.transactions,
+      balances: payload.balances,
+      balanceHistory: payload.balanceHistory,
+      lastSync: payload.lastSync,
+    });
+  } catch (err) {
+    // localStorage can throw on quota; cache is a best-effort optimization.
+    console.warn('Failed to cache sheet data:', err.message);
+  }
+}
+
 // ── Union-merge helpers for two-way cross-device sync ────────────────────
 function ruleKey(r) {
   return JSON.stringify([
@@ -222,7 +252,21 @@ function mergedDiffersFromRemote(merged, remote) {
 }
 
 export function DataProvider({ children }) {
-  const [rawTransactions, setRawTransactions] = useState([]);
+  // Synchronously hydrate sheet data from the SWR cache so the first paint
+  // can render real numbers instead of "Loading…". The background fetch
+  // started below will overwrite this with fresh data when it returns.
+  const initialCache = loadSheetCache();
+  // Whether localStorage already contains the user's categorization rules
+  // and overrides. If yes, we can paint with them immediately and let
+  // Firestore reconcile in the background. If no (fresh device), we still
+  // need to block on Firestore so the user doesn't see uncategorized data
+  // flash in before the cross-device sync arrives.
+  const hasLocalConfigRef = useRef(
+    (loadCategoryRules().length + loadSubcategoryRules().length) > 0
+    || Object.keys(loadCategoryOverrides()).length > 0
+    || Object.keys(loadSubcategoryOverrides()).length > 0,
+  );
+  const [rawTransactions, setRawTransactions] = useState(initialCache?.transactions || []);
   const [hiddenIds, setHiddenIds] = useState(loadHiddenIds);
   const [categoryRules, setCategoryRules] = useState(loadCategoryRules);
   const [subcategoryRules, setSubcategoryRules] = useState(loadSubcategoryRules);
@@ -240,12 +284,16 @@ export function DataProvider({ children }) {
   const [customAssetClasses, setCustomAssetClasses] = useState(loadCustomAssetClasses);
   const [hiddenCards, setHiddenCards] = useState(loadHiddenCards);
   const [paymentReminderPrefs, setPaymentReminderPrefs] = useState(loadPaymentReminderPrefs);
-  const [rawBalances, setRawBalances] = useState(null);
-  const [balanceHistory, setBalanceHistory] = useState([]);
-  const [dataLoading, setDataLoading] = useState(true);
+  const [rawBalances, setRawBalances] = useState(initialCache?.balances || null);
+  const [balanceHistory, setBalanceHistory] = useState(initialCache?.balanceHistory || []);
+  // Only true on the first cold load when we have nothing on disk to show.
+  // Subsequent refreshes flip `syncing` instead so consumers can render the
+  // cached data immediately and reflect "Syncing…" in the chrome.
+  const [dataLoading, setDataLoading] = useState(!initialCache);
+  const [syncing, setSyncing] = useState(false);
   const [configHydrated, setConfigHydrated] = useState(false);
   const [error, setError] = useState(null);
-  const [lastSync, setLastSync] = useState(null);
+  const [lastSync, setLastSync] = useState(initialCache?.lastSync ? new Date(initialCache.lastSync) : null);
 
   // ── Firestore sync of all per-user categorization state ───────────────
   // The Vercel weekly-summary Function reads this same doc so the email
@@ -455,8 +503,19 @@ export function DataProvider({ children }) {
     };
   }, [rawBalances, customAssets, customLiabilities]);
 
+  // Used inside loadData() so we can suppress the error surface when the
+  // background refresh fails but cached data is still on screen — better
+  // UX than blowing away the cached numbers with an error page.
+  const hasUsableDataRef = useRef(rawTransactions.length > 0 || !!rawBalances);
+  useEffect(() => {
+    hasUsableDataRef.current = rawTransactions.length > 0 || !!rawBalances;
+  }, [rawTransactions, rawBalances]);
+
   const loadData = useCallback(async () => {
-    setDataLoading(true);
+    // If we already have data in memory (from cache), prefer a non-blocking
+    // refresh so the UI stays interactive. The "loading" gate is reserved
+    // for truly cold loads with nothing to show.
+    setSyncing(true);
     setError(null);
     try {
       const [txns, bal, hist] = await Promise.all([
@@ -464,22 +523,35 @@ export function DataProvider({ children }) {
         fetchBalances(),
         fetchBalanceHistory(),
       ]);
+      const syncedAt = new Date();
       setRawTransactions(txns);
       setRawBalances(bal);
       setBalanceHistory(hist || []);
-      setLastSync(new Date());
+      setLastSync(syncedAt);
+      saveSheetCache({
+        transactions: txns,
+        balances: bal,
+        balanceHistory: hist || [],
+        lastSync: syncedAt.toISOString(),
+      });
     } catch (err) {
       console.error('Failed to load sheet data:', err);
-      setError(err.message);
+      // Only surface the error to consumers when we have nothing else to
+      // show. With SWR cached data already on screen, a transient sync
+      // failure shouldn't replace real numbers with an error page.
+      if (!hasUsableDataRef.current) setError(err.message);
     } finally {
       setDataLoading(false);
+      setSyncing(false);
     }
   }, []);
 
-  // Gate the "ready" state on both the sheet fetch and the Firestore
-  // hydration so consumers don't render uncategorized data on a fresh
-  // device while Firestore is still in flight.
-  const loading = dataLoading || !configHydrated;
+  // Block first paint on the Firestore config hydration *only* when
+  // localStorage had no rules to render with — that's the case where a
+  // fresh device could otherwise flash uncategorized data. When local
+  // config exists we paint with it immediately and let Firestore reconcile
+  // in the background; the SWR sheet cache uses the same principle.
+  const loading = dataLoading || (!configHydrated && !hasLocalConfigRef.current);
 
   useEffect(() => {
     loadData();
@@ -1023,6 +1095,7 @@ export function DataProvider({ children }) {
     balanceHistory,
     analytics,
     loading,
+    syncing,
     error,
     lastSync,
     categoryRules,
@@ -1046,6 +1119,7 @@ export function DataProvider({ children }) {
     balanceHistory,
     analytics,
     loading,
+    syncing,
     error,
     lastSync,
     categoryRules,
