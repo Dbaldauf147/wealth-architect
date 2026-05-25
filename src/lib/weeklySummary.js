@@ -111,6 +111,76 @@ export function upcomingCardPayments({ transactions, asOf = new Date() }) {
   return results;
 }
 
+/** This month vs. last month cumulative daily spend through `asOf`. Mirrors
+ *  the Overview page's monthCompare chart so the weekly email shows the same
+ *  "am I outpacing last month at this point in the cycle?" view. Skips
+ *  transfers, credit-card payments, investments, and retirement
+ *  contributions to keep the definition of "spend" consistent with Cash Flow. */
+export function monthCompare({ transactions, asOf = new Date() }) {
+  const SKIP_CATS = new Set([
+    'transfer',
+    'credit card payment',
+    'credit card payments',
+    'investments',
+    'retirement',
+  ]);
+
+  const thisYear = asOf.getFullYear();
+  const thisMonth = asOf.getMonth();
+  const today = asOf.getDate();
+  const lastDate = new Date(thisYear, thisMonth, 0); // last day of prev month
+  const lastYear = lastDate.getFullYear();
+  const lastMonth = lastDate.getMonth();
+  const lastMonthDays = lastDate.getDate();
+  const thisMonthDays = new Date(thisYear, thisMonth + 1, 0).getDate();
+
+  const dailyThis = new Array(thisMonthDays + 1).fill(0);
+  const dailyLast = new Array(lastMonthDays + 1).fill(0);
+
+  for (const t of (transactions || [])) {
+    if (!t.date || !(t.amount < 0)) continue;
+    const cat = (t.category || '').toLowerCase();
+    if (SKIP_CATS.has(cat)) continue;
+    const d = parseDate(t.date);
+    if (!d) continue;
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    const day = d.getDate();
+    const amt = Math.abs(t.amount);
+    if (y === thisYear && m === thisMonth && day <= thisMonthDays) {
+      dailyThis[day] += amt;
+    } else if (y === lastYear && m === lastMonth && day <= lastMonthDays) {
+      dailyLast[day] += amt;
+    }
+  }
+
+  const cumThis = new Array(today + 1).fill(0);
+  for (let i = 1; i <= today; i++) cumThis[i] = cumThis[i - 1] + dailyThis[i];
+  const cumLast = new Array(lastMonthDays + 1).fill(0);
+  for (let i = 1; i <= lastMonthDays; i++) cumLast[i] = cumLast[i - 1] + dailyLast[i];
+
+  const thisTotalToDate = cumThis[today] || 0;
+  const lastTotalSame = cumLast[Math.min(today, lastMonthDays)] || 0;
+  const lastTotalFinal = cumLast[lastMonthDays] || 0;
+  const paceDelta = thisTotalToDate - lastTotalSame;
+  const thisMonthLabel = asOf.toLocaleDateString('en-US', { month: 'long' });
+  const lastMonthLabel = lastDate.toLocaleDateString('en-US', { month: 'long' });
+
+  return {
+    thisMonthDays,
+    lastMonthDays,
+    today,
+    cumThis,
+    cumLast,
+    thisTotalToDate,
+    lastTotalSame,
+    lastTotalFinal,
+    paceDelta,
+    thisMonthLabel,
+    lastMonthLabel,
+  };
+}
+
 /** Month-to-date trends through `weekEnd`, compared with the same MTD window
  *  in the prior month. Returns headline totals, the period label, and the top
  *  category movers ranked by absolute $ delta. */
@@ -242,6 +312,7 @@ export function buildWeeklySummary({ transactions, start, end, asOf = new Date()
     : null;
 
   const trends = monthlyTrends({ transactions, weekEnd: end });
+  const compare = monthCompare({ transactions, asOf });
 
   return {
     range: { start: start.toISOString(), end: end.toISOString() },
@@ -256,6 +327,7 @@ export function buildWeeklySummary({ transactions, start, end, asOf = new Date()
     uncategorizedCount: uncategorized.length,
     nextCardPayment,
     monthlyTrends: trends,
+    monthCompare: compare,
     fmt,
   };
 }

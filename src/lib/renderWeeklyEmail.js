@@ -16,14 +16,86 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function daysUntil(iso, now = new Date()) {
-  const target = new Date(iso);
-  const diffMs = target - now;
-  return Math.round(diffMs / 86400000);
+function fmtCompact(n) {
+  if (n == null) return '—';
+  const abs = Math.abs(n);
+  if (abs >= 1000) return `$${(abs / 1000).toFixed(abs >= 10000 ? 0 : 1)}k`;
+  return `$${Math.round(abs)}`;
+}
+
+// Build an inline SVG of the cumulative-daily-spend comparison (this month
+// vs. last month), mirroring the Overview page chart. Inline SVG renders
+// in most modern email clients (Apple Mail, Gmail web, iOS Mail). For
+// clients that strip it (older Outlook), the text headline below provides
+// the same information.
+function renderMonthCompareSvg(mc) {
+  const VB_W = 560;
+  const VB_H = 220;
+  const pad = { top: 16, right: 16, bottom: 32, left: 52 };
+  const cW = VB_W - pad.left - pad.right;
+  const cH = VB_H - pad.top - pad.bottom;
+  const maxDay = Math.max(mc.thisMonthDays, mc.lastMonthDays);
+  const yMax = Math.max(
+    mc.cumThis[mc.today] || 0,
+    mc.cumLast[mc.lastMonthDays] || 0,
+    1,
+  ) * 1.08;
+
+  const xPos = day => pad.left + ((day - 1) / Math.max(1, maxDay - 1)) * cW;
+  const yPos = amt => pad.top + cH - (amt / yMax) * cH;
+
+  const thisPts = [];
+  for (let i = 1; i <= mc.today; i++) thisPts.push({ x: xPos(i), y: yPos(mc.cumThis[i]) });
+  const lastPts = [];
+  for (let i = 1; i <= mc.lastMonthDays; i++) lastPts.push({ x: xPos(i), y: yPos(mc.cumLast[i]) });
+  const lastPath = lastPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+  const thisPath = thisPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+
+  const tickCount = 4;
+  const yTicks = Array.from({ length: tickCount + 1 }, (_, i) => (yMax * i) / tickCount);
+  const xTickDays = [1, 5, 10, 15, 20, 25, maxDay].filter((v, i, a) => a.indexOf(v) === i);
+
+  const gridLines = yTicks.map((t, i) => {
+    const y = yPos(t).toFixed(1);
+    const dash = i === 0 ? '0' : '2 4';
+    return `<line x1="${pad.left}" x2="${VB_W - pad.right}" y1="${y}" y2="${y}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="${dash}" />`;
+  }).join('');
+
+  const yLabels = yTicks.map(t => {
+    const y = (yPos(t) + 4).toFixed(1);
+    return `<text x="${pad.left - 8}" y="${y}" text-anchor="end" font-size="10" fill="#94a3b8" font-family="-apple-system,'Segoe UI',sans-serif">${fmtCompact(t)}</text>`;
+  }).join('');
+
+  const xLabels = xTickDays.map(d => {
+    return `<text x="${xPos(d).toFixed(1)}" y="${VB_H - pad.bottom + 16}" text-anchor="middle" font-size="10" fill="#94a3b8" font-family="-apple-system,'Segoe UI',sans-serif">${d}</text>`;
+  }).join('');
+
+  const lastLine = lastPts.length >= 2
+    ? `<path d="${lastPath}" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round" />`
+    : '';
+  const thisLine = thisPts.length >= 2
+    ? `<path d="${thisPath}" fill="none" stroke="#0058be" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />`
+    : '';
+
+  let todayDot = '';
+  if (thisPts.length > 0) {
+    const last = thisPts[thisPts.length - 1];
+    todayDot = `
+      <line x1="${last.x.toFixed(1)}" x2="${last.x.toFixed(1)}" y1="${pad.top}" y2="${VB_H - pad.bottom}" stroke="#0058be" stroke-width="1" stroke-dasharray="2 3" opacity="0.4" />
+      <circle cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="5" fill="#0058be" stroke="#ffffff" stroke-width="2" />`;
+  }
+  let priorDot = '';
+  if (mc.today <= mc.lastMonthDays) {
+    const x = xPos(mc.today).toFixed(1);
+    const y = yPos(mc.cumLast[mc.today] || 0).toFixed(1);
+    priorDot = `<circle cx="${x}" cy="${y}" r="4" fill="#94a3b8" stroke="#ffffff" stroke-width="2" />`;
+  }
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VB_W} ${VB_H}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block;max-width:100%;height:auto;">${gridLines}${yLabels}${xLabels}${lastLine}${thisLine}${priorDot}${todayDot}</svg>`;
 }
 
 export function renderWeeklyEmailHtml(summary) {
-  const { range, expenseTotal, wowDelta, wowPct, topCategories, topMerchants, uncategorized, transactionCount, uncategorizedCount, nextCardPayment, monthlyTrends } = summary;
+  const { range, expenseTotal, wowDelta, wowPct, topCategories, topMerchants, uncategorized, transactionCount, uncategorizedCount, monthlyTrends, monthCompare } = summary;
 
   const deltaStr = wowPct == null
     ? 'No prior-week data'
@@ -85,26 +157,45 @@ export function renderWeeklyEmailHtml(summary) {
       </td>
     </tr>
 
-    ${nextCardPayment ? (() => {
-      const days = daysUntil(nextCardPayment.nextDate);
-      const when = days <= 0
-        ? 'expected today'
-        : days === 1
-        ? 'in 1 day'
-        : `in ${days} days`;
+    ${monthCompare && (monthCompare.thisTotalToDate > 0 || monthCompare.lastTotalFinal > 0) ? (() => {
+      const mc = monthCompare;
+      const paceColor = mc.paceDelta > 0 ? '#b91c1c' : '#16a34a';
+      const paceSign = mc.paceDelta >= 0 ? '▲' : '▼';
+      const paceLabel = `${paceSign} ${money(Math.abs(mc.paceDelta))} ${mc.paceDelta >= 0 ? 'ahead of' : 'behind'} ${escapeHtml(mc.lastMonthLabel)} at day ${mc.today}`;
       return `
     <tr>
       <td style="padding:0 28px 24px;">
         <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
-          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:8px;">Next Credit Card Payment</div>
-          <div style="display:flex;justify-content:space-between;align-items:baseline;">
-            <div>
-              <div style="font-size:15px;font-weight:600;color:#111;">${escapeHtml(nextCardPayment.card)}</div>
-              <div style="font-size:12px;color:#64748b;margin-top:2px;">${shortDate(nextCardPayment.nextDate)} · ${when}</div>
-            </div>
-            <div style="font-size:18px;font-weight:600;color:#111;font-variant-numeric:tabular-nums;text-align:right;">${money(nextCardPayment.lastAmount)}</div>
-          </div>
-          <div style="font-size:11px;color:#94a3b8;margin-top:6px;">Projected from past payment cadence (~${nextCardPayment.cadenceDays} days). Last paid ${shortDate(nextCardPayment.lastDate)}.</div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:8px;">${escapeHtml(mc.thisMonthLabel)} vs ${escapeHtml(mc.lastMonthLabel)} — Cumulative Spend</div>
+          <table role="presentation" width="100%" style="border-collapse:collapse;margin-bottom:12px;">
+            <tr>
+              <td style="font-size:12px;color:#64748b;">
+                <div style="font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#94a3b8;">${escapeHtml(mc.thisMonthLabel)} so far</div>
+                <div style="font-size:18px;font-weight:700;color:#111;font-variant-numeric:tabular-nums;">${money(mc.thisTotalToDate)}</div>
+              </td>
+              <td style="font-size:12px;color:#64748b;text-align:center;">
+                <div style="font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#94a3b8;">${escapeHtml(mc.lastMonthLabel)} total</div>
+                <div style="font-size:18px;font-weight:700;color:#64748b;font-variant-numeric:tabular-nums;">${money(mc.lastTotalFinal)}</div>
+              </td>
+              <td style="font-size:12px;color:#64748b;text-align:right;">
+                <div style="font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#94a3b8;">Pace</div>
+                <div style="font-size:18px;font-weight:700;color:${paceColor};font-variant-numeric:tabular-nums;">${paceSign} ${money(Math.abs(mc.paceDelta))}</div>
+              </td>
+            </tr>
+          </table>
+          ${renderMonthCompareSvg(mc)}
+          <table role="presentation" width="100%" style="border-collapse:collapse;margin-top:8px;">
+            <tr>
+              <td style="font-size:11px;color:#64748b;">
+                <span style="display:inline-block;width:18px;height:3px;background:#0058be;border-radius:2px;vertical-align:middle;margin-right:6px;"></span>${escapeHtml(mc.thisMonthLabel)} (through day ${mc.today})
+              </td>
+              <td style="font-size:11px;color:#64748b;text-align:right;">
+                <span style="display:inline-block;width:18px;height:0;border-top:2px dashed #94a3b8;vertical-align:middle;margin-right:6px;"></span>${escapeHtml(mc.lastMonthLabel)}
+              </td>
+            </tr>
+          </table>
+          <div style="font-size:11px;color:${paceColor};margin-top:8px;">${paceLabel}</div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Excludes transfers, card payments, investments, and retirement.</div>
         </div>
       </td>
     </tr>`;
