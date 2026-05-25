@@ -675,7 +675,7 @@ const SUBCATEGORIES = {
 };
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, accountNicknames, accountGroups, hiddenTransactions, hiddenCount } = useData();
+  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount } = useData();
   const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction } = useDataActions();
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
@@ -1797,15 +1797,23 @@ export function TransactionsPage() {
           >
             All Accounts
           </div>
-          {accountNames.map(acc => (
-            <div
-              key={acc}
-              className={`${styles.filterPill} ${activeAccount === acc ? styles.filterPillActive : ''}`}
-              onClick={() => { setActiveAccount(acc); setPage(0); }}
-            >
-              {(accountGroups && accountGroups[acc]) || accountNicknames[acc] || acc}
-            </div>
-          ))}
+          {accountNames.map(acc => {
+            const num = accountNumbers && accountNumbers[acc];
+            // Tooltip surfaces the raw account name + number behind any
+            // nickname/group label, so the user can recover what the pill
+            // represents on hover.
+            const title = num ? `${acc} · ${num}` : acc;
+            return (
+              <div
+                key={acc}
+                className={`${styles.filterPill} ${activeAccount === acc ? styles.filterPillActive : ''}`}
+                onClick={() => { setActiveAccount(acc); setPage(0); }}
+                title={title}
+              >
+                {(accountGroups && accountGroups[acc]) || accountNicknames[acc] || acc}
+              </div>
+            );
+          })}
         </div>
       )}
 

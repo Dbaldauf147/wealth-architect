@@ -42,7 +42,7 @@ function parseAccountName(s) {
 }
 
 export function CardsPage() {
-  const { transactions, balances, accountNicknames, accountGroups, loading, hiddenCards } = useData();
+  const { transactions, balances, accountNicknames, accountNumbers, accountGroups, loading, hiddenCards } = useData();
   const { setAccountNickname, toggleHideCard } = useDataActions();
   const [view, setView] = useState('schedule');
   const [scheduleView, setScheduleView] = useState('calendar');
@@ -71,6 +71,20 @@ export function CardsPage() {
   const displayName = useCallback(
     (name) => (accountGroups && accountGroups[name]) || (accountNicknames && accountNicknames[name]) || name,
     [accountNicknames, accountGroups],
+  );
+
+  // Tooltip showing the raw account / card number for a renamed card so
+  // the user can recover what's behind a nickname. Falls back to the
+  // last-4 digits parsed from the card name when the transaction stream
+  // doesn't carry an Account # for this card.
+  const cardNumberTitle = useCallback(
+    (cardName) => {
+      const fromTxns = accountNumbers && accountNumbers[cardName];
+      const fromName = parseAccountName(cardName).digits;
+      const num = fromTxns || (fromName ? `…${fromName}` : '');
+      return num ? `${cardName} · ${num}` : cardName;
+    },
+    [accountNumbers],
   );
 
   // Derive credit card accounts from liabilities. Tiller's Balances tab
@@ -555,7 +569,7 @@ export function CardsPage() {
                           </div>
                         ) : (
                           <div className={styles.cardNameRow}>
-                            <span className={styles.cardName}>{displayName(c.name)}</span>
+                            <span className={styles.cardName} title={cardNumberTitle(c.name)}>{displayName(c.name)}</span>
                             <button className={styles.cardRenameBtn} onClick={() => startRename(c.name)} title="Rename card">
                               <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
                             </button>
@@ -615,7 +629,7 @@ export function CardsPage() {
             return (
               <div key={i} className={styles.perfItem}>
                 <div className={styles.perfHeader}>
-                  <span className={styles.perfLabel}>{displayName(c.name)}</span>
+                  <span className={styles.perfLabel} title={cardNumberTitle(c.name)}>{displayName(c.name)}</span>
                   <span className={styles.perfValue}>{fmt(c.balance)}</span>
                 </div>
                 <div className={styles.perfBar}>
@@ -670,7 +684,7 @@ export function CardsPage() {
                 <div className={styles.infoIcon} style={{ background: `${card.color}14`, color: card.color }}>
                   <span className="material-symbols-outlined">credit_card</span>
                 </div>
-                <div className={styles.infoTitle}>{displayName(card.name)}</div>
+                <div className={styles.infoTitle} title={cardNumberTitle(card.name)}>{displayName(card.name)}</div>
               </div>
               {sorted.length > 0 ? sorted.map(([cat, amt], j) => (
                 <div key={j} className={styles.perfItem}>
@@ -705,7 +719,7 @@ export function CardsPage() {
                 <div className={styles.infoIcon} style={{ background: `${card.color}14`, color: card.color }}>
                   <span className="material-symbols-outlined">credit_card</span>
                 </div>
-                <div className={styles.infoTitle}>{displayName(card.name)}</div>
+                <div className={styles.infoTitle} title={cardNumberTitle(card.name)}>{displayName(card.name)}</div>
               </div>
               {sorted.length > 0 ? sorted.map(([cat, amt], j) => (
                 <div key={j} className={styles.perfItem}>
@@ -746,7 +760,10 @@ export function CardsPage() {
               <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 2 }}>
                 Paying from
               </div>
-              <div style={{ fontFamily: 'var(--font-headline)', fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div
+                style={{ fontFamily: 'var(--font-headline)', fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                title={cardNumberTitle(payingAccount.name)}
+              >
                 {displayName(payingAccount.name)}
               </div>
               {payingAccount.updated && (
@@ -919,7 +936,7 @@ export function CardsPage() {
                     <td>
                       <div className={styles.cardIdent}>
                         <div className={styles.cardStripe} style={{ background: s.color }} />
-                        <div className={styles.cardName}>{displayName(s.card)}</div>
+                        <div className={styles.cardName} title={cardNumberTitle(s.card)}>{displayName(s.card)}</div>
                       </div>
                     </td>
                     <td>

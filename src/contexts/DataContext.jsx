@@ -475,6 +475,23 @@ export function DataProvider({ children }) {
     [transactions],
   );
 
+  // Map of accountName → raw account number string (e.g. "1118" or
+  // "XXXX1118"), derived from the transaction stream. Used to show the
+  // underlying account / card number in hover tooltips on nicknamed
+  // accounts, so the user can always recover what's behind a rename.
+  // Picks the most recent non-empty `accountNum` per account so a clean
+  // value beats an empty one from earlier rows.
+  const accountNumbers = useMemo(() => {
+    const out = {};
+    for (const t of transactions || []) {
+      if (!t.account || !t.accountNum) continue;
+      // Latest-write-wins; transactions arrive newest-first in most cases,
+      // but we explicitly compare so order doesn't matter.
+      if (!out[t.account]) out[t.account] = t.accountNum;
+    }
+    return out;
+  }, [transactions]);
+
   // Stable handle on the latest `allTransactions` so action callbacks that
   // need to inspect transactions (renameCategory, removeCategory,
   // getMatchCount) don't have to list it in their deps. Without this, those
@@ -1104,6 +1121,7 @@ export function DataProvider({ children }) {
     hiddenCategories,
     transactionNotes,
     accountNicknames,
+    accountNumbers,
     accountGroups,
     assetClasses,
     customAssets,
@@ -1128,6 +1146,7 @@ export function DataProvider({ children }) {
     hiddenCategories,
     transactionNotes,
     accountNicknames,
+    accountNumbers,
     accountGroups,
     assetClasses,
     customAssets,

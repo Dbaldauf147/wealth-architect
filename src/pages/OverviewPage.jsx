@@ -45,6 +45,7 @@ export function OverviewPage() {
   const {
     balances, analytics, transactions, loading, error, lastSync,
     accountNicknames: ctxNicknames,
+    accountNumbers: ctxAccountNumbers,
     accountGroups: ctxGroups,
     assetClasses: ctxAssetClasses,
     customAssetClasses: ctxCustomAssetClasses,
@@ -55,7 +56,28 @@ export function OverviewPage() {
     renameGroup, deleteGroup,
   } = useDataActions();
   const accountNicknames = ctxNicknames || {};
+  const accountNumbers = ctxAccountNumbers || {};
   const accountGroups = ctxGroups || {};
+  // Tooltip text for a bucket. For an individual account, show its raw
+  // account / card number. For a group, list each member's number. Returns
+  // null when there's no number to surface so we leave the title off.
+  const bucketAccountTitle = (bucket) => {
+    if (bucket.isGroup) {
+      const lines = (bucket.members || [])
+        .map(m => {
+          const n = accountNumbers[m];
+          return n ? `${m} · ${n}` : m;
+        });
+      return lines.length ? lines.join('\n') : null;
+    }
+    if (bucket.accountName) {
+      const n = accountNumbers[bucket.accountName];
+      // Always include the original account name so the user can see what
+      // their nickname maps to even when there's no recorded number.
+      return n ? `${bucket.accountName} · ${n}` : bucket.accountName;
+    }
+    return null;
+  };
   const assetClasses = ctxAssetClasses || {};
   const customAssetClasses = ctxCustomAssetClasses || [];
   // Built-in + user-added classes, deduped, in canonical order.
@@ -468,7 +490,7 @@ export function OverviewPage() {
     return (
       <>
         <span className={styles.renameAware}>
-          <span className={styles.snapshotRowDisplay}>
+          <span className={styles.snapshotRowDisplay} title={bucketAccountTitle(bucket) || undefined}>
             {bucket.isGroup && <span className={styles.groupBadge} title="Account group">group</span>}
             {bucket.displayName}
           </span>
