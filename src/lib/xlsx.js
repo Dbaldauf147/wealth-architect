@@ -51,20 +51,98 @@ function colLetter(i) {
   return s;
 }
 
-function sheetXml(rows) {
+// Named cell styles → index into the <cellXfs> table in STYLES_XML below.
+// Cells reference these by name, e.g. { v: 1234.5, s: 'money' }.
+const STYLE = {
+  base: 0,
+  title: 1,
+  section: 2,
+  header: 3,
+  headerRight: 4,
+  label: 5,
+  labelBold: 6,
+  money: 7,
+  moneyBold: 8,
+  moneyTotal: 9,
+  pct: 10,
+  muted: 11,
+  totalLabel: 12,
+};
+
+// A curated stylesheet: fonts, fills, borders, two number formats (currency +
+// percent) and the cell formats (cellXfs) the STYLE map indexes into.
+const STYLES_XML =
+  '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+  '<numFmts count="2">' +
+    '<numFmt numFmtId="164" formatCode="&quot;$&quot;#,##0.00;[Red](&quot;$&quot;#,##0.00)"/>' +
+    '<numFmt numFmtId="165" formatCode="0.0%"/>' +
+  '</numFmts>' +
+  '<fonts count="5">' +
+    '<font><sz val="11"/><name val="Calibri"/></font>' +
+    '<font><b/><sz val="11"/><name val="Calibri"/></font>' +
+    '<font><b/><sz val="14"/><color rgb="FF111827"/><name val="Calibri"/></font>' +
+    '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>' +
+    '<font><i/><sz val="10"/><color rgb="FF6B7280"/><name val="Calibri"/></font>' +
+  '</fonts>' +
+  '<fills count="4">' +
+    '<fill><patternFill patternType="none"/></fill>' +
+    '<fill><patternFill patternType="gray125"/></fill>' +
+    '<fill><patternFill patternType="solid"><fgColor rgb="FF374151"/><bgColor indexed="64"/></patternFill></fill>' +
+    '<fill><patternFill patternType="solid"><fgColor rgb="FFF3F4F6"/><bgColor indexed="64"/></patternFill></fill>' +
+  '</fills>' +
+  '<borders count="3">' +
+    '<border><left/><right/><top/><bottom/><diagonal/></border>' +
+    '<border><left/><right/><top style="thin"><color rgb="FFB0B0B0"/></top><bottom/><diagonal/></border>' +
+    '<border><left/><right/><top/><bottom style="thin"><color rgb="FFB0B0B0"/></bottom><diagonal/></border>' +
+  '</borders>' +
+  '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+  '<cellXfs count="13">' +
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+    '<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+    '<xf numFmtId="0" fontId="1" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
+    '<xf numFmtId="0" fontId="3" fillId="2" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left"/></xf>' +
+    '<xf numFmtId="0" fontId="3" fillId="2" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>' +
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+    '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+    '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="right"/></xf>' +
+    '<xf numFmtId="164" fontId="1" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyAlignment="1"><alignment horizontal="right"/></xf>' +
+    '<xf numFmtId="164" fontId="1" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>' +
+    '<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="right"/></xf>' +
+    '<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+    '<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/>' +
+  '</cellXfs>' +
+  '</styleSheet>';
+
+// A cell is either a primitive (string | number | null) or { v, s } where `s`
+// is a STYLE name. Rows can also carry an optional `cols` widths array.
+function sheetXml(rows, cols) {
   const parts = [
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>',
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
   ];
+  if (cols && cols.length) {
+    parts.push('<cols>');
+    cols.forEach((c, i) => {
+      const w = typeof c === 'number' ? c : (c && c.width);
+      if (w) parts.push(`<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`);
+    });
+    parts.push('</cols>');
+  }
+  parts.push('<sheetData>');
   rows.forEach((row, r) => {
     const cells = [];
-    (row || []).forEach((val, c) => {
+    (row || []).forEach((raw, c) => {
+      const cell = (raw && typeof raw === 'object' && 'v' in raw) ? raw : { v: raw };
+      const val = cell.v;
       if (val == null || val === '') return;
       const ref = `${colLetter(c)}${r + 1}`;
+      const sIdx = cell.s != null && STYLE[cell.s] != null ? STYLE[cell.s] : 0;
+      const sAttr = sIdx ? ` s="${sIdx}"` : '';
       if (typeof val === 'number' && Number.isFinite(val)) {
-        cells.push(`<c r="${ref}"><v>${val}</v></c>`);
+        cells.push(`<c r="${ref}"${sAttr}><v>${val}</v></c>`);
       } else {
-        cells.push(`<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEscape(val)}</t></is></c>`);
+        cells.push(`<c r="${ref}"${sAttr} t="inlineStr"><is><t xml:space="preserve">${xmlEscape(val)}</t></is></c>`);
       }
     });
     parts.push(`<row r="${r + 1}">${cells.join('')}</row>`);
@@ -162,8 +240,9 @@ export function buildXlsxBlob(sheets) {
   const safe = (sheets || []).map((s, i) => ({
     name: sanitizeSheetName(s.name, i, used),
     rows: s.rows || [],
+    cols: s.cols || null,
   }));
-  if (safe.length === 0) safe.push({ name: 'Sheet1', rows: [] });
+  if (safe.length === 0) safe.push({ name: 'Sheet1', rows: [], cols: null });
 
   const contentTypes =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -171,6 +250,7 @@ export function buildXlsxBlob(sheets) {
     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
     '<Default Extension="xml" ContentType="application/xml"/>' +
     '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+    '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
     safe.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('') +
     '</Types>';
 
@@ -186,10 +266,12 @@ export function buildXlsxBlob(sheets) {
     safe.map((s, i) => `<sheet name="${xmlEscape(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('') +
     '</sheets></workbook>';
 
+  const stylesRelId = `rId${safe.length + 1}`;
   const workbookRels =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
     safe.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('') +
+    `<Relationship Id="${stylesRelId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
     '</Relationships>';
 
   const files = [
@@ -197,7 +279,8 @@ export function buildXlsxBlob(sheets) {
     { name: '_rels/.rels', data: enc.encode(rootRels) },
     { name: 'xl/workbook.xml', data: enc.encode(workbook) },
     { name: 'xl/_rels/workbook.xml.rels', data: enc.encode(workbookRels) },
-    ...safe.map((s, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(sheetXml(s.rows)) })),
+    { name: 'xl/styles.xml', data: enc.encode(STYLES_XML) },
+    ...safe.map((s, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(sheetXml(s.rows, s.cols)) })),
   ];
 
   return zipStore(files);

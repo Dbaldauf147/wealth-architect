@@ -165,10 +165,24 @@ function dispName(name, accountGroups, accountNicknames) {
 }
 
 // ── Sheet builders ────────────────────────────────────────────────────────
+// Styled-cell helpers — `{ v, s }` where `s` is a STYLE name understood by the
+// xlsx writer. Money/percent cells must hold numbers so they format natively.
+const T = (v) => ({ v, s: 'title' });
+const SEC = (v) => ({ v, s: 'section' });
+const H = (v) => ({ v, s: 'header' });
+const HR = (v) => ({ v, s: 'headerRight' });
+const LB = (v) => ({ v, s: 'labelBold' });
+const MU = (v) => ({ v, s: 'muted' });
+const M = (v) => ({ v, s: 'money' });
+const MB = (v) => ({ v, s: 'moneyBold' });
+const MT = (v) => ({ v, s: 'moneyTotal' });
+const TL = (v) => ({ v, s: 'totalLabel' });
+const P = (v) => ({ v, s: 'pct' });
+const headerRow = (labels, rightIdx = []) => labels.map((l, i) => (rightIdx.includes(i) ? HR(l) : H(l)));
 
 function buildRawSheet(txns, notesById, title) {
-  const rows = [[title]];
-  rows.push(['Date', 'Description', 'Category', 'Subcategory', 'Amount', 'Account', 'Account #', 'Institution', 'Month', 'Type', 'Notes', 'Transaction ID']);
+  const rows = [[T(title)], []];
+  rows.push(headerRow(['Date', 'Description', 'Category', 'Subcategory', 'Amount', 'Account', 'Account #', 'Institution', 'Month', 'Type', 'Notes', 'Transaction ID'], [4]));
   for (const t of txns) {
     const c = lc(t);
     const type = isTransfer(c) ? 'Transfer'
@@ -180,7 +194,7 @@ function buildRawSheet(txns, notesById, title) {
       t.description || t.fullDescription || '',
       t.category || '',
       t.subcategory || '',
-      t.amount,
+      M(t.amount),
       t.account || '',
       t.accountNum || '',
       t.institution || '',
@@ -190,12 +204,11 @@ function buildRawSheet(txns, notesById, title) {
       t.transactionId || '',
     ]);
   }
-  return rows;
+  return { rows, cols: [12, 36, 16, 16, 14, 22, 12, 18, 10, 12, 28, 24] };
 }
 
 // Group txns by category → subcategory, returning a summary block followed by
-// a flat detail table. `signedToDisplay` maps a category's signed net to the
-// number shown (identity for income, abs for expenses).
+// a flat detail table. `displayAbs` shows expense magnitudes as positive.
 function buildGroupedSheet({ txns, title, displayAbs }) {
   const byCat = {};
   for (const t of txns) {
@@ -213,21 +226,21 @@ function buildGroupedSheet({ txns, title, displayAbs }) {
     .sort((a, b) => b.display - a.display);
   const grand = cats.reduce((s, c) => s + c.display, 0);
 
-  const rows = [[title], []];
-  rows.push(['SUMMARY BY CATEGORY']);
-  rows.push(['Category', 'Subcategory', 'Amount', '% of total']);
+  const rows = [[T(title)], []];
+  rows.push([SEC('SUMMARY BY CATEGORY')]);
+  rows.push(headerRow(['Category', 'Subcategory', 'Amount', '% of total'], [2, 3]));
   for (const c of cats) {
-    rows.push([c.name, '', c.display, grand ? c.display / grand : 0]);
+    rows.push([LB(c.name), '', MB(c.display), grand ? P(c.display / grand) : '']);
     const subs = Object.entries(c.subs)
       .map(([n, v]) => ({ n, v: disp(v) }))
       .sort((a, b) => b.v - a.v);
-    for (const s of subs) rows.push(['', s.n, s.v, '']);
+    for (const s of subs) rows.push(['', s.n, M(s.v), '']);
   }
-  rows.push(['TOTAL', '', grand, grand ? 1 : '']);
+  rows.push([TL('TOTAL'), '', MT(grand), grand ? P(1) : '']);
   rows.push([]);
 
-  rows.push(['DETAIL (raw transactions, signed amounts)']);
-  rows.push(['Date', 'Description', 'Category', 'Subcategory', 'Amount', 'Account', 'Institution', 'Month']);
+  rows.push([SEC('DETAIL (raw transactions, signed amounts)')]);
+  rows.push(headerRow(['Date', 'Description', 'Category', 'Subcategory', 'Amount', 'Account', 'Institution', 'Month'], [4]));
   const detail = txns.slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   for (const t of detail) {
     rows.push([
@@ -235,13 +248,13 @@ function buildGroupedSheet({ txns, title, displayAbs }) {
       t.description || t.fullDescription || '',
       t.category || '',
       t.subcategory || '',
-      t.amount,
+      M(t.amount),
       t.account || '',
       t.institution || '',
       t.month || monthKeyOf(t.date) || '',
     ]);
   }
-  return rows;
+  return { rows, cols: [16, 34, 16, 16, 14, 24, 18, 10] };
 }
 
 function buildCardSheet(transactions, asOf, accountGroups, accountNicknames) {
@@ -255,26 +268,26 @@ function buildCardSheet(transactions, asOf, accountGroups, accountNicknames) {
   const cards = [...cardSet].map((name) => ({ name }));
   const schedule = buildCardSchedule({ cards, transactions, asOf });
 
-  const rows = [['NEXT CREDIT CARD PAYMENT — CHARGES BY CARD'], []];
-  rows.push(['These are the charges since each card\'s last payment, i.e. what the next payment is expected to cover.'], []);
+  const rows = [[T('NEXT CREDIT CARD PAYMENT — CHARGES BY CARD')], []];
+  rows.push([MU('These are the charges since each card\'s last payment, i.e. what the next payment is expected to cover.')], []);
 
-  rows.push(['SUMMARY']);
-  rows.push(['Card', 'Last payment', 'Last amount', 'Cadence (days)', 'Next payment (est.)', 'Est. next amount', '# charges']);
+  rows.push([SEC('SUMMARY')]);
+  rows.push(headerRow(['Card', 'Last payment', 'Last amount', 'Cadence (days)', 'Next payment (est.)', 'Est. next amount', '# charges'], [2, 5, 6]));
   for (const s of schedule) {
     rows.push([
-      dispName(s.card, accountGroups, accountNicknames),
+      LB(dispName(s.card, accountGroups, accountNicknames)),
       s.lastPayment ? s.lastPayment.date.toISOString().slice(0, 10) : '',
-      s.lastPayment ? s.lastPayment.amount : '',
+      s.lastPayment ? M(s.lastPayment.amount) : '',
       s.cadenceDays,
       s.nextPaymentDate ? s.nextPaymentDate.toISOString().slice(0, 10) : '',
-      s.estimatedNextAmount,
+      MB(s.estimatedNextAmount),
       s.chargesSinceLast.length,
     ]);
   }
   rows.push([]);
 
-  rows.push(['CHARGES FEEDING THE NEXT PAYMENT (per card)']);
-  rows.push(['Card', 'Date', 'Description', 'Category', 'Subcategory', 'Amount']);
+  rows.push([SEC('CHARGES FEEDING THE NEXT PAYMENT (per card)')]);
+  rows.push(headerRow(['Card', 'Date', 'Description', 'Category', 'Subcategory', 'Amount'], [5]));
   for (const s of schedule) {
     const label = dispName(s.card, accountGroups, accountNicknames);
     for (const t of s.chargesSinceLast) {
@@ -284,49 +297,44 @@ function buildCardSheet(transactions, asOf, accountGroups, accountNicknames) {
         t.description || t.fullDescription || '',
         t.category || '',
         t.subcategory || '',
-        t.amount,
+        M(t.amount),
       ]);
     }
   }
-  return rows;
-}
-
-function money(v) {
-  if (v == null) return '';
-  return v;
+  return { rows, cols: [24, 16, 30, 18, 18, 16, 12] };
 }
 
 function buildReconciliationSheet(transactions, balanceHistory, monthKeys, trackSuffix) {
-  const rows = [[`BANK BALANCE RECONCILIATION — account ending …${trackSuffix}`], []];
-  rows.push(['Why the bank balance change does not equal the Cash Flow "Net" column:']);
-  rows.push(['• "Net" is Income − Expenses across ALL accounts (including credit-card spending), and excludes transfers, card payments, investments and retirement.']);
-  rows.push([`• The …${trackSuffix} balance only moves when money actually enters or leaves THAT account — including the excluded flows above, and NOT credit-card spending until the card is paid.`]);
+  const rows = [[T(`BANK BALANCE RECONCILIATION — account ending …${trackSuffix}`)], []];
+  rows.push([MU('Why the bank balance change does not equal the Cash Flow "Net" column:')]);
+  rows.push([MU('• "Net" is Income − Expenses across ALL accounts (including credit-card spending), and excludes transfers, card payments, investments and retirement.')]);
+  rows.push([MU(`• The …${trackSuffix} balance only moves when money actually enters or leaves THAT account — including the excluded flows above, and NOT credit-card spending until the card is paid.`)]);
   rows.push([]);
 
   for (const key of monthKeys) {
     const r = computeMonthReconciliation({ transactions, balanceHistory, monthKey: key, trackSuffix });
-    rows.push([`${monthLabel(key)}`]);
-    rows.push([`Opening balance${r.opening ? ` (snapshot ${r.opening.date})` : ' (no prior snapshot)'}`, money(r.opening?.balance)]);
-    rows.push(['  + Income / inflows to account', money(r.buckets.inflows)]);
-    rows.push(['  − Spending from account', money(r.buckets.spending)]);
-    rows.push(['  ± Transfers', money(r.buckets.transfers)]);
-    rows.push(['  − Credit card payments', money(r.buckets.ccPayments)]);
-    rows.push(['  − Investments / retirement', money(r.buckets.investing)]);
-    rows.push(['  = Net movement on account (from transactions)', money(r.txnNet)]);
-    rows.push([`Expected closing balance`, money(r.expectedClosing)]);
-    rows.push([`Actual closing balance${r.closing ? ` (snapshot ${r.closing.date})` : ' (no snapshot)'}`, money(r.closing?.balance)]);
-    rows.push(['Unexplained difference (timing / unsynced transactions)', money(r.residual)]);
+    rows.push([SEC(monthLabel(key)), SEC('')]);
+    rows.push([`Opening balance${r.opening ? ` (snapshot ${r.opening.date})` : ' (no prior snapshot)'}`, M(r.opening?.balance)]);
+    rows.push(['  + Income / inflows to account', M(r.buckets.inflows)]);
+    rows.push(['  − Spending from account', M(r.buckets.spending)]);
+    rows.push(['  ± Transfers', M(r.buckets.transfers)]);
+    rows.push(['  − Credit card payments', M(r.buckets.ccPayments)]);
+    rows.push(['  − Investments / retirement', M(r.buckets.investing)]);
+    rows.push([LB('  = Net movement on account (from transactions)'), MB(r.txnNet)]);
+    rows.push([LB('Expected closing balance'), MB(r.expectedClosing)]);
+    rows.push([LB(`Actual closing balance${r.closing ? ` (snapshot ${r.closing.date})` : ' (no snapshot)'}`), MB(r.closing?.balance)]);
+    rows.push([MU('Unexplained difference (timing / unsynced transactions)'), M(r.residual)]);
     rows.push([]);
-    rows.push(['Cash Flow Net (all accounts: Income − Expenses)', money(r.cashFlowNet)]);
-    rows.push(['  Income (all accounts)', money(r.cashFlowIncome)]);
-    rows.push(['  Expenses (all accounts)', money(r.cashFlowExpenses)]);
-    rows.push([`…${trackSuffix} actual balance change`, money(r.actualDelta)]);
-    rows.push(['Gap (Net − balance change)', money(r.netVsActual)]);
-    rows.push(['Reconciled mainly by →', `transfers ${fmtNum(r.buckets.transfers)}, card payments ${fmtNum(r.buckets.ccPayments)}, investing ${fmtNum(r.buckets.investing)}, plus spending on other accounts`]);
+    rows.push([LB('Cash Flow Net (all accounts: Income − Expenses)'), MB(r.cashFlowNet)]);
+    rows.push(['  Income (all accounts)', M(r.cashFlowIncome)]);
+    rows.push(['  Expenses (all accounts)', M(r.cashFlowExpenses)]);
+    rows.push([`…${trackSuffix} actual balance change`, M(r.actualDelta)]);
+    rows.push([TL('Gap (Net − balance change)'), MT(r.netVsActual)]);
+    rows.push([MU(`Reconciled mainly by → transfers ${fmtNum(r.buckets.transfers)}, card payments ${fmtNum(r.buckets.ccPayments)}, investing ${fmtNum(r.buckets.investing)}, plus spending on other accounts`)]);
     rows.push([]);
     rows.push([]);
   }
-  return rows;
+  return { rows, cols: [54, 18] };
 }
 
 function fmtNum(v) {
@@ -372,10 +380,10 @@ export function buildDeepDiveSheets({
   const windowLabel = monthKeys.map(monthLabel).join(' + ');
 
   return [
-    { name: 'Reconciliation', rows: buildReconciliationSheet(transactions, balanceHistory, monthKeys, trackSuffix) },
-    { name: 'Income', rows: buildGroupedSheet({ txns: incomeTxns, title: `INCOME — ${windowLabel}`, displayAbs: false }) },
-    { name: 'Expenses', rows: buildGroupedSheet({ txns: expenseTxns, title: `EXPENSES — ${windowLabel}`, displayAbs: true }) },
-    { name: 'Next CC Payment by Card', rows: buildCardSheet(transactions, asOf, accountGroups, accountNicknames) },
-    { name: 'Raw', rows: buildRawSheet(inWindow, notesById, `RAW TRANSACTIONS — ${windowLabel} (no exclusions)`) },
+    { name: 'Reconciliation', ...buildReconciliationSheet(transactions, balanceHistory, monthKeys, trackSuffix) },
+    { name: 'Income', ...buildGroupedSheet({ txns: incomeTxns, title: `INCOME — ${windowLabel}`, displayAbs: false }) },
+    { name: 'Expenses', ...buildGroupedSheet({ txns: expenseTxns, title: `EXPENSES — ${windowLabel}`, displayAbs: true }) },
+    { name: 'Next CC Payment by Card', ...buildCardSheet(transactions, asOf, accountGroups, accountNicknames) },
+    { name: 'Raw', ...buildRawSheet(inWindow, notesById, `RAW TRANSACTIONS — ${windowLabel} (no exclusions)`) },
   ];
 }
