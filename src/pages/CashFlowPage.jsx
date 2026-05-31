@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useData } from '../contexts/DataContext';
-import { upcomingCardPayments } from '../lib/weeklySummary';
+import { buildCardSchedule } from '../lib/cardSchedule';
+import { downloadXlsx } from '../lib/xlsx';
+import { buildDeepDiveSheets, computeMonthReconciliation, monthLabel, prevMonthKey } from '../lib/cashflowExport';
 
 function fmt(n) {
   if (n == null) return '—';
@@ -72,12 +74,18 @@ function accountNumberMatches(rawAcctNum, suffix) {
 }
 
 export function CashFlowPage() {
-  const { transactions, balanceHistory, loading } = useData();
+  const { transactions, balanceHistory, transactionNotes, accountGroups, accountNicknames, loading } = useData();
   const [monthCount, setMonthCount] = useState(13);
+  const [selectedMonth, setSelectedMonth] = useState(null); // 'YYYY-MM' | null — single-month focus
   const [drilldown, setDrilldown] = useState(null); // { monthKey, kind: 'income'|'expenses' }
   const [expandedDrillCats, setExpandedDrillCats] = useState(new Set());
   const [expandedRevCats, setExpandedRevCats] = useState(new Set());
+  const [expandedCards, setExpandedCards] = useState(new Set());
   const [view, setView] = useState('history'); // 'history' | 'projections'
+
+  // Display name for a card/account — group name wins over a nickname, which
+  // wins over the raw account string (matches the rest of the app).
+  const cardLabel = (name) => (accountGroups && accountGroups[name]) || (accountNicknames && accountNicknames[name]) || name;
 
   const data = useMemo(() => {
     if (!transactions) return { months: [], totalIncome: 0, totalExpenses: 0, net: 0, avgIncome: 0, avgExpenses: 0, qualifyingExpCats: new Set() };
@@ -130,7 +138,14 @@ export function CashFlowPage() {
       }
     }
 
-    const recentKeys = allKeys.slice(-monthCount);
+    let recentKeys = allKeys.slice(-monthCount);
+    // When the user focuses a single month, make sure that month and the one
+    // before it (used for the comparison + reconciliation) are always in the
+    // visible range, even if they fall outside the current month-count window.
+    if (selectedMonth && allKeys.includes(selectedMonth)) {
+      const need = [prevMonthKey(selectedMonth), selectedMonth].filter(k => allKeys.includes(k) && !recentKeys.includes(k));
+      if (need.length) recentKeys = [...new Set([...recentKeys, ...need])].sort();
+    }
 
     // Qualifying expense cats: those whose net across the visible range is negative,
     // plus 'Uncategorized' if it has any non-zero net.
@@ -182,8 +197,9 @@ export function CashFlowPage() {
       savingsRate: totalIncome > 0 ? (totalIncome - totalExpenses) / totalIncome : 0,
       qualifyingExpCats,
       expSignedByCat,
+      allMonthKeys: allKeys,
     };
-  }, [transactions, monthCount]);
+  }, [transactions, monthCount, selectedMonth]);
 
   // Month-end balance lookup for the tracked bank account (…1118). For each
   // visible month, find the latest Balance History snapshot dated within
@@ -427,12 +443,54 @@ export function CashFlowPage() {
     };
   }, [data.months]);
 
-  /* Upcoming credit-card payments — uses the shared helper that infers cadence
-     and average amount from each card's CC-payment transaction history. */
-  const cardPayments = useMemo(
-    () => upcomingCardPayments({ transactions: transactions || [] }),
-    [transactions],
-  );
+  /* Upcoming credit-card payments — schedule per card (next date + the charges
+     since the last payment that will roll into it). Cards are derived from
+     accounts that have CC-payment activity. */
+  const cardSchedule = useMemo(() => {
+    const set = new Set();
+    for (const t of transactions || []) {
+      const c = (t.category || '').toLowerCase();
+      // Inflow leg only (amount > 0): excludes the paying account's outflow leg.
+      if ((c === 'credit card payment' || c === 'credit card payments') && t.amount > 0 && (t.account || '').trim()) {
+        set.add(t.account.trim());
+      }
+    }
+    const cards = [...set].map(name => ({ name }));
+    return buildCardSchedule({ cards, transactions: transactions || [] })
+      .filter(s => s.lastPayment)
+      .sort((a, b) => (a.nextPaymentDate?.getTime() || 0) - (b.nextPaymentDate?.getTime() || 0));
+  }, [transactions]);
+
+  /* Bank-balance reconciliation for the focused month and the one before it —
+     explains why the …1118 balance change doesn't equal the Net column. */
+  const recon = useMemo(() => {
+    if (!selectedMonth) return null;
+    const args = { transactions: transactions || [], balanceHistory: balanceHistory || [], trackSuffix: TRACK_ACCOUNT_SUFFIX };
+    const prevKey = prevMonthKey(selectedMonth);
+    return {
+      cur: computeMonthReconciliation({ ...args, monthKey: selectedMonth }),
+      prev: computeMonthReconciliation({ ...args, monthKey: prevKey }),
+      prevKey,
+    };
+  }, [selectedMonth, transactions, balanceHistory]);
+
+  function exportDeepDive() {
+    if (!transactions) return;
+    const keys = data.allMonthKeys || [];
+    const target = selectedMonth || keys[keys.length - 1];
+    if (!target) return;
+    const months = [prevMonthKey(target), target];
+    const sheets = buildDeepDiveSheets({
+      transactions,
+      balanceHistory: balanceHistory || [],
+      monthKeys: months,
+      trackSuffix: TRACK_ACCOUNT_SUFFIX,
+      notesById: transactionNotes || {},
+      accountGroups: accountGroups || {},
+      accountNicknames: accountNicknames || {},
+    });
+    downloadXlsx(sheets, `cashflow-deepdive-${target}.xlsx`);
+  }
 
   function exportMonthCsv(monthKey, kind) {
     if (!transactions || !monthKey) return;
@@ -573,6 +631,17 @@ export function CashFlowPage() {
       </div>
 
       {view === 'history' && (<>
+      {/* Single-month focus + bank-balance reconciliation */}
+      {recon && (
+        <MonthDeepDive
+          recon={recon}
+          trackSuffix={TRACK_ACCOUNT_SUFFIX}
+          incomeColor={incomeColor}
+          expenseColor={expenseColor}
+          onClear={() => { setSelectedMonth(null); setDrilldown(null); }}
+          onExport={exportDeepDive}
+        />
+      )}
       {/* Stat Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
         <StatCard label="Total Income" value={fmt(data.totalIncome)} color={incomeColor} icon="trending_up" />
@@ -602,7 +671,32 @@ export function CashFlowPage() {
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>
             Income vs Expenses Over Time
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 2, background: 'var(--color-surface-alt)', borderRadius: 8, padding: 2 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {/* Single-month focus picker */}
+            <select
+              value={selectedMonth || ''}
+              onChange={(e) => {
+                const v = e.target.value || null;
+                setSelectedMonth(v);
+                setDrilldown(v ? { monthKey: v, kind: 'expenses' } : null);
+              }}
+              title="Focus on a single month (also picks the month for the deep-dive export)"
+              style={{ fontSize: 12, fontWeight: 600, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-ghost)', background: 'var(--color-surface-alt)', color: 'var(--color-text-primary)', cursor: 'pointer' }}
+            >
+              <option value="">All months (trend)</option>
+              {[...(data.allMonthKeys || [])].reverse().map(k => (
+                <option key={k} value={k}>{monthLabel(k)}</option>
+              ))}
+            </select>
+            <button
+              onClick={exportDeepDive}
+              title="Export an Excel workbook (raw + grouped income/expenses + CC charges by card + bank reconciliation) for the focused month and the month before it"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid var(--border-ghost)', background: 'var(--color-surface-alt)', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)' }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>table_view</span>
+              Deep dive (.xlsx)
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 2, background: 'var(--color-surface-alt)', borderRadius: 8, padding: 2 }}>
             <button
               onClick={() => setMonthCount(c => Math.max(1, c - 1))}
               disabled={monthCount <= 1}
@@ -617,6 +711,7 @@ export function CashFlowPage() {
             >
               <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
             </button>
+            </div>
           </div>
         </div>
 
@@ -646,16 +741,21 @@ export function CashFlowPage() {
             const cx = xCenter(mi);
             const incH = (m.income / range) * innerH;
             const expH = (m.expenses / range) * innerH;
+            // Dim months other than the focused one (and the prior month it's
+            // compared against) so the selection stands out in the trend.
+            const dim = selectedMonth && m.key !== selectedMonth && m.key !== prevMonthKey(selectedMonth);
+            const incOpacity = dim ? 0.2 : 0.85;
+            const expOpacity = dim ? 0.2 : 0.85;
             return (
               <g key={mi}>
                 <rect x={cx - barW - 2} y={yPos(m.income)} width={barW} height={incH}
-                  rx={3} fill={incomeColor} opacity={0.85}
+                  rx={3} fill={incomeColor} opacity={incOpacity}
                   style={{ cursor: m.income > 0 ? 'pointer' : 'default' }}
                   onClick={() => m.income > 0 && setDrilldown({ monthKey: m.key, kind: 'income' })}>
                   <title>{m.label} {m.year} Income: {fmt(m.income)} (click for categories)</title>
                 </rect>
                 <rect x={cx + 2} y={yPos(m.expenses)} width={barW} height={expH}
-                  rx={3} fill={expenseColor} opacity={0.85}
+                  rx={3} fill={expenseColor} opacity={expOpacity}
                   style={{ cursor: m.expenses > 0 ? 'pointer' : 'default' }}
                   onClick={() => m.expenses > 0 && setDrilldown({ monthKey: m.key, kind: 'expenses' })}>
                   <title>{m.label} {m.year} Expenses: {fmt(m.expenses)} (click for categories)</title>
@@ -707,8 +807,20 @@ export function CashFlowPage() {
 
       {/* Monthly breakdown table */}
       <div style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', marginBottom: 12 }}>
-          Monthly Breakdown
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>
+            Monthly Breakdown{selectedMonth ? ` · ${monthLabel(selectedMonth)} vs prior` : ''}
+          </div>
+          {selectedMonth && (
+            <button
+              onClick={() => { setSelectedMonth(null); setDrilldown(null); }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px', border: '1px solid var(--border-ghost)', background: 'var(--color-surface-alt)', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)' }}
+              title="Show all months"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+              Show all months
+            </button>
+          )}
         </div>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
@@ -735,12 +847,15 @@ export function CashFlowPage() {
             </tr>
           </thead>
           <tbody>
-            {[...data.months].reverse().map(m => {
+            {[...data.months].reverse()
+              .filter(m => !selectedMonth || m.key === selectedMonth || m.key === prevMonthKey(selectedMonth))
+              .map(m => {
               const savings = m.income > 0 ? (m.income - m.expenses) / m.income : 0;
               const isActiveInc = drilldown && drilldown.monthKey === m.key && drilldown.kind === 'income';
               const isActiveExp = drilldown && drilldown.monthKey === m.key && drilldown.kind === 'expenses';
+              const isFocus = selectedMonth === m.key;
               return (
-                <tr key={m.key} style={{ borderBottom: '1px solid var(--border-ghost)' }}>
+                <tr key={m.key} style={{ borderBottom: '1px solid var(--border-ghost)', background: isFocus ? 'var(--color-surface-alt)' : undefined }}>
                   <td style={{ padding: '10px 12px', fontWeight: 600 }}>{m.label} {m.year}</td>
                   <td
                     onClick={() => m.income > 0 && setDrilldown(isActiveInc ? null : { monthKey: m.key, kind: 'income' })}
@@ -1028,7 +1143,7 @@ export function CashFlowPage() {
         const projNetColor = projNet >= 0 ? incomeColor : expenseColor;
         const monthPct = p.daysInMonth > 0 ? Math.min(100, Math.round((p.daysElapsed / p.daysInMonth) * 100)) : 0;
         const today = new Date();
-        const ccTotal = cardPayments.reduce((s, cp) => s + cp.avgAmount, 0);
+        const ccTotal = cardSchedule.reduce((s, cp) => s + cp.estimatedNextAmount, 0);
 
         if (!p.hasHistory && p.mtdIncome === 0 && p.mtdExpenses === 0) {
           return (
@@ -1102,67 +1217,209 @@ export function CashFlowPage() {
               </div>
             </div>
 
-            {/* Upcoming credit card payments */}
+            {/* Upcoming credit card payments — expand a card to see the
+                charges since its last payment that will roll into the next. */}
             <div style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
                 <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>
-                  Upcoming Credit Card Payments
+                  Next Credit Card Payment · charges by card
                 </div>
-                {cardPayments.length > 0 && (
+                {cardSchedule.length > 0 && (
                   <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-headline)' }}>
                     {fmt(ccTotal)} <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)' }}>total expected</span>
                   </div>
                 )}
               </div>
-              {cardPayments.length === 0 ? (
+              {cardSchedule.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: 24, color: 'var(--color-text-tertiary)', fontSize: 13 }}>
                   No credit card payment history detected yet. Once you have at least one Credit Card Payment transaction, projections will appear here.
                 </div>
               ) : (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border-ghost)' }}>
-                      <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Card</th>
-                      <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Due</th>
-                      <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Expected Amount</th>
-                      <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Last Payment</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cardPayments.map(cp => {
-                      const due = new Date(cp.nextDate);
-                      const daysUntil = Math.ceil((due - today) / 86400000);
-                      const dueLabel = due.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-                      const last = new Date(cp.lastDate);
-                      const dueColor = daysUntil <= 0 ? expenseColor : daysUntil <= 7 ? '#e8a317' : 'var(--color-text-primary)';
-                      return (
-                        <tr key={cp.card} style={{ borderBottom: '1px solid var(--border-ghost)' }}>
-                          <td style={{ padding: '10px 12px', fontWeight: 600 }}>{cp.card}</td>
-                          <td style={{ padding: '10px 12px' }}>
-                            <div style={{ fontWeight: 600, color: dueColor }}>{dueLabel}</div>
-                            <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
-                              {daysUntil <= 0 ? 'due today' : `in ${daysUntil} day${daysUntil === 1 ? '' : 's'}`}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {cardSchedule.map(cp => {
+                    const due = cp.nextPaymentDate;
+                    const daysUntil = due ? Math.ceil((due - today) / 86400000) : null;
+                    const dueLabel = due ? due.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '—';
+                    const dueColor = daysUntil == null ? 'var(--color-text-primary)' : daysUntil <= 0 ? expenseColor : daysUntil <= 7 ? '#e8a317' : 'var(--color-text-primary)';
+                    const isExpanded = expandedCards.has(cp.card);
+                    const charges = cp.chargesSinceLast || [];
+                    return (
+                      <div key={cp.card} style={{ border: '1px solid var(--border-ghost)', borderRadius: 8, padding: 12 }}>
+                        <div
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, cursor: charges.length ? 'pointer' : 'default' }}
+                          onClick={() => charges.length && setExpandedCards(prev => {
+                            const next = new Set(prev);
+                            if (next.has(cp.card)) next.delete(cp.card); else next.add(cp.card);
+                            return next;
+                          })}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 16, color: 'var(--color-text-tertiary)', transition: 'transform 0.15s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', visibility: charges.length ? 'visible' : 'hidden' }}>
+                              chevron_right
+                            </span>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontFamily: 'var(--font-headline)', fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cardLabel(cp.card)}</div>
+                              <div style={{ fontSize: 11, color: dueColor, fontWeight: 600 }}>
+                                Due {dueLabel}{daysUntil != null ? ` · ${daysUntil <= 0 ? 'due now' : `in ${daysUntil} day${daysUntil === 1 ? '' : 's'}`}` : ''}
+                              </div>
                             </div>
-                          </td>
-                          <td style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'var(--font-headline)', fontWeight: 700 }}>
-                            {fmt(cp.avgAmount)}
-                          </td>
-                          <td style={{ padding: '10px 12px', textAlign: 'right', color: 'var(--color-text-tertiary)', fontSize: 12 }}>
-                            {fmt(cp.lastAmount)} on {last.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontFamily: 'var(--font-headline)', fontSize: 16, fontWeight: 700 }}>{fmt(cp.estimatedNextAmount)}</div>
+                            <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{charges.length} charge{charges.length === 1 ? '' : 's'} since {cp.lastPayment ? cp.lastPayment.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}</div>
+                          </div>
+                        </div>
+                        {isExpanded && charges.length > 0 && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 24, marginTop: 10 }}>
+                            {charges.map((t, idx) => (
+                              <div key={t.transactionId || idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: 'var(--color-text-secondary)', padding: '4px 0', borderBottom: idx < charges.length - 1 ? '1px solid var(--color-surface-alt, #f0f0f0)' : 'none' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, flex: 1, marginRight: 12 }}>
+                                  <span style={{ fontWeight: 600, color: 'var(--color-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.description || t.fullDescription || 'Unknown'}</span>
+                                  <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{t.date}{t.category ? ` · ${t.category}` : ''}</span>
+                                </div>
+                                <span style={{ fontFamily: 'var(--font-headline)', fontWeight: 600, whiteSpace: 'nowrap', color: t.amount > 0 ? incomeColor : 'var(--color-text-primary)' }}>
+                                  {t.amount > 0 ? `+${fmt(t.amount)}` : fmt(Math.abs(t.amount))}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               )}
               <div style={{ marginTop: 12, fontSize: 11, color: 'var(--color-text-tertiary)' }}>
-                Estimated from each card's Credit Card Payment transaction history (cadence + average amount).
+                Each card's next payment is estimated as the sum of charges since its last Credit Card Payment (cadence inferred from history). Expand a card to see those charges; refunds show in green and reduce the total.
               </div>
             </div>
           </>
         );
       })()}
+    </div>
+  );
+}
+
+/* Single-month focus card: headline income/expenses/net for the focused month
+   (with deltas vs. the prior month) plus a bank-balance reconciliation that
+   explains why the …suffix balance change doesn't equal the Net column. */
+function MonthDeepDive({ recon, trackSuffix, incomeColor, expenseColor, onClear, onExport }) {
+  const { cur, prev } = recon;
+  const netColor = cur.cashFlowNet >= 0 ? incomeColor : expenseColor;
+  const money = (v) => (v == null ? '—' : fmt(v));
+  const signed = (v) => (v == null ? '—' : `${v >= 0 ? '+' : ''}${fmt(v)}`);
+  const incDelta = cur.cashFlowIncome - prev.cashFlowIncome;
+  const expDelta = cur.cashFlowExpenses - prev.cashFlowExpenses;
+  const hasBal = cur.actualDelta != null;
+
+  const bridge = [
+    [`Opening balance${cur.opening ? ` · ${cur.opening.date}` : ''}`, money(cur.opening?.balance), false],
+    ['+ Income / inflows to account', signed(cur.buckets.inflows), false],
+    ['− Spending from account', signed(cur.buckets.spending), false],
+    ['± Transfers', signed(cur.buckets.transfers), false],
+    ['− Credit card payments', signed(cur.buckets.ccPayments), false],
+    ['− Investments / retirement', signed(cur.buckets.investing), false],
+    ['= Expected closing balance', money(cur.expectedClosing), true],
+    [`Actual closing balance${cur.closing ? ` · ${cur.closing.date}` : ''}`, money(cur.closing?.balance), true],
+    ['Unexplained difference (timing / unsynced)', signed(cur.residual), false],
+  ];
+
+  const label = monthLabel(cur.monthKey);
+
+  return (
+    <div style={{ background: 'var(--color-surface)', border: '2px solid var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>
+            Month Deep Dive
+          </div>
+          <div style={{ fontFamily: 'var(--font-headline)', fontSize: 22, fontWeight: 700, marginTop: 4 }}>{label}</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            onClick={onExport}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', border: '1px solid var(--border-ghost)', background: 'var(--color-surface-alt)', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)' }}
+            title={`Export ${label} + the prior month to a multi-tab Excel workbook`}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>table_view</span>
+            Export deep dive (.xlsx)
+          </button>
+          <button
+            onClick={onClear}
+            style={{ width: 32, height: 32, border: 'none', background: 'var(--color-surface-alt)', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            title="Clear month focus"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Headline figures with vs-prior deltas */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 8 }}>
+        <DeepStat label="Income" value={fmt(cur.cashFlowIncome)} delta={signed(incDelta)} color={incomeColor} />
+        <DeepStat label="Expenses" value={fmt(cur.cashFlowExpenses)} delta={signed(expDelta)} color={expenseColor} />
+        <DeepStat label="Net" value={signed(cur.cashFlowNet)} delta={null} color={netColor} />
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 16 }}>
+        Deltas compare with {monthLabel(prev.monthKey)}. Net = Income − Expenses across all accounts (excludes transfers, card payments, investments, retirement).
+      </div>
+
+      {/* Reconciliation */}
+      <div style={{ borderTop: '1px solid var(--border-ghost)', paddingTop: 16 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', marginBottom: 10 }}>
+          Why the bank balance (…{trackSuffix}) doesn't match Net
+        </div>
+        {!hasBal ? (
+          <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>
+            No balance-history snapshots for account …{trackSuffix} in {label} (and/or the prior month), so the balance change can't be reconciled for this month.
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+            {/* The gap */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0' }}>
+                <span>Cash Flow Net (all accounts)</span>
+                <span style={{ fontFamily: 'var(--font-headline)', fontWeight: 700, color: netColor }}>{signed(cur.cashFlowNet)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0' }}>
+                <span>…{trackSuffix} balance change</span>
+                <span style={{ fontFamily: 'var(--font-headline)', fontWeight: 700 }}>{signed(cur.actualDelta)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0', borderTop: '1px solid var(--border-ghost)', marginTop: 4 }}>
+                <span style={{ fontWeight: 700 }}>Gap (Net − balance change)</span>
+                <span style={{ fontFamily: 'var(--font-headline)', fontWeight: 700 }}>{signed(cur.netVsActual)}</span>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 8, lineHeight: 1.5 }}>
+                The gap is money that moved your …{trackSuffix} balance but isn't in Net — transfers ({signed(cur.buckets.transfers)}), card payments ({signed(cur.buckets.ccPayments)}), investing ({signed(cur.buckets.investing)}) — plus income/spending that happened on other accounts (e.g. credit-card purchases) and hasn't hit this account yet.
+              </div>
+            </div>
+            {/* The account bridge */}
+            <div>
+              {bridge.map(([l, v, strong], i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12.5, padding: '5px 0', borderTop: strong ? '1px solid var(--border-ghost)' : 'none' }}>
+                  <span style={{ color: 'var(--color-text-secondary)', fontWeight: strong ? 700 : 400 }}>{l}</span>
+                  <span style={{ fontFamily: 'var(--font-headline)', fontWeight: strong ? 700 : 600, whiteSpace: 'nowrap' }}>{v}</span>
+                </div>
+              ))}
+              <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 8 }}>
+                Bridges the opening to the actual closing balance using only …{trackSuffix} transactions. A non-zero "unexplained" line usually means a snapshot was taken mid-month or a transaction hasn't synced.
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DeepStat({ label, value, delta, color }) {
+  return (
+    <div style={{ background: 'var(--color-surface-alt)', borderRadius: 12, padding: '12px 14px' }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
+      <div style={{ fontFamily: 'var(--font-headline)', fontSize: 20, fontWeight: 700, color, marginTop: 4 }}>{value}</div>
+      {delta != null && (
+        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', marginTop: 2 }}>{delta} vs prior</div>
+      )}
     </div>
   );
 }
