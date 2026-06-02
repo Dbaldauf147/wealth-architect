@@ -13,6 +13,16 @@ function fmtDate(d) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function fmtDateFull(d) {
+  if (!d) return '—';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function isCreditCardPayment(t) {
+  const cat = (t.category || '').toLowerCase();
+  return cat === 'credit card payment' || cat === 'credit card payments';
+}
+
 const CARD_COLORS = [
   '#0058be', '#e8a317', '#009668', '#ba1a1a', '#7c3aed',
   '#475569', '#0891b2', '#c026d3', '#ea580c', '#059669',
@@ -47,6 +57,7 @@ export function CardsPage() {
   const [view, setView] = useState('schedule');
   const [scheduleView, setScheduleView] = useState('calendar');
   const [expanded, setExpanded] = useState(() => new Set());
+  const [expandedLookback, setExpandedLookback] = useState(() => new Set());
   const [renamingCard, setRenamingCard] = useState(null);
   const [renameValue, setRenameValue] = useState('');
   const [showHidden, setShowHidden] = useState(false);
@@ -247,6 +258,79 @@ export function CardsPage() {
     [creditCards, cardTransactions],
   );
 
+  // ── Look-back view data ───────────────────────────────────────────────────
+  // The retrospective mirror of the Schedule's "charges since last payment":
+  // for each card, every past credit-card payment and the charges it covered.
+  // A payment is treated as covering the charges between the prior payment and
+  // itself — (prevPayment, thisPayment] — so charges before the very first
+  // payment fold into that first cycle. Charges after the most recent payment
+  // are not shown here (they're the upcoming charges on the Schedule tab).
+  const lookback = useMemo(() => {
+    if (!cardTransactions.length) return [];
+    const parse = (v) => { const d = new Date(v); return isNaN(d) ? null : d; };
+    const byCard = new Map();
+    for (const t of cardTransactions) {
+      const acct = t.account;
+      if (!byCard.has(acct)) byCard.set(acct, []);
+      byCard.get(acct).push(t);
+    }
+    const out = [];
+    for (const card of creditCards) {
+      const txs = byCard.get(card.name) || [];
+      const payments = txs
+        .filter(t => isCreditCardPayment(t) && t.amount > 0)
+        .map(t => ({ date: parse(t.date), amount: t.amount }))
+        .filter(p => p.date)
+        .sort((a, b) => a.date - b.date);
+      if (!payments.length) continue;
+
+      const charges = txs
+        .filter(t => !isCreditCardPayment(t))
+        .map(t => ({ ...t, _date: parse(t.date) }))
+        .filter(t => t._date);
+
+      const cycles = payments.map((p, i) => {
+        const start = i > 0 ? payments[i - 1].date : null;
+        const end = p.date;
+        // Charges in (prevPayment, thisPayment], oldest first for the running total.
+        const inCycle = charges
+          .filter(c => (!start || c._date > start) && c._date <= end)
+          .sort((a, b) => a._date - b._date);
+        let total = 0;
+        const withRunning = inCycle
+          .map(t => { total += -t.amount; return { ...t, runningTotal: total }; })
+          .reverse(); // newest first for display
+        const chargeTotal = inCycle.reduce((s, t) => s + -t.amount, 0);
+        return {
+          key: `${card.name}|${end.getTime()}`,
+          date: end,
+          amount: p.amount,
+          periodStart: start,
+          charges: withRunning,
+          chargeTotal,
+        };
+      }).reverse(); // most recent payment first
+
+      out.push({
+        card: card.name,
+        color: card.color,
+        paymentCount: payments.length,
+        totalPaid: payments.reduce((s, p) => s + p.amount, 0),
+        cycles,
+      });
+    }
+    return out;
+  }, [cardTransactions, creditCards]);
+
+  function toggleLookback(key) {
+    setExpandedLookback(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   // BoA Checking ending in 1118 — surfaced on the schedule view so the user
   // can compare upcoming card payments against available cash. Matched by
   // the last-4 digits in the asset's name so a rename or institution-format
@@ -422,11 +506,13 @@ export function CardsPage() {
             <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>
               {view === 'optimizer'
                 ? 'Spending breakdown, portfolio matrix, and reward optimization'
+                : view === 'lookback'
+                ? 'Past credit card payments and the charges each one covered'
                 : 'Projected payment dates and the charges feeding each one'}
             </div>
           </div>
           <div style={{ display: 'inline-flex', gap: 2, background: 'var(--color-surface-alt)', padding: 2, borderRadius: 10 }}>
-            {[{ key: 'optimizer', label: 'Optimizer' }, { key: 'schedule', label: 'Schedule' }].map(t => (
+            {[{ key: 'optimizer', label: 'Optimizer' }, { key: 'schedule', label: 'Schedule' }, { key: 'lookback', label: 'Look Back' }].map(t => (
               <button
                 key={t.key}
                 onClick={() => setView(t.key)}
@@ -1016,6 +1102,96 @@ export function CardsPage() {
           </tbody>
         </table>
       </div>
+      </>)}
+
+      {view === 'lookback' && (<>
+      {lookback.length === 0 ? (
+        <div className={styles.matrixCard}>
+          <div style={{ textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: 13, padding: '24px 0' }}>
+            No credit card payment history found yet. Once a card has at least one Credit Card Payment transaction, its past payments will appear here.
+          </div>
+        </div>
+      ) : lookback.map((cardEntry) => (
+        <div key={cardEntry.card} className={styles.matrixCard}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+            <div className={styles.cardIdent}>
+              <div className={styles.cardStripe} style={{ background: cardEntry.color }} />
+              <div className={styles.cardName} title={cardNumberTitle(cardEntry.card)}>{displayName(cardEntry.card)}</div>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+              {cardEntry.paymentCount} payment{cardEntry.paymentCount === 1 ? '' : 's'} · {fmt(cardEntry.totalPaid)} paid
+            </div>
+          </div>
+          <table className={styles.matrixTable}>
+            <thead>
+              <tr>
+                <th>Payment Date</th>
+                <th>Amount</th>
+                <th>Charges</th>
+                <th>Charges Total</th>
+                <th style={{ width: 32 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {cardEntry.cycles.map((cyc) => {
+                const isOpen = expandedLookback.has(cyc.key);
+                return (
+                  <Fragment key={cyc.key}>
+                    <tr className={styles.scheduleRow} onClick={() => toggleLookback(cyc.key)}>
+                      <td style={{ fontWeight: 600 }}>{fmtDateFull(cyc.date)}</td>
+                      <td className={styles.cardFee}>{fmt(cyc.amount)}</td>
+                      <td style={{ color: 'var(--color-text-secondary)' }}>{cyc.charges.length}</td>
+                      <td style={{ color: 'var(--color-text-secondary)' }}>{fmt(cyc.chargeTotal)}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--color-text-tertiary)' }}>
+                          {isOpen ? 'expand_less' : 'expand_more'}
+                        </span>
+                      </td>
+                    </tr>
+                    {isOpen && (
+                      <tr>
+                        <td colSpan={5} className={styles.expandedCell}>
+                          {cyc.charges.length === 0 ? (
+                            <div className={styles.emptyDrill}>
+                              No charges recorded for this payment
+                              {cyc.periodStart ? ` (since ${fmtDate(cyc.periodStart)})` : ''}.
+                            </div>
+                          ) : (
+                            <table className={styles.drillTable}>
+                              <thead>
+                                <tr>
+                                  <th>Date</th>
+                                  <th>Description</th>
+                                  <th>Category</th>
+                                  <th style={{ textAlign: 'right' }}>Amount</th>
+                                  <th style={{ textAlign: 'right' }}>Running Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {cyc.charges.map((t, j) => (
+                                  <tr key={j}>
+                                    <td>{fmtDate(t._date)}</td>
+                                    <td>{t.description}</td>
+                                    <td style={{ color: 'var(--color-text-secondary)' }}>{t.category || '—'}</td>
+                                    <td style={{ textAlign: 'right', color: t.amount < 0 ? 'var(--color-text-primary)' : 'var(--color-success)' }}>
+                                      {fmt(t.amount)}
+                                    </td>
+                                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(t.runningTotal)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
       </>)}
     </div>
   );
