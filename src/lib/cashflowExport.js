@@ -49,10 +49,17 @@ export function prevMonthKey(key) {
   return `${py}-${String(pm).padStart(2, '0')}`;
 }
 
-/** True when a transaction is rent revenue — income side (amount > 0) with the
- *  subcategory "Rent". These get snapped to the nearest month (see below). */
+/** True when a transaction is rent revenue. Income side (amount > 0) where the
+ *  category/subcategory is "Rent", OR the description mentions rent (e.g. a Zelle
+ *  payment "...for rent..." that imported without a Rent subcategory). The
+ *  description test uses a whole-word match so it won't fire on "parent" etc.
+ *  These get snapped to the nearest month (see below). */
 export function isRentIncome(t) {
-  return !!t && t.amount > 0 && (t.subcategory || '').trim().toLowerCase() === 'rent';
+  if (!t || !(t.amount > 0)) return false;
+  if ((t.subcategory || '').trim().toLowerCase() === 'rent') return true;
+  if ((t.category || '').trim().toLowerCase() === 'rent') return true;
+  const desc = `${t.description || ''} ${t.fullDescription || ''}`.toLowerCase();
+  return /\brent\b/.test(desc);
 }
 
 /** Snap a date to the month whose 1st it falls closest to, returning a YYYY-MM
