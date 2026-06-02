@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useData } from '../contexts/DataContext';
 import { buildCardSchedule } from '../lib/cardSchedule';
 import { downloadXlsx } from '../lib/xlsx';
-import { buildDeepDiveSheets, computeMonthReconciliation, monthLabel, prevMonthKey } from '../lib/cashflowExport';
+import { buildDeepDiveSheets, cashFlowMonthKey, computeMonthReconciliation, monthLabel, prevMonthKey } from '../lib/cashflowExport';
 
 function fmt(n) {
   if (n == null) return '—';
@@ -103,7 +103,7 @@ export function CashFlowPage() {
       if (cat === 'transfer' || cat === 'credit card payments' || cat === 'credit card payment') continue;
       const d = new Date(t.date);
       if (isNaN(d)) continue;
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const key = cashFlowMonthKey(t);
       if (!buckets[key]) buckets[key] = { income: 0, invested: 0, retirement: 0, incomeSubs: {} };
       if (cat === 'investments' || cat === 'retirement') {
         const amt = Math.abs(t.amount);
@@ -269,7 +269,7 @@ export function CashFlowPage() {
       if (tCat === 'investments' || tCat === 'retirement') continue;
       const d = new Date(t.date);
       if (isNaN(d)) continue;
-      const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const k = cashFlowMonthKey(t);
       if (k !== monthKey) continue;
       if (kind === 'income' && t.amount <= 0) continue;
       if (kind === 'expenses') {
@@ -352,7 +352,7 @@ export function CashFlowPage() {
       if (cat === 'investments' || cat === 'retirement') continue;
       const d = new Date(t.date);
       if (isNaN(d)) continue;
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const key = cashFlowMonthKey(t);
       if (monthFilter) {
         if (key !== monthFilter) continue;
       } else {
@@ -500,7 +500,7 @@ export function CashFlowPage() {
         if (!t.date || t.amount === 0) return false;
         const d = new Date(t.date);
         if (isNaN(d)) return false;
-        const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        const k = cashFlowMonthKey(t);
         if (k !== monthKey) return false;
         const tCat = (t.category || '').toLowerCase();
         // Mirrors drilldownData's exclusion list so the export matches
@@ -952,6 +952,9 @@ export function CashFlowPage() {
             })}
           </tbody>
         </table>
+        <div style={{ marginTop: 12, fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+          Rent revenue is counted in the month whose 1st it falls closest to, so rent received late in a month rolls into the next month.
+        </div>
       </div>
 
       {/* Revenue Breakdown by Source */}

@@ -49,6 +49,40 @@ export function prevMonthKey(key) {
   return `${py}-${String(pm).padStart(2, '0')}`;
 }
 
+/** True when a transaction is rent revenue — income side (amount > 0) with the
+ *  subcategory "Rent". These get snapped to the nearest month (see below). */
+export function isRentIncome(t) {
+  return !!t && t.amount > 0 && (t.subcategory || '').trim().toLowerCase() === 'rent';
+}
+
+/** Snap a date to the month whose 1st it falls closest to, returning a YYYY-MM
+ *  key. If the date is closer to next month's 1st than to the current month's
+ *  1st (i.e. it lands in the back half of the month), it rolls forward a month;
+ *  an exact tie keeps the current month. */
+function snapToNearestMonthKey(d) {
+  const day = d.getDate();
+  const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  const distToCurrent = day - 1;            // days back to this month's 1st
+  const distToNext = daysInMonth - day + 1; // days forward to next month's 1st
+  let y = d.getFullYear();
+  let m = d.getMonth() + 1; // 1-based
+  if (distToNext < distToCurrent) {
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return `${y}-${String(m).padStart(2, '0')}`;
+}
+
+/** The month a transaction counts toward on the Cash Flow page. Rent revenue is
+ *  snapped to the calendar month whose 1st it lands closest to (so late-month
+ *  rent rolls into the next month); everything else uses its own month. */
+export function cashFlowMonthKey(t) {
+  const d = parseDate(t && t.date);
+  if (!d) return null;
+  if (isRentIncome(t)) return snapToNearestMonthKey(d);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
 function digitsMatch(rawAcctNum, suffix) {
   if (!rawAcctNum || !suffix) return false;
   return String(rawAcctNum).replace(/\D+/g, '').endsWith(suffix);
@@ -66,7 +100,7 @@ function pageTotalsByMonth(transactions, monthKeys) {
     if (!t.date || t.amount === 0) continue;
     const c = lc(t);
     if (isTransfer(c) || isCCPayment(c) || isInvesting(c)) continue;
-    const key = monthKeyOf(t.date);
+    const key = cashFlowMonthKey(t);
     if (!keys.has(key)) continue;
     if (t.amount > 0) income[key] += t.amount;
     if (NON_EXPENSE_CATS.has(c)) continue;
@@ -198,7 +232,7 @@ function buildRawSheet(txns, notesById, title) {
       t.account || '',
       t.accountNum || '',
       t.institution || '',
-      t.month || monthKeyOf(t.date) || '',
+      cashFlowMonthKey(t) || t.month || '',
       type,
       (t.transactionId && notesById[t.transactionId]) || '',
       t.transactionId || '',
@@ -251,7 +285,7 @@ function buildGroupedSheet({ txns, title, displayAbs }) {
       M(t.amount),
       t.account || '',
       t.institution || '',
-      t.month || monthKeyOf(t.date) || '',
+      cashFlowMonthKey(t) || t.month || '',
     ]);
   }
   return { rows, cols: [16, 34, 16, 16, 14, 24, 18, 10] };
@@ -359,7 +393,7 @@ export function buildDeepDiveSheets({
   asOf = new Date(),
 }) {
   const keySet = new Set(monthKeys);
-  const inWindow = (transactions || []).filter((t) => keySet.has(monthKeyOf(t.date)) && t.amount !== 0);
+  const inWindow = (transactions || []).filter((t) => keySet.has(cashFlowMonthKey(t)) && t.amount !== 0);
 
   const { qualifying } = pageTotalsByMonth(transactions, monthKeys);
 
