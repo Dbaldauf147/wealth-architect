@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { buildCardSchedule } from '../lib/cardSchedule';
+import { computeCardLookback } from '../lib/cashflowExport';
 import styles from './CardsPage.module.css';
 
 function fmt(n) {
@@ -16,11 +17,6 @@ function fmtDate(d) {
 function fmtDateFull(d) {
   if (!d) return '—';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function isCreditCardPayment(t) {
-  const cat = (t.category || '').toLowerCase();
-  return cat === 'credit card payment' || cat === 'credit card payments';
 }
 
 const CARD_COLORS = [
@@ -266,60 +262,18 @@ export function CardsPage() {
   // payment fold into that first cycle. Charges after the most recent payment
   // are not shown here (they're the upcoming charges on the Schedule tab).
   const lookback = useMemo(() => {
-    if (!cardTransactions.length) return [];
-    const parse = (v) => { const d = new Date(v); return isNaN(d) ? null : d; };
-    const byCard = new Map();
-    for (const t of cardTransactions) {
-      const acct = t.account;
-      if (!byCard.has(acct)) byCard.set(acct, []);
-      byCard.get(acct).push(t);
-    }
-    const out = [];
-    for (const card of creditCards) {
-      const txs = byCard.get(card.name) || [];
-      const payments = txs
-        .filter(t => isCreditCardPayment(t) && t.amount > 0)
-        .map(t => ({ date: parse(t.date), amount: t.amount }))
-        .filter(p => p.date)
-        .sort((a, b) => a.date - b.date);
-      if (!payments.length) continue;
-
-      const charges = txs
-        .filter(t => !isCreditCardPayment(t))
-        .map(t => ({ ...t, _date: parse(t.date) }))
-        .filter(t => t._date);
-
-      const cycles = payments.map((p, i) => {
-        const start = i > 0 ? payments[i - 1].date : null;
-        const end = p.date;
-        // Charges in (prevPayment, thisPayment], oldest first for the running total.
-        const inCycle = charges
-          .filter(c => (!start || c._date > start) && c._date <= end)
-          .sort((a, b) => a._date - b._date);
-        let total = 0;
-        const withRunning = inCycle
-          .map(t => { total += -t.amount; return { ...t, runningTotal: total }; })
-          .reverse(); // newest first for display
-        const chargeTotal = inCycle.reduce((s, t) => s + -t.amount, 0);
-        return {
-          key: `${card.name}|${end.getTime()}`,
-          date: end,
-          amount: p.amount,
-          periodStart: start,
-          charges: withRunning,
-          chargeTotal,
-        };
-      }).reverse(); // most recent payment first
-
-      out.push({
-        card: card.name,
-        color: card.color,
-        paymentCount: payments.length,
-        totalPaid: payments.reduce((s, p) => s + p.amount, 0),
-        cycles,
-      });
-    }
-    return out;
+    const base = computeCardLookback({
+      transactions: cardTransactions,
+      cardNames: creditCards.map(c => c.name),
+    });
+    const colorByName = new Map(creditCards.map(c => [c.name, c.color]));
+    return base.map(entry => ({
+      card: entry.card,
+      color: colorByName.get(entry.card) || null,
+      paymentCount: entry.payments.length,
+      totalPaid: entry.payments.reduce((s, p) => s + p.amount, 0),
+      cycles: entry.cycles.map(cyc => ({ ...cyc, key: `${entry.card}|${cyc.date.getTime()}` })),
+    }));
   }, [cardTransactions, creditCards]);
 
   function toggleLookback(key) {

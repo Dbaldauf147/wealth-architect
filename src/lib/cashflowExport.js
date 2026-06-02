@@ -205,6 +205,66 @@ function dispName(name, accountGroups, accountNicknames) {
   return (accountGroups && accountGroups[name]) || (accountNicknames && accountNicknames[name]) || name;
 }
 
+/** Per-card "look back": every past credit-card payment and the charges it
+ *  covered. A payment covers the charges in (previous payment, this payment],
+ *  so charges before the first payment fold into that first cycle; charges
+ *  after the most recent payment are omitted (those are the upcoming charges).
+ *
+ *  cardNames: account names to treat as cards (matched against t.account).
+ *  Returns [{ card, payments:[{date,amount}], cycles:[{ date, amount,
+ *  periodStart, chargeTotal, charges:[{...txn, _date, runningTotal}] }] }],
+ *  cycles newest-first, charges within a cycle newest-first. Cards with no
+ *  payment history are omitted. Pure — shared by the Cards page and the export. */
+export function computeCardLookback({ transactions, cardNames }) {
+  const nameSet = new Set((cardNames || []).map((n) => (n || '').trim()).filter(Boolean));
+  if (!nameSet.size) return [];
+
+  const byCard = new Map();
+  for (const t of transactions || []) {
+    const acct = (t.account || '').trim();
+    if (!acct || !nameSet.has(acct)) continue;
+    if (!byCard.has(acct)) byCard.set(acct, []);
+    byCard.get(acct).push(t);
+  }
+
+  const out = [];
+  for (const name of cardNames || []) {
+    const acct = (name || '').trim();
+    const txs = byCard.get(acct) || [];
+
+    const payments = txs
+      .filter((t) => isCCPayment(lc(t)) && t.amount > 0)
+      .map((t) => ({ date: parseDate(t.date), amount: t.amount }))
+      .filter((p) => p.date)
+      .sort((a, b) => a.date - b.date);
+    if (!payments.length) continue;
+
+    const charges = txs
+      .filter((t) => !isCCPayment(lc(t)))
+      .map((t) => ({ ...t, _date: parseDate(t.date) }))
+      .filter((t) => t._date);
+
+    const cycles = payments
+      .map((p, i) => {
+        const start = i > 0 ? payments[i - 1].date : null;
+        const end = p.date;
+        const inCycle = charges
+          .filter((c) => (!start || c._date > start) && c._date <= end)
+          .sort((a, b) => a._date - b._date); // oldest first for the running total
+        let total = 0;
+        const withRunning = inCycle
+          .map((t) => { total += -t.amount; return { ...t, runningTotal: total }; })
+          .reverse(); // newest first for display
+        const chargeTotal = inCycle.reduce((s, t) => s + -t.amount, 0);
+        return { date: end, amount: p.amount, periodStart: start, charges: withRunning, chargeTotal };
+      })
+      .reverse(); // most recent payment first
+
+    out.push({ card: name, payments, cycles });
+  }
+  return out;
+}
+
 // ── Sheet builders ────────────────────────────────────────────────────────
 // Styled-cell helpers — `{ v, s }` where `s` is a STYLE name understood by the
 // xlsx writer. Money/percent cells must hold numbers so they format natively.
@@ -345,6 +405,56 @@ function buildCardSheet(transactions, asOf, accountGroups, accountNicknames) {
   return { rows, cols: [24, 16, 30, 18, 18, 16, 12] };
 }
 
+function buildCardLookbackSheet(transactions, accountGroups, accountNicknames) {
+  // Same card derivation as the Next-Payment sheet: the inflow leg of CC payments.
+  const cardSet = new Set();
+  for (const t of transactions || []) {
+    if (isCCPayment(lc(t)) && t.amount > 0 && (t.account || '').trim()) cardSet.add(t.account.trim());
+  }
+  const lookback = computeCardLookback({ transactions, cardNames: [...cardSet] });
+
+  const rows = [[T('CARD LOOK BACK — PAST PAYMENTS & THE CHARGES THEY COVERED')], []];
+  rows.push([MU('Each payment covers the charges since the previous payment — (previous payment, this payment]. Charges are negative; refunds positive.')]);
+  rows.push([]);
+
+  if (!lookback.length) {
+    rows.push([MU('No credit card payment history found.')]);
+    return { rows, cols: [14, 40, 16, 16, 14, 14] };
+  }
+
+  for (const entry of lookback) {
+    const label = dispName(entry.card, accountGroups, accountNicknames);
+    const totalPaid = entry.payments.reduce((s, p) => s + p.amount, 0);
+    rows.push([SEC(label)]);
+    rows.push([LB(`${entry.payments.length} payment(s)`), '', '', TL('Total paid'), MT(totalPaid), '']);
+    rows.push([]);
+
+    for (const cyc of entry.cycles) {
+      const dateStr = cyc.date.toISOString().slice(0, 10);
+      rows.push([LB(`Payment ${dateStr}`), '', '', LB('Amount paid'), MB(cyc.amount), '']);
+      if (cyc.charges.length) {
+        rows.push(headerRow(['Date', 'Description', 'Category', 'Subcategory', 'Amount', 'Running Total'], [4, 5]));
+        for (const t of cyc.charges) {
+          rows.push([
+            t.date || '',
+            t.description || t.fullDescription || '',
+            t.category || '',
+            t.subcategory || '',
+            M(t.amount),
+            M(t.runningTotal),
+          ]);
+        }
+        rows.push([TL('Charges covered'), '', '', '', MT(cyc.chargeTotal), '']);
+      } else {
+        rows.push([MU('No charges recorded for this payment.')]);
+      }
+      rows.push([]);
+    }
+    rows.push([]);
+  }
+  return { rows, cols: [14, 40, 16, 16, 14, 14] };
+}
+
 function buildReconciliationSheet(transactions, balanceHistory, monthKeys, trackSuffix) {
   const rows = [[T(`BANK BALANCE RECONCILIATION — account ending …${trackSuffix}`)], []];
   rows.push([MU('Why the bank balance change does not equal the Cash Flow "Net" column:')]);
@@ -425,6 +535,7 @@ export function buildDeepDiveSheets({
     { name: 'Income', ...buildGroupedSheet({ txns: incomeTxns, title: `INCOME — ${windowLabel}`, displayAbs: false }) },
     { name: 'Expenses', ...buildGroupedSheet({ txns: expenseTxns, title: `EXPENSES — ${windowLabel}`, displayAbs: true }) },
     { name: 'Next CC Payment by Card', ...buildCardSheet(transactions, asOf, accountGroups, accountNicknames) },
+    { name: 'Card Look Back', ...buildCardLookbackSheet(transactions, accountGroups, accountNicknames) },
     { name: 'Raw', ...buildRawSheet(inWindow, notesById, `RAW TRANSACTIONS — ${windowLabel} (no exclusions)`) },
   ];
 }
