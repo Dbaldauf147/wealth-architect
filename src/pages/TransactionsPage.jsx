@@ -1,9 +1,13 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { normalizeDesc } from '../lib/categorize';
 import styles from './TransactionsPage.module.css';
 
 const PAGE_SIZE = 50;
+
+// Stable empty array so non-editing rows receive a referentially constant prop
+// (lets the memoized TransactionRow skip re-rendering on unrelated edits).
+const EMPTY_ARR = [];
 
 const CATEGORY_ICONS = {
   'Food & Drink': 'restaurant',
@@ -674,6 +678,540 @@ const SUBCATEGORIES = {
   'Investments': ['Stocks', 'Crypto', 'Real Estate', 'Retirement'],
   'Fees & Charges': ['Bank Fees', 'ATM Fees', 'Late Fees', 'Service Charges', 'Interest Charges'],
 };
+
+// Memoized table row. Non-editing rows receive referentially stable props
+// (editing-only state is null/empty unless this row is being edited), so a
+// category edit — which only changes the edited transaction object — re-renders
+// just that one row instead of the whole visible page.
+const TransactionRow = memo(function TransactionRow({
+  t, i, selectedIds, visibleColumns, categoryRules, subcategoryRules, transactionNotes, accountNicknames, editingId, editingSubId, newCategoryText, manageCategoriesMode, renamingCategory, renameText, showHiddenCategories, subSearchText, categoryOptions, hiddenCategoryList, transactions, dropdownRef, subDropdownRef, findMatchingRules, toggleSelect, setEditingRule, setEditingId, setNewCategoryText, setManageCategoriesMode, setRenamingCategory, setRenameText, setShowHiddenCategories, handleCategorySelect, removeCategoryRule, flashSaved, updateTransactionCategory, renameCategory, removeCategory, unhideCategory, setEditingSubId, setSubSearchText, handleSubcategorySelect, removeSubcategoryRule, addSubcategoryRule, updateTransactionDate, updateTransactionNote, setAccountNickname, toggleHideTransaction,
+}) {
+  const icon = getCategoryIcon(t.category);
+  const color = catColor(t.category || 'Uncategorized');
+  const bg = catBg(t.category || 'Uncategorized');
+  const { catRules: rowCatRules, subRules: rowSubRules } = findMatchingRules(t);
+  return (
+    <tr className={selectedIds.has(t.transactionId) ? styles.selectedRow : ''}>
+      <td>
+        <input
+          type="checkbox"
+          className={styles.checkbox}
+          checked={selectedIds.has(t.transactionId)}
+          onChange={() => toggleSelect(t.transactionId)}
+        />
+      </td>
+      {visibleColumns.has('merchant') && <td>
+        <div className={styles.merchantCell}>
+          <div
+            className={styles.merchantIcon}
+            style={{ background: bg, color }}
+          >
+            <span className="material-symbols-outlined">{icon}</span>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className={styles.merchantName}>{t.description}</div>
+            <div className={styles.merchantSub}>
+              {t.fullDescription && t.fullDescription !== t.description
+                ? t.fullDescription.slice(0, 60)
+                : t.category}
+            </div>
+            <div
+              style={{ display: 'flex', gap: 3, marginTop: 2, cursor: 'pointer', alignItems: 'center' }}
+              onDoubleClick={e => {
+                e.stopPropagation();
+                const toCatItem = r => ({
+                  index: categoryRules.indexOf(r),
+                  pattern: r.description || '',
+                  target: r.category || '',
+                  sign: r.sign || '',
+                  min: r.minAmount != null ? String(r.minAmount) : '',
+                  max: r.maxAmount != null ? String(r.maxAmount) : '',
+                });
+                const toSubItem = r => ({
+                  index: subcategoryRules.indexOf(r),
+                  pattern: r.description || '',
+                  target: r.subcategory || '',
+                  sign: r.sign || '',
+                  min: r.minAmount != null ? String(r.minAmount) : '',
+                  max: r.maxAmount != null ? String(r.maxAmount) : '',
+                });
+                const catItems = rowCatRules.map(toCatItem);
+                const subItems = rowSubRules.map(toSubItem);
+                setEditingRule({
+                  catRules: catItems,
+                  subRules: subItems,
+                  _origCatIdxs: catItems.map(r => r.index).filter(i => i >= 0),
+                  _origSubIdxs: subItems.map(r => r.index).filter(i => i >= 0),
+                  txnDescription: t.description,
+                  txnCategory: t.category || '',
+                  txnSubcategory: t.subcategory || '',
+                });
+              }}
+              title="Double-click to manage auto-categorization rules"
+            >
+              <span
+                className="material-symbols-outlined"
+                style={{ fontSize: 13, color: rowCatRules.length ? 'var(--color-secondary, #0058be)' : 'var(--color-text-tertiary)', opacity: rowCatRules.length ? 1 : 0.4 }}
+              >auto_fix_high</span>
+              {rowCatRules.length > 1 && (
+                <span style={{ fontSize: 9.5, color: 'var(--color-secondary, #0058be)', fontWeight: 700, lineHeight: 1 }}>×{rowCatRules.length}</span>
+              )}
+              <span
+                className="material-symbols-outlined"
+                style={{ fontSize: 13, color: rowSubRules.length ? '#7c3aed' : 'var(--color-text-tertiary)', opacity: rowSubRules.length ? 1 : 0.4, marginLeft: 1 }}
+              >bookmark</span>
+              {rowSubRules.length > 1 && (
+                <span style={{ fontSize: 9.5, color: '#7c3aed', fontWeight: 700, lineHeight: 1 }}>×{rowSubRules.length}</span>
+              )}
+            </div>
+          </div>
+        </div>
+      </td>}
+      {visibleColumns.has('description') && <td className={styles.institutionCell} title={t.fullDescription || t.description}>
+        {t.fullDescription || t.description}
+      </td>}
+      {visibleColumns.has('category') && <td style={{ position: 'relative', overflow: 'visible' }}>
+        <span
+          className={styles.categoryBadge}
+          style={{ background: bg, color, cursor: 'pointer' }}
+          title="Click to change category"
+          onClick={() => setEditingId(editingId === (t.transactionId || i) ? null : (t.transactionId || i))}
+        >
+          {t.category || 'Uncategorized'}
+          <span className="material-symbols-outlined" style={{ fontSize: 12, marginLeft: 2 }}>edit</span>
+        </span>
+        {editingId === (t.transactionId || i) && (() => {
+          const { catRule, subRule } = findMatchingRules(t);
+          const catRuleIdx = catRule ? categoryRules.indexOf(catRule) : -1;
+          return (
+          <div className={styles.categoryDropdown} ref={dropdownRef}>
+            <div style={{ display: 'flex', alignItems: 'center', borderBottom: 'var(--border-ghost)' }}>
+              <input
+                className={styles.categorySearch}
+                type="text"
+                placeholder={manageCategoriesMode ? 'Manage categories' : 'Search or type new...'}
+                value={newCategoryText}
+                onChange={e => setNewCategoryText(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && newCategoryText.trim() && !manageCategoriesMode) {
+                    handleCategorySelect(t, i, newCategoryText.trim());
+                  }
+                }}
+                disabled={manageCategoriesMode}
+                style={{ borderBottom: 'none', flex: 1 }}
+                autoFocus
+              />
+              <button
+                type="button"
+                title={manageCategoriesMode ? 'Done' : 'Manage categories'}
+                onClick={() => {
+                  setManageCategoriesMode(v => !v);
+                  setRenamingCategory(null);
+                  setRenameText('');
+                  setShowHiddenCategories(false);
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '6px 10px',
+                  color: manageCategoriesMode ? 'var(--color-secondary, #0058be)' : 'var(--color-text-tertiary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                  {manageCategoriesMode ? 'check' : 'settings'}
+                </span>
+              </button>
+            </div>
+            {!manageCategoriesMode && catRule && (
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '6px 12px',
+                fontSize: 11.5,
+                background: 'rgba(0, 88, 190, 0.06)',
+                borderBottom: 'var(--border-ghost)',
+                color: 'var(--color-secondary, #0058be)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>auto_fix_high</span>
+                  <span>Rule: <strong>"{catRule.description}"</strong> → {catRule.category}</span>
+                </div>
+                <button
+                  type="button"
+                  title="Remove rule"
+                  onClick={() => { removeCategoryRule(catRuleIdx); flashSaved(); }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#ba1a1a', display: 'flex' }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                </button>
+              </div>
+            )}
+            {!manageCategoriesMode && t.category && (
+              <div
+                className={styles.categoryOption}
+                style={{ color: '#ba1a1a' }}
+                onClick={() => {
+                  updateTransactionCategory(t.transactionId, i, '');
+                  flashSaved();
+                  setEditingId(null);
+                  setNewCategoryText('');
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                Clear category
+              </div>
+            )}
+            {!manageCategoriesMode && newCategoryText.trim() && !categoryOptions.some(c => c.toLowerCase() === newCategoryText.trim().toLowerCase()) && (
+              <div
+                className={styles.categoryOption}
+                style={{ color: '#0058be', fontWeight: 600 }}
+                onClick={() => handleCategorySelect(t, i, newCategoryText.trim())}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>add</span>
+                Create "{newCategoryText.trim()}"
+              </div>
+            )}
+            {categoryOptions
+              .filter(cat => manageCategoriesMode || !newCategoryText || cat.toLowerCase().includes(newCategoryText.toLowerCase()))
+              .map(cat => (
+              <div
+                key={cat}
+                className={`${styles.categoryOption} ${cat === t.category && !manageCategoriesMode ? styles.categoryOptionActive : ''}`}
+                onClick={() => {
+                  if (manageCategoriesMode) return;
+                  handleCategorySelect(t, i, cat);
+                }}
+                style={manageCategoriesMode ? { cursor: 'default' } : undefined}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 14, color: catColor(cat) }}>
+                  {getCategoryIcon(cat)}
+                </span>
+                {renamingCategory === cat ? (
+                  <input
+                    type="text"
+                    value={renameText}
+                    autoFocus
+                    onChange={e => setRenameText(e.target.value)}
+                    onClick={e => e.stopPropagation()}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        const newName = renameText.trim();
+                        if (newName && newName !== cat) renameCategory(cat, newName);
+                        setRenamingCategory(null);
+                        setRenameText('');
+                      } else if (e.key === 'Escape') {
+                        setRenamingCategory(null);
+                        setRenameText('');
+                      }
+                    }}
+                    onBlur={() => {
+                      const newName = renameText.trim();
+                      if (newName && newName !== cat) renameCategory(cat, newName);
+                      setRenamingCategory(null);
+                      setRenameText('');
+                    }}
+                    style={{
+                      flex: 1,
+                      border: '1px solid var(--color-secondary, #0058be)',
+                      borderRadius: 4,
+                      padding: '2px 6px',
+                      fontSize: 12.5,
+                      fontFamily: 'var(--font-body)',
+                      outline: 'none',
+                    }}
+                  />
+                ) : (
+                  <span style={{ flex: 1 }}>{cat}</span>
+                )}
+                {manageCategoriesMode && renamingCategory !== cat && (
+                  <>
+                    <button
+                      type="button"
+                      title="Rename"
+                      onClick={e => {
+                        e.stopPropagation();
+                        setRenamingCategory(cat);
+                        setRenameText(cat);
+                      }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: 'var(--color-text-tertiary)', display: 'flex' }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
+                    </button>
+                    <button
+                      type="button"
+                      title="Remove"
+                      onClick={e => {
+                        e.stopPropagation();
+                        const count = (transactions || []).filter(tx => (tx.category || '') === cat).length;
+                        const msg = count > 0
+                          ? `Remove "${cat}"? ${count} transaction${count === 1 ? '' : 's'} will be set to Uncategorized.`
+                          : `Remove "${cat}"?`;
+                        if (window.confirm(msg)) removeCategory(cat, '');
+                      }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#ba1a1a', display: 'flex' }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>delete</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+            {manageCategoriesMode && hiddenCategoryList.length > 0 && (
+              <>
+                <div
+                  onClick={() => setShowHiddenCategories(v => !v)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '8px 12px',
+                    fontSize: 11.5,
+                    color: 'var(--color-text-tertiary)',
+                    cursor: 'pointer',
+                    borderTop: 'var(--border-ghost)',
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.5,
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                    {showHiddenCategories ? 'expand_less' : 'expand_more'}
+                  </span>
+                  Hidden ({hiddenCategoryList.length})
+                </div>
+                {showHiddenCategories && hiddenCategoryList.map(cat => (
+                  <div key={`hidden-${cat}`} className={styles.categoryOption} style={{ opacity: 0.7, cursor: 'default' }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: catColor(cat) }}>
+                      {getCategoryIcon(cat)}
+                    </span>
+                    <span style={{ flex: 1, textDecoration: 'line-through' }}>{cat}</span>
+                    <button
+                      type="button"
+                      title="Restore"
+                      onClick={e => { e.stopPropagation(); unhideCategory(cat); }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: 'var(--color-secondary, #0058be)', display: 'flex' }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>undo</span>
+                    </button>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+          );
+        })()}
+      </td>}
+      {visibleColumns.has('subcategory') && <td style={{ position: 'relative', overflow: 'visible' }}>
+        {(() => {
+          const subKey = t.transactionId || i;
+          const isEditingSub = editingSubId === subKey;
+          // Only the open subcategory editor needs the full subcategory
+          // list (which scans every transaction) and the matching rule.
+          // Computing these for every row was O(rows × transactions) of
+          // wasted work on each render.
+          let allSubs = [];
+          let subRule = null;
+          let subRuleIdx = -1;
+          if (isEditingSub) {
+            const subs = SUBCATEGORIES[t.category] || [];
+            allSubs = [...new Set([...subs, ...(transactions || []).filter(tx => tx.category === t.category && tx.subcategory).map(tx => tx.subcategory)])].sort();
+            subRule = findMatchingRules(t).subRule;
+            subRuleIdx = subRule ? subcategoryRules.indexOf(subRule) : -1;
+          }
+          return (
+            <>
+              <span
+                className={styles.subcategoryBadge}
+                onClick={() => { setEditingSubId(editingSubId === subKey ? null : subKey); setSubSearchText(''); }}
+                title="Click to set subcategory"
+              >
+                {t.subcategory || '—'}
+                <span className="material-symbols-outlined" style={{ fontSize: 11, marginLeft: 2 }}>edit</span>
+              </span>
+              {editingSubId === subKey && (
+                <div className={styles.categoryDropdown} ref={subDropdownRef}>
+                  <input
+                    className={styles.categorySearch}
+                    type="text"
+                    placeholder="Search or type new..."
+                    value={subSearchText}
+                    onChange={e => setSubSearchText(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && subSearchText.trim()) {
+                        handleSubcategorySelect(t, subSearchText.trim());
+                      }
+                    }}
+                    autoFocus
+                  />
+                  {subRule && (
+                    <div style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '6px 12px',
+                      fontSize: 11.5,
+                      background: 'rgba(0, 88, 190, 0.06)',
+                      borderBottom: 'var(--border-ghost)',
+                      color: 'var(--color-secondary, #0058be)',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>auto_fix_high</span>
+                        <span>Rule: <strong>"{subRule.description}"</strong> → {subRule.subcategory}</span>
+                      </div>
+                      <button
+                        type="button"
+                        title="Remove rule"
+                        onClick={() => { removeSubcategoryRule(subRuleIdx); flashSaved(); }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#ba1a1a', display: 'flex' }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                      </button>
+                    </div>
+                  )}
+                  {t.subcategory && (
+                    <div
+                      className={styles.categoryOption}
+                      style={{ color: '#ba1a1a' }}
+                      onClick={() => handleSubcategorySelect(t, '')}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                      Clear subcategory
+                    </div>
+                  )}
+                  {subSearchText.trim() && !allSubs.some(s => s.toLowerCase() === subSearchText.trim().toLowerCase()) && (
+                    <div
+                      className={styles.categoryOption}
+                      style={{ color: '#0058be', fontWeight: 600 }}
+                      onClick={() => handleSubcategorySelect(t, subSearchText.trim())}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>add</span>
+                      Create "{subSearchText.trim()}"
+                    </div>
+                  )}
+                  {allSubs
+                    .filter(s => !subSearchText || s.toLowerCase().includes(subSearchText.toLowerCase()))
+                    .map(sub => (
+                    <div
+                      key={sub}
+                      className={`${styles.categoryOption} ${sub === t.subcategory ? styles.categoryOptionActive : ''}`}
+                    >
+                      <span
+                        style={{ flex: 1, cursor: 'pointer' }}
+                        onClick={() => handleSubcategorySelect(t, sub)}
+                      >
+                        {sub}
+                      </span>
+                      <button
+                        className={styles.ruleSmallBtn}
+                        title="Apply to all matching + create rule"
+                        onClick={e => {
+                          e.stopPropagation();
+                          addSubcategoryRule(t.description, sub);
+                          flashSaved();
+                          setEditingSubId(null);
+                          setSubSearchText('');
+                        }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 13 }}>auto_fix_high</span>
+                        + Rule
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          );
+        })()}
+      </td>}
+      {visibleColumns.has('amount') && <td>
+        <span className={t.amount >= 0 ? styles.amountCredit : styles.amountDebit}>
+          {t.amount >= 0 ? '+' : ''}{fmt(t.amount)}
+        </span>
+      </td>}
+      {visibleColumns.has('date') && <td className={styles.dateCell}>
+        {(() => {
+          const isoVal = toIsoDate(t.date);
+          const fallbackKey = `${t.date || ''}|${(t.description || '').trim()}|${t.amount}`;
+          const isOverridden = !!t.originalDate && t.originalDate !== t.date;
+          const tooltip = isOverridden
+            ? `Original: ${formatDate(t.originalDate)}\nClick to edit (current: ${formatDate(t.date)})`
+            : `Click to edit date (current: ${formatDate(t.date)})`;
+          return (
+            <label
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', position: 'relative', padding: '2px 4px', borderRadius: 4 }}
+              title={tooltip}
+              onClick={e => {
+                const input = e.currentTarget.querySelector('input[type="date"]');
+                if (input && typeof input.showPicker === 'function') {
+                  e.preventDefault();
+                  try { input.showPicker(); } catch {}
+                }
+              }}
+            >
+              <span style={isOverridden ? { borderBottom: '1px dotted var(--color-text-tertiary)' } : undefined}>
+                {formatDate(t.date) || '—'}
+              </span>
+              <span
+                className="material-symbols-outlined"
+                style={{ fontSize: 12, color: isOverridden ? 'var(--color-secondary, #0058be)' : 'var(--color-text-tertiary)' }}
+              >
+                {isOverridden ? 'history' : 'edit_calendar'}
+              </span>
+              <input
+                type="date"
+                value={isoVal}
+                onChange={e => {
+                  if (!e.target.value) return;
+                  updateTransactionDate(t.transactionId, e.target.value, fallbackKey);
+                  flashSaved();
+                }}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  opacity: 0,
+                  width: '100%',
+                  height: '100%',
+                  cursor: 'pointer',
+                  colorScheme: 'light',
+                }}
+                tabIndex={-1}
+              />
+            </label>
+          );
+        })()}
+      </td>}
+      {visibleColumns.has('notes') && <td>
+        <input
+          type="text"
+          className={styles.noteInput}
+          value={transactionNotes[t.transactionId] || ''}
+          placeholder="Add note..."
+          onChange={e => updateTransactionNote(t.transactionId, e.target.value)}
+        />
+      </td>}
+      {visibleColumns.has('institution') && <td className={styles.institutionCell}>{t.institution}</td>}
+      {visibleColumns.has('account') && <td>
+        <div className={styles.accountCell}>
+          <div className={styles.accountDot} style={{ background: catColor(t.account || 'Unknown') }} />
+          <input
+            type="text"
+            className={styles.noteInput}
+            value={accountNicknames[t.account] || ''}
+            placeholder={t.account}
+            title={`Original: ${t.account}`}
+            onChange={e => setAccountNickname(t.account, e.target.value)}
+          />
+        </div>
+      </td>}
+      <td>
+        <button
+          className={styles.hideBtn}
+          title="Hide from reporting"
+          onClick={() => { toggleHideTransaction(t.transactionId); flashSaved(); }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
+        </button>
+      </td>
+    </tr>
+  );
+});
 
 export function TransactionsPage() {
   const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount } = useData();
@@ -1469,11 +2007,11 @@ export function TransactionsPage() {
 
   /* ── Handler functions ── */
 
-  function flashSaved() {
+  const flashSaved = useCallback(() => {
     setSavedToast(true);
     clearTimeout(savedTimer.current);
     savedTimer.current = setTimeout(() => setSavedToast(false), 1500);
-  }
+  }, []);
 
   function handleSort(col) {
     if (sortCol === col) {
@@ -1485,13 +2023,13 @@ export function TransactionsPage() {
     setPage(0);
   }
 
-  function toggleSelect(id) {
+  const toggleSelect = useCallback((id) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
-  }
+  }, []);
 
   function toggleSelectAll() {
     const filteredIds = filtered.filter(t => t.transactionId).map(t => t.transactionId);
@@ -1551,7 +2089,7 @@ export function TransactionsPage() {
     [subcategoryRules],
   );
 
-  function findMatchingRules(t) {
+  const findMatchingRules = useCallback((t) => {
     const desc = normalizeDesc(t.description);
     const full = normalizeDesc(t.fullDescription);
     const descMatches = nd => {
@@ -1577,9 +2115,9 @@ export function TransactionsPage() {
     const catRule = catRules.find(amtPasses) || null;
     const subRule = subRules.find(amtPasses) || null;
     return { catRule, subRule, catRules, subRules };
-  }
+  }, [normCatRules, normSubRules]);
 
-  function handleCategorySelect(t, i, newCategory) {
+  const handleCategorySelect = useCallback((t, i, newCategory) => {
     if (newCategory === t.category) {
       setEditingId(null);
       setNewCategoryText('');
@@ -1605,7 +2143,7 @@ export function TransactionsPage() {
       setEditingId(null);
       setNewCategoryText('');
     }
-  }
+  }, [addCustomCategory, getMatchCount, updateTransactionCategory, flashSaved]);
 
   function startResizeColumn(e, key, currentWidth) {
     e.preventDefault();
@@ -1640,7 +2178,7 @@ export function TransactionsPage() {
     document.body.style.userSelect = 'none';
   }
 
-  function handleSubcategorySelect(t, newSub) {
+  const handleSubcategorySelect = useCallback((t, newSub) => {
     if (newSub === t.subcategory) {
       setEditingSubId(null);
       setSubSearchText('');
@@ -1666,7 +2204,7 @@ export function TransactionsPage() {
       setEditingSubId(null);
       setSubSearchText('');
     }
-  }
+  }, [getMatchCount, updateTransactionSubcategory, flashSaved]);
 
   function handleBulkCategory(cat) {
     if (!ALL_CATEGORIES.includes(cat)) addCustomCategory(cat);
@@ -2692,530 +3230,59 @@ export function TransactionsPage() {
             </thead>
             <tbody>
               {paginated.map((t, i) => {
-                const icon = getCategoryIcon(t.category);
-                const color = catColor(t.category || 'Uncategorized');
-                const bg = catBg(t.category || 'Uncategorized');
-                const { catRules: rowCatRules, subRules: rowSubRules } = findMatchingRules(t);
+                const rowId = t.transactionId || i;
+                const isCatRow = editingId === rowId;
+                const isSubRow = editingSubId === rowId;
                 return (
-                  <tr key={t.transactionId || i} className={selectedIds.has(t.transactionId) ? styles.selectedRow : ''}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        className={styles.checkbox}
-                        checked={selectedIds.has(t.transactionId)}
-                        onChange={() => toggleSelect(t.transactionId)}
-                      />
-                    </td>
-                    {visibleColumns.has('merchant') && <td>
-                      <div className={styles.merchantCell}>
-                        <div
-                          className={styles.merchantIcon}
-                          style={{ background: bg, color }}
-                        >
-                          <span className="material-symbols-outlined">{icon}</span>
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div className={styles.merchantName}>{t.description}</div>
-                          <div className={styles.merchantSub}>
-                            {t.fullDescription && t.fullDescription !== t.description
-                              ? t.fullDescription.slice(0, 60)
-                              : t.category}
-                          </div>
-                          <div
-                            style={{ display: 'flex', gap: 3, marginTop: 2, cursor: 'pointer', alignItems: 'center' }}
-                            onDoubleClick={e => {
-                              e.stopPropagation();
-                              const toCatItem = r => ({
-                                index: categoryRules.indexOf(r),
-                                pattern: r.description || '',
-                                target: r.category || '',
-                                sign: r.sign || '',
-                                min: r.minAmount != null ? String(r.minAmount) : '',
-                                max: r.maxAmount != null ? String(r.maxAmount) : '',
-                              });
-                              const toSubItem = r => ({
-                                index: subcategoryRules.indexOf(r),
-                                pattern: r.description || '',
-                                target: r.subcategory || '',
-                                sign: r.sign || '',
-                                min: r.minAmount != null ? String(r.minAmount) : '',
-                                max: r.maxAmount != null ? String(r.maxAmount) : '',
-                              });
-                              const catItems = rowCatRules.map(toCatItem);
-                              const subItems = rowSubRules.map(toSubItem);
-                              setEditingRule({
-                                catRules: catItems,
-                                subRules: subItems,
-                                _origCatIdxs: catItems.map(r => r.index).filter(i => i >= 0),
-                                _origSubIdxs: subItems.map(r => r.index).filter(i => i >= 0),
-                                txnDescription: t.description,
-                                txnCategory: t.category || '',
-                                txnSubcategory: t.subcategory || '',
-                              });
-                            }}
-                            title="Double-click to manage auto-categorization rules"
-                          >
-                            <span
-                              className="material-symbols-outlined"
-                              style={{ fontSize: 13, color: rowCatRules.length ? 'var(--color-secondary, #0058be)' : 'var(--color-text-tertiary)', opacity: rowCatRules.length ? 1 : 0.4 }}
-                            >auto_fix_high</span>
-                            {rowCatRules.length > 1 && (
-                              <span style={{ fontSize: 9.5, color: 'var(--color-secondary, #0058be)', fontWeight: 700, lineHeight: 1 }}>×{rowCatRules.length}</span>
-                            )}
-                            <span
-                              className="material-symbols-outlined"
-                              style={{ fontSize: 13, color: rowSubRules.length ? '#7c3aed' : 'var(--color-text-tertiary)', opacity: rowSubRules.length ? 1 : 0.4, marginLeft: 1 }}
-                            >bookmark</span>
-                            {rowSubRules.length > 1 && (
-                              <span style={{ fontSize: 9.5, color: '#7c3aed', fontWeight: 700, lineHeight: 1 }}>×{rowSubRules.length}</span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </td>}
-                    {visibleColumns.has('description') && <td className={styles.institutionCell} title={t.fullDescription || t.description}>
-                      {t.fullDescription || t.description}
-                    </td>}
-                    {visibleColumns.has('category') && <td style={{ position: 'relative', overflow: 'visible' }}>
-                      <span
-                        className={styles.categoryBadge}
-                        style={{ background: bg, color, cursor: 'pointer' }}
-                        title="Click to change category"
-                        onClick={() => setEditingId(editingId === (t.transactionId || i) ? null : (t.transactionId || i))}
-                      >
-                        {t.category || 'Uncategorized'}
-                        <span className="material-symbols-outlined" style={{ fontSize: 12, marginLeft: 2 }}>edit</span>
-                      </span>
-                      {editingId === (t.transactionId || i) && (() => {
-                        const { catRule, subRule } = findMatchingRules(t);
-                        const catRuleIdx = catRule ? categoryRules.indexOf(catRule) : -1;
-                        return (
-                        <div className={styles.categoryDropdown} ref={dropdownRef}>
-                          <div style={{ display: 'flex', alignItems: 'center', borderBottom: 'var(--border-ghost)' }}>
-                            <input
-                              className={styles.categorySearch}
-                              type="text"
-                              placeholder={manageCategoriesMode ? 'Manage categories' : 'Search or type new...'}
-                              value={newCategoryText}
-                              onChange={e => setNewCategoryText(e.target.value)}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter' && newCategoryText.trim() && !manageCategoriesMode) {
-                                  handleCategorySelect(t, i, newCategoryText.trim());
-                                }
-                              }}
-                              disabled={manageCategoriesMode}
-                              style={{ borderBottom: 'none', flex: 1 }}
-                              autoFocus
-                            />
-                            <button
-                              type="button"
-                              title={manageCategoriesMode ? 'Done' : 'Manage categories'}
-                              onClick={() => {
-                                setManageCategoriesMode(v => !v);
-                                setRenamingCategory(null);
-                                setRenameText('');
-                                setShowHiddenCategories(false);
-                              }}
-                              style={{
-                                background: 'none',
-                                border: 'none',
-                                cursor: 'pointer',
-                                padding: '6px 10px',
-                                color: manageCategoriesMode ? 'var(--color-secondary, #0058be)' : 'var(--color-text-tertiary)',
-                                display: 'flex',
-                                alignItems: 'center',
-                              }}
-                            >
-                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
-                                {manageCategoriesMode ? 'check' : 'settings'}
-                              </span>
-                            </button>
-                          </div>
-                          {!manageCategoriesMode && catRule && (
-                            <div style={{
-                              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                              padding: '6px 12px',
-                              fontSize: 11.5,
-                              background: 'rgba(0, 88, 190, 0.06)',
-                              borderBottom: 'var(--border-ghost)',
-                              color: 'var(--color-secondary, #0058be)',
-                            }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>auto_fix_high</span>
-                                <span>Rule: <strong>"{catRule.description}"</strong> → {catRule.category}</span>
-                              </div>
-                              <button
-                                type="button"
-                                title="Remove rule"
-                                onClick={() => { removeCategoryRule(catRuleIdx); flashSaved(); }}
-                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#ba1a1a', display: 'flex' }}
-                              >
-                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
-                              </button>
-                            </div>
-                          )}
-                          {!manageCategoriesMode && t.category && (
-                            <div
-                              className={styles.categoryOption}
-                              style={{ color: '#ba1a1a' }}
-                              onClick={() => {
-                                updateTransactionCategory(t.transactionId, i, '');
-                                flashSaved();
-                                setEditingId(null);
-                                setNewCategoryText('');
-                              }}
-                            >
-                              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
-                              Clear category
-                            </div>
-                          )}
-                          {!manageCategoriesMode && newCategoryText.trim() && !categoryOptions.some(c => c.toLowerCase() === newCategoryText.trim().toLowerCase()) && (
-                            <div
-                              className={styles.categoryOption}
-                              style={{ color: '#0058be', fontWeight: 600 }}
-                              onClick={() => handleCategorySelect(t, i, newCategoryText.trim())}
-                            >
-                              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>add</span>
-                              Create "{newCategoryText.trim()}"
-                            </div>
-                          )}
-                          {categoryOptions
-                            .filter(cat => manageCategoriesMode || !newCategoryText || cat.toLowerCase().includes(newCategoryText.toLowerCase()))
-                            .map(cat => (
-                            <div
-                              key={cat}
-                              className={`${styles.categoryOption} ${cat === t.category && !manageCategoriesMode ? styles.categoryOptionActive : ''}`}
-                              onClick={() => {
-                                if (manageCategoriesMode) return;
-                                handleCategorySelect(t, i, cat);
-                              }}
-                              style={manageCategoriesMode ? { cursor: 'default' } : undefined}
-                            >
-                              <span className="material-symbols-outlined" style={{ fontSize: 14, color: catColor(cat) }}>
-                                {getCategoryIcon(cat)}
-                              </span>
-                              {renamingCategory === cat ? (
-                                <input
-                                  type="text"
-                                  value={renameText}
-                                  autoFocus
-                                  onChange={e => setRenameText(e.target.value)}
-                                  onClick={e => e.stopPropagation()}
-                                  onKeyDown={e => {
-                                    if (e.key === 'Enter') {
-                                      const newName = renameText.trim();
-                                      if (newName && newName !== cat) renameCategory(cat, newName);
-                                      setRenamingCategory(null);
-                                      setRenameText('');
-                                    } else if (e.key === 'Escape') {
-                                      setRenamingCategory(null);
-                                      setRenameText('');
-                                    }
-                                  }}
-                                  onBlur={() => {
-                                    const newName = renameText.trim();
-                                    if (newName && newName !== cat) renameCategory(cat, newName);
-                                    setRenamingCategory(null);
-                                    setRenameText('');
-                                  }}
-                                  style={{
-                                    flex: 1,
-                                    border: '1px solid var(--color-secondary, #0058be)',
-                                    borderRadius: 4,
-                                    padding: '2px 6px',
-                                    fontSize: 12.5,
-                                    fontFamily: 'var(--font-body)',
-                                    outline: 'none',
-                                  }}
-                                />
-                              ) : (
-                                <span style={{ flex: 1 }}>{cat}</span>
-                              )}
-                              {manageCategoriesMode && renamingCategory !== cat && (
-                                <>
-                                  <button
-                                    type="button"
-                                    title="Rename"
-                                    onClick={e => {
-                                      e.stopPropagation();
-                                      setRenamingCategory(cat);
-                                      setRenameText(cat);
-                                    }}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: 'var(--color-text-tertiary)', display: 'flex' }}
-                                  >
-                                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    title="Remove"
-                                    onClick={e => {
-                                      e.stopPropagation();
-                                      const count = (transactions || []).filter(tx => (tx.category || '') === cat).length;
-                                      const msg = count > 0
-                                        ? `Remove "${cat}"? ${count} transaction${count === 1 ? '' : 's'} will be set to Uncategorized.`
-                                        : `Remove "${cat}"?`;
-                                      if (window.confirm(msg)) removeCategory(cat, '');
-                                    }}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#ba1a1a', display: 'flex' }}
-                                  >
-                                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>delete</span>
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          ))}
-                          {manageCategoriesMode && hiddenCategoryList.length > 0 && (
-                            <>
-                              <div
-                                onClick={() => setShowHiddenCategories(v => !v)}
-                                style={{
-                                  display: 'flex', alignItems: 'center', gap: 6,
-                                  padding: '8px 12px',
-                                  fontSize: 11.5,
-                                  color: 'var(--color-text-tertiary)',
-                                  cursor: 'pointer',
-                                  borderTop: 'var(--border-ghost)',
-                                  textTransform: 'uppercase',
-                                  letterSpacing: 0.5,
-                                }}
-                              >
-                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
-                                  {showHiddenCategories ? 'expand_less' : 'expand_more'}
-                                </span>
-                                Hidden ({hiddenCategoryList.length})
-                              </div>
-                              {showHiddenCategories && hiddenCategoryList.map(cat => (
-                                <div key={`hidden-${cat}`} className={styles.categoryOption} style={{ opacity: 0.7, cursor: 'default' }}>
-                                  <span className="material-symbols-outlined" style={{ fontSize: 14, color: catColor(cat) }}>
-                                    {getCategoryIcon(cat)}
-                                  </span>
-                                  <span style={{ flex: 1, textDecoration: 'line-through' }}>{cat}</span>
-                                  <button
-                                    type="button"
-                                    title="Restore"
-                                    onClick={e => { e.stopPropagation(); unhideCategory(cat); }}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: 'var(--color-secondary, #0058be)', display: 'flex' }}
-                                  >
-                                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>undo</span>
-                                  </button>
-                                </div>
-                              ))}
-                            </>
-                          )}
-                        </div>
-                        );
-                      })()}
-                    </td>}
-                    {visibleColumns.has('subcategory') && <td style={{ position: 'relative', overflow: 'visible' }}>
-                      {(() => {
-                        const subKey = t.transactionId || i;
-                        const isEditingSub = editingSubId === subKey;
-                        // Only the open subcategory editor needs the full subcategory
-                        // list (which scans every transaction) and the matching rule.
-                        // Computing these for every row was O(rows × transactions) of
-                        // wasted work on each render.
-                        let allSubs = [];
-                        let subRule = null;
-                        let subRuleIdx = -1;
-                        if (isEditingSub) {
-                          const subs = SUBCATEGORIES[t.category] || [];
-                          allSubs = [...new Set([...subs, ...(transactions || []).filter(tx => tx.category === t.category && tx.subcategory).map(tx => tx.subcategory)])].sort();
-                          subRule = findMatchingRules(t).subRule;
-                          subRuleIdx = subRule ? subcategoryRules.indexOf(subRule) : -1;
-                        }
-                        return (
-                          <>
-                            <span
-                              className={styles.subcategoryBadge}
-                              onClick={() => { setEditingSubId(editingSubId === subKey ? null : subKey); setSubSearchText(''); }}
-                              title="Click to set subcategory"
-                            >
-                              {t.subcategory || '—'}
-                              <span className="material-symbols-outlined" style={{ fontSize: 11, marginLeft: 2 }}>edit</span>
-                            </span>
-                            {editingSubId === subKey && (
-                              <div className={styles.categoryDropdown} ref={subDropdownRef}>
-                                <input
-                                  className={styles.categorySearch}
-                                  type="text"
-                                  placeholder="Search or type new..."
-                                  value={subSearchText}
-                                  onChange={e => setSubSearchText(e.target.value)}
-                                  onKeyDown={e => {
-                                    if (e.key === 'Enter' && subSearchText.trim()) {
-                                      handleSubcategorySelect(t, subSearchText.trim());
-                                    }
-                                  }}
-                                  autoFocus
-                                />
-                                {subRule && (
-                                  <div style={{
-                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                    padding: '6px 12px',
-                                    fontSize: 11.5,
-                                    background: 'rgba(0, 88, 190, 0.06)',
-                                    borderBottom: 'var(--border-ghost)',
-                                    color: 'var(--color-secondary, #0058be)',
-                                  }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>auto_fix_high</span>
-                                      <span>Rule: <strong>"{subRule.description}"</strong> → {subRule.subcategory}</span>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      title="Remove rule"
-                                      onClick={() => { removeSubcategoryRule(subRuleIdx); flashSaved(); }}
-                                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#ba1a1a', display: 'flex' }}
-                                    >
-                                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
-                                    </button>
-                                  </div>
-                                )}
-                                {t.subcategory && (
-                                  <div
-                                    className={styles.categoryOption}
-                                    style={{ color: '#ba1a1a' }}
-                                    onClick={() => handleSubcategorySelect(t, '')}
-                                  >
-                                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
-                                    Clear subcategory
-                                  </div>
-                                )}
-                                {subSearchText.trim() && !allSubs.some(s => s.toLowerCase() === subSearchText.trim().toLowerCase()) && (
-                                  <div
-                                    className={styles.categoryOption}
-                                    style={{ color: '#0058be', fontWeight: 600 }}
-                                    onClick={() => handleSubcategorySelect(t, subSearchText.trim())}
-                                  >
-                                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>add</span>
-                                    Create "{subSearchText.trim()}"
-                                  </div>
-                                )}
-                                {allSubs
-                                  .filter(s => !subSearchText || s.toLowerCase().includes(subSearchText.toLowerCase()))
-                                  .map(sub => (
-                                  <div
-                                    key={sub}
-                                    className={`${styles.categoryOption} ${sub === t.subcategory ? styles.categoryOptionActive : ''}`}
-                                  >
-                                    <span
-                                      style={{ flex: 1, cursor: 'pointer' }}
-                                      onClick={() => handleSubcategorySelect(t, sub)}
-                                    >
-                                      {sub}
-                                    </span>
-                                    <button
-                                      className={styles.ruleSmallBtn}
-                                      title="Apply to all matching + create rule"
-                                      onClick={e => {
-                                        e.stopPropagation();
-                                        addSubcategoryRule(t.description, sub);
-                                        flashSaved();
-                                        setEditingSubId(null);
-                                        setSubSearchText('');
-                                      }}
-                                    >
-                                      <span className="material-symbols-outlined" style={{ fontSize: 13 }}>auto_fix_high</span>
-                                      + Rule
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </td>}
-                    {visibleColumns.has('amount') && <td>
-                      <span className={t.amount >= 0 ? styles.amountCredit : styles.amountDebit}>
-                        {t.amount >= 0 ? '+' : ''}{fmt(t.amount)}
-                      </span>
-                    </td>}
-                    {visibleColumns.has('date') && <td className={styles.dateCell}>
-                      {(() => {
-                        const isoVal = toIsoDate(t.date);
-                        const fallbackKey = `${t.date || ''}|${(t.description || '').trim()}|${t.amount}`;
-                        const isOverridden = !!t.originalDate && t.originalDate !== t.date;
-                        const tooltip = isOverridden
-                          ? `Original: ${formatDate(t.originalDate)}\nClick to edit (current: ${formatDate(t.date)})`
-                          : `Click to edit date (current: ${formatDate(t.date)})`;
-                        return (
-                          <label
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', position: 'relative', padding: '2px 4px', borderRadius: 4 }}
-                            title={tooltip}
-                            onClick={e => {
-                              const input = e.currentTarget.querySelector('input[type="date"]');
-                              if (input && typeof input.showPicker === 'function') {
-                                e.preventDefault();
-                                try { input.showPicker(); } catch {}
-                              }
-                            }}
-                          >
-                            <span style={isOverridden ? { borderBottom: '1px dotted var(--color-text-tertiary)' } : undefined}>
-                              {formatDate(t.date) || '—'}
-                            </span>
-                            <span
-                              className="material-symbols-outlined"
-                              style={{ fontSize: 12, color: isOverridden ? 'var(--color-secondary, #0058be)' : 'var(--color-text-tertiary)' }}
-                            >
-                              {isOverridden ? 'history' : 'edit_calendar'}
-                            </span>
-                            <input
-                              type="date"
-                              value={isoVal}
-                              onChange={e => {
-                                if (!e.target.value) return;
-                                updateTransactionDate(t.transactionId, e.target.value, fallbackKey);
-                                flashSaved();
-                              }}
-                              style={{
-                                position: 'absolute',
-                                inset: 0,
-                                opacity: 0,
-                                width: '100%',
-                                height: '100%',
-                                cursor: 'pointer',
-                                colorScheme: 'light',
-                              }}
-                              tabIndex={-1}
-                            />
-                          </label>
-                        );
-                      })()}
-                    </td>}
-                    {visibleColumns.has('notes') && <td>
-                      <input
-                        type="text"
-                        className={styles.noteInput}
-                        value={transactionNotes[t.transactionId] || ''}
-                        placeholder="Add note..."
-                        onChange={e => updateTransactionNote(t.transactionId, e.target.value)}
-                      />
-                    </td>}
-                    {visibleColumns.has('institution') && <td className={styles.institutionCell}>{t.institution}</td>}
-                    {visibleColumns.has('account') && <td>
-                      <div className={styles.accountCell}>
-                        <div className={styles.accountDot} style={{ background: catColor(t.account || 'Unknown') }} />
-                        <input
-                          type="text"
-                          className={styles.noteInput}
-                          value={accountNicknames[t.account] || ''}
-                          placeholder={t.account}
-                          title={`Original: ${t.account}`}
-                          onChange={e => setAccountNickname(t.account, e.target.value)}
-                        />
-                      </div>
-                    </td>}
-                    <td>
-                      <button
-                        className={styles.hideBtn}
-                        title="Hide from reporting"
-                        onClick={() => { toggleHideTransaction(t.transactionId); flashSaved(); }}
-                      >
-                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
-                      </button>
-                    </td>
-                  </tr>
+                  <TransactionRow
+                    key={rowId}
+                    t={t}
+                    i={i}
+                    selectedIds={selectedIds}
+                    visibleColumns={visibleColumns}
+                    categoryRules={categoryRules}
+                    subcategoryRules={subcategoryRules}
+                    transactionNotes={transactionNotes}
+                    accountNicknames={accountNicknames}
+                    dropdownRef={dropdownRef}
+                    subDropdownRef={subDropdownRef}
+                    findMatchingRules={findMatchingRules}
+                    toggleSelect={toggleSelect}
+                    setEditingRule={setEditingRule}
+                    setEditingId={setEditingId}
+                    setNewCategoryText={setNewCategoryText}
+                    setManageCategoriesMode={setManageCategoriesMode}
+                    setRenamingCategory={setRenamingCategory}
+                    setRenameText={setRenameText}
+                    setShowHiddenCategories={setShowHiddenCategories}
+                    handleCategorySelect={handleCategorySelect}
+                    removeCategoryRule={removeCategoryRule}
+                    flashSaved={flashSaved}
+                    updateTransactionCategory={updateTransactionCategory}
+                    renameCategory={renameCategory}
+                    removeCategory={removeCategory}
+                    unhideCategory={unhideCategory}
+                    setEditingSubId={setEditingSubId}
+                    setSubSearchText={setSubSearchText}
+                    handleSubcategorySelect={handleSubcategorySelect}
+                    removeSubcategoryRule={removeSubcategoryRule}
+                    addSubcategoryRule={addSubcategoryRule}
+                    updateTransactionDate={updateTransactionDate}
+                    updateTransactionNote={updateTransactionNote}
+                    setAccountNickname={setAccountNickname}
+                    toggleHideTransaction={toggleHideTransaction}
+                    editingId={isCatRow ? editingId : null}
+                    editingSubId={isSubRow ? editingSubId : null}
+                    newCategoryText={isCatRow ? newCategoryText : ''}
+                    manageCategoriesMode={isCatRow ? manageCategoriesMode : false}
+                    renamingCategory={isCatRow ? renamingCategory : null}
+                    renameText={isCatRow ? renameText : ''}
+                    showHiddenCategories={isCatRow ? showHiddenCategories : false}
+                    subSearchText={isSubRow ? subSearchText : ''}
+                    categoryOptions={isCatRow ? categoryOptions : EMPTY_ARR}
+                    hiddenCategoryList={isCatRow ? hiddenCategoryList : EMPTY_ARR}
+                    transactions={(isCatRow || isSubRow) ? transactions : null}
+                  />
                 );
               })}
             </tbody>
