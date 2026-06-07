@@ -1,4 +1,4 @@
-export default function BudgetChart({ chartMode, chartData, pctChartData, budgets, categoryColors, onBarClick }) {
+export default function BudgetChart({ chartMode, chartData, pctChartData, budgets, categoryColors, onBarClick, labelStep = 1, budgetLineLabel = 'Budget' }) {
   if (chartMode === 'bar') {
     if (!chartData || chartData.length === 0) {
       return <div style={{ fontSize: 13, color: '#999', padding: '40px 0', textAlign: 'center' }}>No spending data for budgeted categories in this period.</div>;
@@ -44,7 +44,7 @@ export default function BudgetChart({ chartMode, chartData, pctChartData, budget
 
           {/* Budget line */}
           <line x1={padL} y1={budgetY} x2={vw - padR} y2={budgetY} stroke="#ba1a1a" strokeDasharray="8 4" strokeWidth="2" />
-          <text x={vw - padR} y={budgetY - 6} textAnchor="end" fontSize="11" fontWeight="600" fill="#ba1a1a">Budget: ${chartData[0].budget.toLocaleString()}</text>
+          <text x={vw - padR} y={budgetY - 6} textAnchor="end" fontSize="11" fontWeight="600" fill="#ba1a1a">{budgetLineLabel}: ${chartData[0].budget.toLocaleString()}</text>
 
           {/* Bars */}
           {chartData.map(function(d, i) {
@@ -52,15 +52,17 @@ export default function BudgetChart({ chartMode, chartData, pctChartData, budget
             var x = padL + i * groupW + (groupW - barW) / 2;
             var h = Math.round((d.spent / maxVal) * plotH);
             var y = padT + plotH - h;
+            // With many bars (e.g. 26 weeks) thin out labels to avoid overlap; always label the last bar.
+            var showLabel = labelStep <= 1 || i % labelStep === 0 || i === chartData.length - 1;
             return (
-              <g key={d.month} style={{ cursor: 'pointer' }} onClick={function() { if (onBarClick) onBarClick(d.month); }}>
+              <g key={d.month} style={{ cursor: onBarClick ? 'pointer' : 'default' }} onClick={function() { if (onBarClick) onBarClick(d.month); }}>
                 <rect x={x} y={y} width={barW} height={h} rx="6" fill="#0058be" opacity="0.85" />
                 <rect x={x} y={y} width={barW} height={h} rx="6" fill="#0058be" opacity="0" stroke="none">
                   <animate attributeName="opacity" from="0" to="0.15" dur="0.15s" begin="mouseover" fill="freeze" />
                   <animate attributeName="opacity" from="0.15" to="0" dur="0.15s" begin="mouseout" fill="freeze" />
                 </rect>
-                <text x={x + barW / 2} y={padT + plotH + 20} textAnchor="middle" fontSize="12" fill="#666">{d.label}</text>
-                <text x={x + barW / 2} y={y - 8} textAnchor="middle" fontSize="11" fontWeight="600" fill="#333">${Math.round(d.spent).toLocaleString()}</text>
+                {showLabel && <text x={x + barW / 2} y={padT + plotH + 20} textAnchor="middle" fontSize="12" fill="#666">{d.label}</text>}
+                {showLabel && <text x={x + barW / 2} y={y - 8} textAnchor="middle" fontSize="11" fontWeight="600" fill="#333">${Math.round(d.spent).toLocaleString()}</text>}
               </g>
             );
           })}
@@ -116,6 +118,8 @@ export default function BudgetChart({ chartMode, chartData, pctChartData, budget
         {/* X labels */}
         {pctChartData.map(function(d, i) {
           var x = padL2 + (i / (pctChartData.length - 1 || 1)) * plotW2;
+          var showLabel = labelStep <= 1 || i % labelStep === 0 || i === pctChartData.length - 1;
+          if (!showLabel) return null;
           return <text key={d.month} x={x} y={padT2 + plotH2 + 22} textAnchor="middle" fontSize="12" fill="#666">{d.label}</text>;
         })}
 

@@ -65,6 +65,22 @@ function fmt(n) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
 }
 
+// Weekly bucketing helpers. Budgets store a monthly limit, so the weekly target
+// is the monthly limit prorated to one week (×12/52). Weeks start on Sunday to
+// match BudgetCard's weekly date range.
+const MONTH_TO_WEEK = 12 / 52;
+function weekStartOf(date) {
+  const d = new Date(date);
+  if (isNaN(d)) return null;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - d.getDay());
+}
+function weekKeyOf(ws) {
+  return `${ws.getFullYear()}-${String(ws.getMonth() + 1).padStart(2, '0')}-${String(ws.getDate()).padStart(2, '0')}`;
+}
+function weekLabelOf(ws) {
+  return ws.toLocaleString('en-US', { month: 'short', day: 'numeric' });
+}
+
 // Inline mini line chart with a shaded ±25% normal-range band and dashed avg line.
 function RangeSparkline({ series, low, high, avg }) {
   const w = 180;
@@ -174,6 +190,8 @@ export function BudgetsPage() {
   // Chart state
   const [chartCategory, setChartCategory] = useState('all');
   const [chartMonths, setChartMonths] = useState(6);
+  const [chartWeeks, setChartWeeks] = useState(8);
+  const [granularity, setGranularity] = useState('month'); // 'month' or 'week'
   const [chartMode, setChartMode] = useState('bar'); // 'bar' or 'pct'
   const [selectedMonth, setSelectedMonth] = useState(null); // null = current period, or a month key like "4/1/26"
 
@@ -252,6 +270,84 @@ export function BudgetsPage() {
 
     return months;
   }, [transactions, budgets, chartMonths]);
+
+  // Weekly bar chart: spend per week for the selected category vs a weekly budget line.
+  const weekChartData = useMemo(() => {
+    if (!transactions || transactions.length === 0 || budgets.length === 0) return [];
+    const budgetNames = budgets.map(b => b.name.toLowerCase());
+    const budgetLimitMap = {};
+    for (const b of budgets) budgetLimitMap[b.name.toLowerCase()] = b.monthlyLimit || 0;
+
+    // Group spending by week
+    const weekMap = {};
+    for (const t of transactions) {
+      if (t.amount >= 0) continue;
+      const cat = (t.category || '').toLowerCase();
+      if (chartCategory !== 'all' && cat !== chartCategory.toLowerCase()) continue;
+      if (chartCategory === 'all' && !budgetNames.includes(cat)) continue;
+      const ws = weekStartOf(t.date);
+      if (!ws) continue;
+      const key = weekKeyOf(ws);
+      weekMap[key] = (weekMap[key] || 0) + Math.abs(t.amount);
+    }
+
+    const monthlyBudgetLine = chartCategory === 'all'
+      ? budgets.reduce((s, b) => s + (b.monthlyLimit || 0), 0)
+      : budgetLimitMap[chartCategory.toLowerCase()] || 0;
+    const weeklyBudgetLine = Math.round(monthlyBudgetLine * MONTH_TO_WEEK);
+
+    const keys = Object.keys(weekMap);
+    if (keys.length === 0) return [];
+    // Anchor to the most recent week with spend (mirrors how the monthly chart
+    // anchors to the latest month with data), then walk back N continuous weeks,
+    // filling any gap weeks with $0 so the x-axis stays continuous.
+    keys.sort();
+    const lastWs = new Date(keys[keys.length - 1] + 'T00:00:00');
+    const out = [];
+    for (let i = chartWeeks - 1; i >= 0; i--) {
+      const ws = new Date(lastWs.getFullYear(), lastWs.getMonth(), lastWs.getDate() - i * 7);
+      const key = weekKeyOf(ws);
+      out.push({ month: key, label: weekLabelOf(ws), sortKey: key, spent: Math.round(weekMap[key] || 0), budget: weeklyBudgetLine });
+    }
+    return out;
+  }, [transactions, budgets, chartCategory, chartWeeks]);
+
+  // Weekly line chart: % of weekly budget per category per week.
+  const weekPctChartData = useMemo(() => {
+    if (!transactions || transactions.length === 0 || budgets.length === 0) return [];
+    const budgetMap = {};
+    for (const b of budgets) budgetMap[b.name.toLowerCase()] = b;
+
+    const weekCatMap = {};
+    for (const t of transactions) {
+      if (t.amount >= 0) continue;
+      const cat = (t.category || '').toLowerCase();
+      if (!budgetMap[cat]) continue;
+      const ws = weekStartOf(t.date);
+      if (!ws) continue;
+      const key = weekKeyOf(ws);
+      if (!weekCatMap[key]) weekCatMap[key] = {};
+      weekCatMap[key][cat] = (weekCatMap[key][cat] || 0) + Math.abs(t.amount);
+    }
+
+    const keys = Object.keys(weekCatMap);
+    if (keys.length === 0) return [];
+    keys.sort();
+    const lastWs = new Date(keys[keys.length - 1] + 'T00:00:00');
+    const out = [];
+    for (let i = chartWeeks - 1; i >= 0; i--) {
+      const ws = new Date(lastWs.getFullYear(), lastWs.getMonth(), lastWs.getDate() - i * 7);
+      const key = weekKeyOf(ws);
+      const row = { month: key, label: weekLabelOf(ws), sortKey: key };
+      for (const b of budgets) {
+        const spent = (weekCatMap[key] && weekCatMap[key][b.name.toLowerCase()]) || 0;
+        const weeklyLimit = (b.monthlyLimit || 0) * MONTH_TO_WEEK;
+        row[b.name] = weeklyLimit > 0 ? Math.round((spent / weeklyLimit) * 100) : 0;
+      }
+      out.push(row);
+    }
+    return out;
+  }, [transactions, budgets, chartWeeks]);
 
   // ──────────────────────────────────────────────
   // Normal Range Tracker — 3-month subcategory avg ± 25%
@@ -408,6 +504,13 @@ export function BudgetsPage() {
     setAdding(false);
   }
 
+  // Pick the active dataset based on the Monthly/Weekly toggle. Weekly views can
+  // have up to 26 bars, so thin the labels when crowded.
+  const isWeek = granularity === 'week';
+  const activeChartData = isWeek ? weekChartData : chartData;
+  const activePctChartData = isWeek ? weekPctChartData : pctChartData;
+  const chartLabelStep = isWeek && chartWeeks > 13 ? 2 : 1;
+
   return (
     <div className={styles.page}>
       {/* Dynamic Allocation Hero */}
@@ -534,6 +637,10 @@ export function BudgetsPage() {
             <div className={styles.chartTitle}>Budget vs Actual</div>
             <div className={styles.chartControls}>
               <div className={styles.chartToggle}>
+                <button className={`${styles.chartToggleBtn} ${!isWeek ? styles.chartToggleBtnActive : ''}`} onClick={() => setGranularity('month')}>Monthly</button>
+                <button className={`${styles.chartToggleBtn} ${isWeek ? styles.chartToggleBtnActive : ''}`} onClick={() => { setGranularity('week'); setSelectedMonth(null); }}>Weekly</button>
+              </div>
+              <div className={styles.chartToggle}>
                 <button className={`${styles.chartToggleBtn} ${chartMode === 'bar' ? styles.chartToggleBtnActive : ''}`} onClick={() => setChartMode('bar')}>$ Amount</button>
                 <button className={`${styles.chartToggleBtn} ${chartMode === 'pct' ? styles.chartToggleBtnActive : ''}`} onClick={() => setChartMode('pct')}>% of Budget</button>
               </div>
@@ -543,24 +650,35 @@ export function BudgetsPage() {
                   {budgets.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
                 </select>
               )}
-              <select className={styles.chartSelect} value={chartMonths} onChange={e => setChartMonths(Number(e.target.value))}>
-                <option value={3}>3 months</option>
-                <option value={6}>6 months</option>
-                <option value={12}>12 months</option>
-              </select>
+              {isWeek ? (
+                <select className={styles.chartSelect} value={chartWeeks} onChange={e => setChartWeeks(Number(e.target.value))}>
+                  <option value={4}>4 weeks</option>
+                  <option value={8}>8 weeks</option>
+                  <option value={13}>13 weeks</option>
+                  <option value={26}>26 weeks</option>
+                </select>
+              ) : (
+                <select className={styles.chartSelect} value={chartMonths} onChange={e => setChartMonths(Number(e.target.value))}>
+                  <option value={3}>3 months</option>
+                  <option value={6}>6 months</option>
+                  <option value={12}>12 months</option>
+                </select>
+              )}
             </div>
           </div>
 
           <BudgetChart
             chartMode={chartMode}
-            chartData={chartData}
-            pctChartData={pctChartData}
+            chartData={activeChartData}
+            pctChartData={activePctChartData}
             budgets={budgets}
             categoryColors={CATEGORY_COLORS}
-            onBarClick={(month) => setSelectedMonth(prev => prev === month ? null : month)}
+            onBarClick={isWeek ? undefined : (month) => setSelectedMonth(prev => prev === month ? null : month)}
+            labelStep={chartLabelStep}
+            budgetLineLabel={isWeek ? 'Weekly budget' : 'Budget'}
           />
-          {/* Month pills */}
-          {chartData.length > 0 && (
+          {/* Month pills — only in monthly mode; they filter the budget cards by month */}
+          {!isWeek && chartData.length > 0 && (
             <div className={styles.monthPills}>
               <button
                 className={`${styles.monthPill} ${!selectedMonth ? styles.monthPillActive : ''}`}
