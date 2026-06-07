@@ -79,17 +79,25 @@ export function applyOverrides(txns, overrides, subOverrides, dateOverrides) {
   const hasSub = Object.keys(sub).length > 0;
   const hasDate = Object.keys(dt).length > 0;
   if (!hasCat && !hasSub && !hasDate) return txns;
+  // Fallback keys (date|desc|amount) always contain '|'; transactionIds don't.
+  // Only pay the cost of building a fallback key per transaction when some
+  // override is actually stored under one — otherwise the id lookups suffice
+  // and we skip an O(n) string build on every recategorization.
+  const needsFb =
+    (hasCat && Object.keys(ov).some(k => k.includes('|'))) ||
+    (hasSub && Object.keys(sub).some(k => k.includes('|'))) ||
+    (hasDate && Object.keys(dt).some(k => k.includes('|')));
   return txns.map(t => {
     let updated = t;
     const id = t.transactionId;
-    const fb = txnFallbackKey(t);
+    const fb = needsFb ? txnFallbackKey(t) : null;
     if (id && ov[id]) updated = { ...updated, category: ov[id] };
-    else if (ov[fb]) updated = { ...updated, category: ov[fb] };
+    else if (fb && ov[fb]) updated = { ...updated, category: ov[fb] };
     if (id && sub[id]) updated = { ...updated, subcategory: sub[id] };
-    else if (sub[fb]) updated = { ...updated, subcategory: sub[fb] };
+    else if (fb && sub[fb]) updated = { ...updated, subcategory: sub[fb] };
     if (hasDate) {
       if (id && dt[id]) updated = { ...updated, originalDate: t.date, date: dt[id] };
-      else if (dt[fb]) updated = { ...updated, originalDate: t.date, date: dt[fb] };
+      else if (fb && dt[fb]) updated = { ...updated, originalDate: t.date, date: dt[fb] };
     }
     return updated;
   });

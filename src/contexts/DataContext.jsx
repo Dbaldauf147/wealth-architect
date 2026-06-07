@@ -454,16 +454,27 @@ export function DataProvider({ children }) {
     hiddenIds,
   ]);
 
-  // Derive the categorized transaction list from raw data + current rules
-  // and overrides. This makes late-arriving Firestore hydration re-apply
-  // categorization automatically, instead of being stuck with whatever was
-  // in localStorage when loadData() ran.
-  const allTransactions = useMemo(() => {
+  // Apply the categorization *rules* to the raw data. This is the expensive
+  // pass — O(transactions × rules) with regex normalization per comparison —
+  // so it is memoized separately and only re-runs when the raw data or the
+  // rules themselves change. Crucially it does NOT depend on the per-txn
+  // overrides, so recategorizing a single transaction (which only touches
+  // overrides) skips this work entirely.
+  const ruledTransactions = useMemo(() => {
     if (!rawTransactions.length) return rawTransactions;
     const withRules = applyRulesToTransactions(rawTransactions, categoryRules);
-    const withSubRules = applySubcategoryRulesToTransactions(withRules, subcategoryRules);
-    return applyOverrides(withSubRules, categoryOverrides, subcategoryOverrides, dateOverrides);
-  }, [rawTransactions, categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides]);
+    return applySubcategoryRulesToTransactions(withRules, subcategoryRules);
+  }, [rawTransactions, categoryRules, subcategoryRules]);
+
+  // Layer the per-transaction overrides on top. This is the cheap pass (O(n)
+  // map lookups), and it's the only thing that re-runs when the user edits a
+  // single category/subcategory/date. Keeping it split from the rule pass is
+  // what makes recategorization feel instant. Late-arriving Firestore
+  // hydration still re-applies everything automatically via the deps.
+  const allTransactions = useMemo(
+    () => applyOverrides(ruledTransactions, categoryOverrides, subcategoryOverrides, dateOverrides),
+    [ruledTransactions, categoryOverrides, subcategoryOverrides, dateOverrides],
+  );
 
   const transactions = useMemo(
     () => allTransactions.filter(t => !hiddenIds.has(t.transactionId)),
