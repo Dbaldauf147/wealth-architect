@@ -195,7 +195,7 @@ export function renderWeeklyEmailHtml(summary) {
             </tr>
           </table>
           <div style="font-size:11px;color:${paceColor};margin-top:8px;">${paceLabel}</div>
-          <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Excludes transfers, card payments, investments, and retirement.</div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Excludes transfers, card payments, rent, investments, and retirement.</div>
         </div>
       </td>
     </tr>`;

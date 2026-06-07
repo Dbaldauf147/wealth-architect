@@ -44,14 +44,43 @@ function withinRange(t, start, end) {
   return d >= start && d <= end;
 }
 
-// Mirrors the exclusion list used elsewhere (e.g. CashFlowPage): transfers and
-// credit-card payments shuffle money between your own accounts and are not
-// real spending.
-function isTransferLike(t) {
-  const cat = (t.category || '').toLowerCase();
-  return cat === 'transfer' || cat === 'credit card payment' || cat === 'credit card payments';
+// Rent — by category/subcategory, or a whole-word "rent" in the description on
+// either side (paid or received). Mirrors isRentIncome in cashflowExport.js but
+// without the sign restriction, so rent is kept out of spend both ways. The
+// \brent\b match avoids firing on "parent" etc. Catches rows that imported
+// uncategorized, e.g. a Zelle 'payment ... for "rent"'.
+function isRent(t) {
+  if ((t.subcategory || '').trim().toLowerCase() === 'rent') return true;
+  if ((t.category || '').trim().toLowerCase() === 'rent') return true;
+  const desc = `${t.description || ''} ${t.fullDescription || ''}`.toLowerCase();
+  return /\brent\b/.test(desc);
 }
 
+// Credit-card payments — by category, or by the bank's payment descriptions when
+// the row imported uncategorized (e.g. "Chase Credit Crd Des:autopay…",
+// "Automatic Payment - Thank You"). These move money between the user's own
+// accounts, so they are not spending.
+function isCardPayment(t) {
+  const cat = (t.category || '').toLowerCase();
+  if (cat === 'credit card payment' || cat === 'credit card payments') return true;
+  const desc = `${t.description || ''} ${t.fullDescription || ''}`.toLowerCase();
+  if (/credit crd/.test(desc)) return true;
+  if (/credit card/.test(desc)) return true;
+  if (/automatic payment\s*-?\s*thank/.test(desc)) return true;
+  return false;
+}
+
+// Mirrors the exclusion list used elsewhere (e.g. CashFlowPage): transfers,
+// credit-card payments, and rent shuffle money around and are not real spending.
+function isTransferLike(t) {
+  if ((t.category || '').toLowerCase() === 'transfer') return true;
+  if (isCardPayment(t)) return true;
+  if (isRent(t)) return true;
+  return false;
+}
+
+// Strict category-only card-payment test for the cadence projection below, which
+// keys off genuine "Credit Card Payment" rows on the card account.
 function isCreditCardPayment(t) {
   const cat = (t.category || '').toLowerCase();
   return cat === 'credit card payment' || cat === 'credit card payments';
@@ -114,7 +143,7 @@ export function upcomingCardPayments({ transactions, asOf = new Date() }) {
 /** This month vs. last month cumulative daily spend through `asOf`. Mirrors
  *  the Overview page's monthCompare chart so the weekly email shows the same
  *  "am I outpacing last month at this point in the cycle?" view. Skips
- *  transfers, credit-card payments, investments, and retirement
+ *  transfers, credit-card payments, rent, investments, and retirement
  *  contributions to keep the definition of "spend" consistent with Cash Flow. */
 export function monthCompare({ transactions, asOf = new Date() }) {
   const SKIP_CATS = new Set([
@@ -141,6 +170,7 @@ export function monthCompare({ transactions, asOf = new Date() }) {
     if (!t.date || !(t.amount < 0)) continue;
     const cat = (t.category || '').toLowerCase();
     if (SKIP_CATS.has(cat)) continue;
+    if (isRent(t) || isCardPayment(t)) continue;
     const d = parseDate(t.date);
     if (!d) continue;
     const y = d.getFullYear();
