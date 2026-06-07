@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
+import { normalizeDesc } from '../lib/categorize';
 import styles from './TransactionsPage.module.css';
 
 const PAGE_SIZE = 50;
@@ -1537,15 +1538,26 @@ export function TransactionsPage() {
     flashSaved();
   }
 
+  // Precompute each rule's normalized description once per rules change, so the
+  // per-row matching below doesn't re-run the normalization regex over every
+  // rule for every visible row. These memos stay cached across category edits
+  // (which don't touch the rule lists), so recategorizing skips this work.
+  const normCatRules = useMemo(
+    () => categoryRules.map(rule => ({ rule, nd: normalizeDesc(rule.description) })),
+    [categoryRules],
+  );
+  const normSubRules = useMemo(
+    () => subcategoryRules.map(rule => ({ rule, nd: normalizeDesc(rule.description) })),
+    [subcategoryRules],
+  );
+
   function findMatchingRules(t) {
-    const norm = s => (s || '').toLowerCase().trim().replace(/[\s\-–—]+/g, ' ');
-    const desc = norm(t.description);
-    const full = norm(t.fullDescription);
-    const descMatches = r => {
-      const rd = norm(r.description);
-      if (!rd) return false;
-      if (desc && (desc.includes(rd) || rd.includes(desc))) return true;
-      if (full && full.includes(rd)) return true;
+    const desc = normalizeDesc(t.description);
+    const full = normalizeDesc(t.fullDescription);
+    const descMatches = nd => {
+      if (!nd) return false;
+      if (desc && (desc.includes(nd) || nd.includes(desc))) return true;
+      if (full && full.includes(nd)) return true;
       return false;
     };
     const amtPasses = r => {
@@ -1558,8 +1570,8 @@ export function TransactionsPage() {
       return true;
     };
     // All rules whose description matches this txn (regardless of sign/amount filters).
-    const catRules = categoryRules.filter(descMatches);
-    const subRules = subcategoryRules.filter(descMatches);
+    const catRules = normCatRules.filter(x => descMatches(x.nd)).map(x => x.rule);
+    const subRules = normSubRules.filter(x => descMatches(x.nd)).map(x => x.rule);
     // The single rule that actually applies right now (matches description AND amount/sign filters).
     // Mirrors applyRulesToTransactions: first match in array order wins.
     const catRule = catRules.find(amtPasses) || null;
@@ -2997,10 +3009,20 @@ export function TransactionsPage() {
                     {visibleColumns.has('subcategory') && <td style={{ position: 'relative', overflow: 'visible' }}>
                       {(() => {
                         const subKey = t.transactionId || i;
-                        const subs = SUBCATEGORIES[t.category] || [];
-                        const allSubs = [...new Set([...subs, ...(transactions || []).filter(tx => tx.category === t.category && tx.subcategory).map(tx => tx.subcategory)])].sort();
-                        const { subRule } = findMatchingRules(t);
-                        const subRuleIdx = subRule ? subcategoryRules.indexOf(subRule) : -1;
+                        const isEditingSub = editingSubId === subKey;
+                        // Only the open subcategory editor needs the full subcategory
+                        // list (which scans every transaction) and the matching rule.
+                        // Computing these for every row was O(rows × transactions) of
+                        // wasted work on each render.
+                        let allSubs = [];
+                        let subRule = null;
+                        let subRuleIdx = -1;
+                        if (isEditingSub) {
+                          const subs = SUBCATEGORIES[t.category] || [];
+                          allSubs = [...new Set([...subs, ...(transactions || []).filter(tx => tx.category === t.category && tx.subcategory).map(tx => tx.subcategory)])].sort();
+                          subRule = findMatchingRules(t).subRule;
+                          subRuleIdx = subRule ? subcategoryRules.indexOf(subRule) : -1;
+                        }
                         return (
                           <>
                             <span
