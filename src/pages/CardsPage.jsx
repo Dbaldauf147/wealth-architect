@@ -424,6 +424,13 @@ export function CardsPage() {
     return months;
   }, [schedule, calendarOffset]);
 
+  // Color legend for the calendar — every card with payment activity, so it
+  // stays stable as the user navigates the month window.
+  const calendarLegend = useMemo(
+    () => schedule.filter(s => s.color && (s.payments.length > 0 || s.nextPaymentDate)),
+    [schedule],
+  );
+
   function toggleExpand(cardName) {
     setExpanded(prev => {
       const next = new Set(prev);
@@ -953,6 +960,16 @@ export function CardsPage() {
               <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_right</span>
             </button>
           </div>
+          {calendarLegend.length > 0 && (
+            <div className={styles.calendarLegend}>
+              {calendarLegend.map(s => (
+                <div key={s.card} className={styles.legendItem}>
+                  <span className={styles.legendSwatch} style={{ background: s.color }} />
+                  <span className={styles.legendLabel} title={cardNumberTitle(s.card)}>{displayName(s.card)}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <div className={styles.calendarWrap}>
             {calendarMonths.map((m, mi) => (
               <div key={mi} className={styles.calendarMonth}>
