@@ -52,6 +52,7 @@ export function CardsPage() {
   const { setAccountNickname, toggleHideCard } = useDataActions();
   const [view, setView] = useState('schedule');
   const [scheduleView, setScheduleView] = useState('calendar');
+  const [calendarOffset, setCalendarOffset] = useState(0); // 2-month window shift, in months
   const [expanded, setExpanded] = useState(() => new Set());
   const [expandedLookback, setExpandedLookback] = useState(() => new Set());
   const [renamingCard, setRenamingCard] = useState(null);
@@ -359,10 +360,10 @@ export function CardsPage() {
     return { dots, weekMarks };
   }, [schedule]);
 
-  // Three-month calendar: previous, current, and next month. Past cells show
-  // actual payments pulled from history (solid chips); future cells show the
-  // projected next payment (dashed chips). Seeing the real cadence next to the
-  // estimate makes it easy to sanity-check the projection.
+  // Two-month calendar window. `calendarOffset` shifts the window in months so
+  // the user can cycle back through history (or forward); offset 0 is the
+  // default current + next month. Past cells show actual payments pulled from
+  // history (solid chips); the projected next payment shows as a dashed chip.
   const calendarMonths = useMemo(() => {
     const now = new Date();
     const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -374,8 +375,8 @@ export function CardsPage() {
 
     const months = [];
     const cellIndex = new Map(); // cellKey -> in-month cell, for fast slotting
-    for (let m = -1; m < 2; m++) {
-      const monthDate = new Date(now.getFullYear(), now.getMonth() + m, 1);
+    for (let m = 0; m < 2; m++) {
+      const monthDate = new Date(now.getFullYear(), now.getMonth() + calendarOffset + m, 1);
       const year = monthDate.getFullYear();
       const monthIdx = monthDate.getMonth();
       const firstDow = monthDate.getDay();
@@ -421,7 +422,7 @@ export function CardsPage() {
       }
     }
     return months;
-  }, [schedule]);
+  }, [schedule, calendarOffset]);
 
   function toggleExpand(cardName) {
     setExpanded(prev => {
@@ -867,7 +868,7 @@ export function CardsPage() {
         <div className={styles.chartHeader}>
           <div>
             <div className={styles.chartTitle}>
-              {scheduleView === 'calendar' ? 'Payments — Recent & Upcoming' : 'Upcoming Payments — Next 60 Days'}
+              {scheduleView === 'calendar' ? 'Payment Calendar' : 'Upcoming Payments — Next 60 Days'}
             </div>
             <div className={styles.chartSubtitle}>
               {scheduleView === 'calendar'
@@ -925,6 +926,33 @@ export function CardsPage() {
             ))}
           </div>
         ) : (
+          <>
+          <div className={styles.calendarNav}>
+            <button
+              type="button"
+              className={styles.calendarNavBtn}
+              onClick={() => setCalendarOffset(o => o - 1)}
+              title="Earlier months"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_left</span>
+            </button>
+            <button
+              type="button"
+              className={styles.calendarNavToday}
+              onClick={() => setCalendarOffset(0)}
+              disabled={calendarOffset === 0}
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              className={styles.calendarNavBtn}
+              onClick={() => setCalendarOffset(o => o + 1)}
+              title="Later months"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_right</span>
+            </button>
+          </div>
           <div className={styles.calendarWrap}>
             {calendarMonths.map((m, mi) => (
               <div key={mi} className={styles.calendarMonth}>
@@ -959,6 +987,7 @@ export function CardsPage() {
               </div>
             ))}
           </div>
+          </>
         )}
       </div>
 

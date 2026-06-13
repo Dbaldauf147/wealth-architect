@@ -609,6 +609,55 @@
 }
 
 /* ── Calendar view (Schedule tab) ── */
+.calendarNav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.calendarNavBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: var(--border-ghost);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.calendarNavBtn:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text-primary);
+}
+
+.calendarNavToday {
+  padding: 6px 14px;
+  border: var(--border-ghost);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.calendarNavToday:hover:not(:disabled) {
+  background: var(--color-surface-alt);
+  color: var(--color-text-primary);
+}
+
+.calendarNavToday:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .calendarWrap {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
