@@ -359,16 +359,22 @@ export function CardsPage() {
     return { dots, weekMarks };
   }, [schedule]);
 
-  // Two-month calendar: current month + next month, with payments slotted into day cells.
+  // Three-month calendar: previous, current, and next month. Past cells show
+  // actual payments pulled from history (solid chips); future cells show the
+  // projected next payment (dashed chips). Seeing the real cadence next to the
+  // estimate makes it easy to sanity-check the projection.
   const calendarMonths = useMemo(() => {
     const now = new Date();
+    const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const sameDay = (a, b) =>
       a.getFullYear() === b.getFullYear() &&
       a.getMonth() === b.getMonth() &&
       a.getDate() === b.getDate();
+    const cellKey = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 
     const months = [];
-    for (let m = 0; m < 2; m++) {
+    const cellIndex = new Map(); // cellKey -> in-month cell, for fast slotting
+    for (let m = -1; m < 2; m++) {
       const monthDate = new Date(now.getFullYear(), now.getMonth() + m, 1);
       const year = monthDate.getFullYear();
       const monthIdx = monthDate.getMonth();
@@ -379,13 +385,16 @@ export function CardsPage() {
       for (let i = 0; i < 42; i++) {
         const dayOffset = i - firstDow + 1; // 1..daysInMonth for in-month
         const cellDate = new Date(year, monthIdx, dayOffset);
-        cells.push({
+        const inMonth = dayOffset >= 1 && dayOffset <= daysInMonth;
+        const cell = {
           date: cellDate,
           dayNum: cellDate.getDate(),
-          inMonth: dayOffset >= 1 && dayOffset <= daysInMonth,
+          inMonth,
           isToday: sameDay(cellDate, now),
           payments: [],
-        });
+        };
+        cells.push(cell);
+        if (inMonth) cellIndex.set(cellKey(cellDate), cell);
       }
       // Drop the trailing week if every cell in it is out-of-month (keeps the grid tighter).
       while (cells.length > 35 && cells.slice(-7).every(c => !c.inMonth)) {
@@ -399,13 +408,16 @@ export function CardsPage() {
     }
 
     for (const s of schedule) {
-      if (!s.nextPaymentDate) continue;
-      for (const m of months) {
-        for (const c of m.cells) {
-          if (c.inMonth && sameDay(c.date, s.nextPaymentDate)) {
-            c.payments.push({ card: s.card, color: s.color, amount: s.estimatedNextAmount });
-          }
-        }
+      // Actual historical payments (on or before today).
+      for (const p of s.payments || []) {
+        if (!p.date || p.date.getTime() > todayMid.getTime()) continue;
+        const cell = cellIndex.get(cellKey(p.date));
+        if (cell) cell.payments.push({ card: s.card, color: s.color, amount: p.amount, actual: true });
+      }
+      // Projected next payment (always after today).
+      if (s.nextPaymentDate) {
+        const cell = cellIndex.get(cellKey(s.nextPaymentDate));
+        if (cell) cell.payments.push({ card: s.card, color: s.color, amount: s.estimatedNextAmount, actual: false });
       }
     }
     return months;
@@ -855,9 +867,13 @@ export function CardsPage() {
         <div className={styles.chartHeader}>
           <div>
             <div className={styles.chartTitle}>
-              {scheduleView === 'calendar' ? 'Upcoming Payments — Next 2 Months' : 'Upcoming Payments — Next 60 Days'}
+              {scheduleView === 'calendar' ? 'Payments — Recent & Upcoming' : 'Upcoming Payments — Next 60 Days'}
             </div>
-            <div className={styles.chartSubtitle}>Projected from each card's historical payment cadence</div>
+            <div className={styles.chartSubtitle}>
+              {scheduleView === 'calendar'
+                ? 'Solid = actual payments · Dashed = projected from each card’s cadence'
+                : 'Projected from each card’s historical payment cadence'}
+            </div>
           </div>
           <div style={{ display: 'inline-flex', gap: 2, background: 'var(--color-surface-alt)', padding: 2, borderRadius: 10 }}>
             {[{ key: 'calendar', label: 'Calendar' }, { key: 'timeline', label: 'Timeline' }].map(t => (
@@ -929,9 +945,9 @@ export function CardsPage() {
                         {c.inMonth && c.payments.map((p, pi) => (
                           <div
                             key={pi}
-                            className={styles.calendarChip}
-                            style={{ background: p.color }}
-                            title={`${displayName(p.card)} — ${fmt(p.amount)} on ${fmtDate(c.date)}`}
+                            className={p.actual ? styles.calendarChip : `${styles.calendarChip} ${styles.calendarChipProjected}`}
+                            style={p.actual ? { background: p.color } : { color: p.color, borderColor: p.color }}
+                            title={`${displayName(p.card)} — ${fmt(p.amount)} ${p.actual ? 'paid' : 'projected'} on ${fmtDate(c.date)}`}
                           >
                             {fmt(p.amount)}
                           </div>
