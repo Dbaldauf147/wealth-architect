@@ -976,7 +976,15 @@ export function CardsPage() {
                     <td>
                       <div className={styles.cardIdent}>
                         <div className={styles.cardStripe} style={{ background: s.color }} />
-                        <div className={styles.cardName} title={cardNumberTitle(s.card)}>{displayName(s.card)}</div>
+                        <div className={styles.cardNameWrap}>
+                          <div className={styles.cardName} title={cardNumberTitle(s.card)}>{displayName(s.card)}</div>
+                          {s.recurrence && (
+                            <div className={styles.cardRecurrence}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 12 }}>event_repeat</span>
+                              {s.recurrence}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td>
