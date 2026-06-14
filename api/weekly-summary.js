@@ -150,6 +150,42 @@ export default async function handler(req, res) {
       accountNicknames: (config && config.accountNicknames) || {},
       accountGroups: (config && config.accountGroups) || {},
     });
+
+    // Temporary diagnostics: ?test=1&debug=1 returns what the pipeline sees
+    // (no email) so we can compare categorization parity with the website.
+    if (isTest && (req.query?.debug === '1' || req.query?.debug === 'true')) {
+      const withId = transactions.filter(t => t.transactionId).length;
+      const categorized = transactions.filter(t => t.category && t.category !== 'Uncategorized').length;
+      const sample = transactions
+        .filter(t => Number(t.amount) < 0)
+        .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
+        .slice(0, 12)
+        .map(t => ({ date: t.date, desc: (t.description || '').slice(0, 40), id: t.transactionId || '', cat: t.category || '', amt: t.amount }));
+      return res.status(200).json({
+        debug: true,
+        env: {
+          firebase: !!process.env.FIREBASE_SERVICE_ACCOUNT_JSON,
+          sheetsApiKey: !!process.env.SHEETS_API_KEY,
+          sheetsSheetId: !!process.env.SHEETS_SHEET_ID,
+        },
+        configLoaded: !!config,
+        configKeys: config ? Object.keys(config) : [],
+        counts: config ? {
+          categoryRules: (config.categoryRules || []).length,
+          subcategoryRules: (config.subcategoryRules || []).length,
+          categoryOverrides: Object.keys(config.categoryOverrides || {}).length,
+          subcategoryOverrides: Object.keys(config.subcategoryOverrides || {}).length,
+          dateOverrides: Object.keys(config.dateOverrides || {}).length,
+        } : null,
+        transactionCount: transactions.length,
+        withTransactionId: withId,
+        categorizedCount: categorized,
+        topCategories: summary.topCategories.map(c => ({ name: c.name, amount: c.amount })),
+        monthCompare: { thisTotalToDate: summary.monthCompare.thisTotalToDate, lastTotalFinal: summary.monthCompare.lastTotalFinal },
+        weekCompare: { thisTotalToDate: summary.weekCompare.thisTotalToDate, normalFull: summary.weekCompare.normalFull, weeksObserved: summary.weekCompare.weeksObserved },
+        biggestExpensesSample: sample,
+      });
+    }
     // Render charts to PNG and attach them inline (cid:) — Gmail and others
     // strip inline <svg>. If rasterizing a chart fails for any reason, fall
     // back to the inline SVG so the email still sends (chart just won't show
