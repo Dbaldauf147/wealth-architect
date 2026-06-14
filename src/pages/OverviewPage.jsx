@@ -160,6 +160,7 @@ export function OverviewPage() {
   const existingGroupNames = Array.from(new Set(Object.values(accountGroups))).filter(Boolean).sort();
   const [chartPeriod, setChartPeriod] = useState('6M');
   const [chartMode, setChartMode] = useState('bar');
+  const [spendView, setSpendView] = useState('cumulative'); // 'cumulative' | 'weekly'
   const [hoverPoint, setHoverPoint] = useState(null); // { kind: 'income'|'expense', i, x, y }
   const [hoverDonut, setHoverDonut] = useState(null); // index in ALLOCATION
   const [selectedSnapshot, setSelectedSnapshot] = useState(null); // 'Net Worth' | 'Total Assets' | 'Total Liabilities' | '30D Cash Flow' | null
@@ -781,9 +782,32 @@ export function OverviewPage() {
       <div className={styles.chartCard} style={{ marginBottom: 16 }}>
         <div className={styles.chartHeader} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <div>
-            <div className={styles.chartTitle}>{monthCompare.thisMonthLabel} vs {monthCompare.lastMonthLabel} — Cumulative Spend</div>
+            <div className={styles.chartTitle}>
+              {monthCompare.thisMonthLabel} vs {monthCompare.lastMonthLabel} — {spendView === 'weekly' ? 'Weekly Spend' : 'Cumulative Spend'}
+            </div>
             <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 2 }}>
               Excludes transfers, card payments, rent, investments, and retirement contributions.
+            </div>
+            <div style={{ display: 'inline-flex', gap: 2, marginTop: 8, background: 'var(--color-surface-alt)', padding: 2, borderRadius: 8 }}>
+              {[{ key: 'cumulative', label: 'Cumulative' }, { key: 'weekly', label: 'Weekly' }].map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => setSpendView(t.key)}
+                  style={{
+                    padding: '4px 12px',
+                    border: 'none',
+                    background: spendView === t.key ? 'var(--color-surface)' : 'transparent',
+                    boxShadow: spendView === t.key ? 'var(--shadow-xs)' : 'none',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    fontSize: 11.5,
+                    fontWeight: 600,
+                    color: spendView === t.key ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                  }}
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 18, fontFamily: 'var(--font-body)' }}>
@@ -807,7 +831,7 @@ export function OverviewPage() {
           </div>
         </div>
 
-        {(() => {
+        {spendView === 'cumulative' && (() => {
           const VB_W = 800;
           const VB_H = 340;
           const pad = { top: 20, right: 24, bottom: 36, left: 64 };
@@ -903,6 +927,115 @@ export function OverviewPage() {
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ display: 'inline-block', width: 18, height: 2, background: 'repeating-linear-gradient(90deg, #94a3b8 0 4px, transparent 4px 8px)' }} />
                   {monthCompare.lastMonthLabel}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {spendView === 'weekly' && (() => {
+          const VB_W = 800;
+          const VB_H = 340;
+          const pad = { top: 24, right: 24, bottom: 36, left: 64 };
+          const cW = VB_W - pad.left - pad.right;
+          const cH = VB_H - pad.top - pad.bottom;
+
+          // Bucket daily spend into weeks-of-month (1–7, 8–14, …). For this
+          // month we stop at today so partial weeks aren't compared against
+          // last month's full weeks unfairly — the current week is flagged.
+          const bucket = (daily, monthDays, upToDay) => {
+            const weeks = [];
+            for (let start = 1; start <= monthDays; start += 7) {
+              const end = Math.min(start + 6, monthDays);
+              let sum = 0;
+              for (let d = start; d <= end; d++) {
+                if (upToDay != null && d > upToDay) continue;
+                sum += daily[d] || 0;
+              }
+              weeks.push({ label: `${start}–${end}`, sum, partial: upToDay != null && upToDay < end });
+            }
+            return weeks;
+          };
+          const weeksThis = bucket(monthCompare.dailyThis || [], monthCompare.thisMonthDays, monthCompare.today);
+          const weeksLast = bucket(monthCompare.dailyLast || [], monthCompare.lastMonthDays, null);
+          const nWeeks = Math.max(weeksThis.length, weeksLast.length);
+          const yMax = Math.max(
+            ...weeksThis.map(w => w.sum),
+            ...weeksLast.map(w => w.sum),
+            1,
+          ) * 1.12;
+
+          const yPos = (amt) => pad.top + cH - (amt / yMax) * cH;
+          const groupW = cW / nWeeks;
+          const barW = Math.min(38, groupW * 0.32);
+          const gap = groupW * 0.06;
+
+          const tickCount = 4;
+          const yTicks = Array.from({ length: tickCount + 1 }, (_, i) => (yMax * i) / tickCount);
+
+          return (
+            <div style={{ width: '100%' }}>
+              <svg viewBox={`0 0 ${VB_W} ${VB_H}`} preserveAspectRatio="xMidYMid meet" style={{ width: '100%', height: 'auto', display: 'block' }}>
+                {/* horizontal grid */}
+                {yTicks.map((t, i) => (
+                  <g key={i}>
+                    <line
+                      x1={pad.left} x2={VB_W - pad.right}
+                      y1={yPos(t)} y2={yPos(t)}
+                      stroke="var(--color-border, #e2e8f0)" strokeWidth="1" strokeDasharray={i === 0 ? '0' : '2 4'}
+                    />
+                    <text x={pad.left - 8} y={yPos(t) + 4} textAnchor="end" fontSize="10" fill="var(--color-text-tertiary)" fontFamily="var(--font-body)">
+                      {fmtCompact(t)}
+                    </text>
+                  </g>
+                ))}
+
+                {Array.from({ length: nWeeks }).map((_, w) => {
+                  const gx = pad.left + w * groupW + (groupW - (barW * 2 + gap)) / 2;
+                  const tw = weeksThis[w];
+                  const lw = weeksLast[w];
+                  const y0 = yPos(0);
+                  const labelDays = (tw || lw)?.label || '';
+                  return (
+                    <g key={w}>
+                      {/* last month bar (gray) */}
+                      {lw && (
+                        <rect
+                          x={gx} y={yPos(lw.sum)} width={barW} height={Math.max(0, y0 - yPos(lw.sum))}
+                          rx="3" fill="#cbd5e1"
+                        >
+                          <title>{`${monthCompare.lastMonthLabel} ${labelDays}: ${fmt(lw.sum)}`}</title>
+                        </rect>
+                      )}
+                      {/* this month bar (blue; lighter if the week is still in progress) */}
+                      {tw && (
+                        <rect
+                          x={gx + barW + gap} y={yPos(tw.sum)} width={barW} height={Math.max(0, y0 - yPos(tw.sum))}
+                          rx="3" fill="#0058be" opacity={tw.partial ? 0.55 : 1}
+                        >
+                          <title>{`${monthCompare.thisMonthLabel} ${labelDays}${tw.partial ? ' (in progress)' : ''}: ${fmt(tw.sum)}`}</title>
+                        </rect>
+                      )}
+                      {/* week label */}
+                      <text x={pad.left + w * groupW + groupW / 2} y={VB_H - pad.bottom + 18} textAnchor="middle" fontSize="10" fill="var(--color-text-tertiary)" fontFamily="var(--font-body)">
+                        {labelDays}
+                      </text>
+                    </g>
+                  );
+                })}
+              </svg>
+              <div style={{ display: 'flex', gap: 18, marginTop: 8, paddingLeft: 12, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ display: 'inline-block', width: 12, height: 12, background: '#0058be', borderRadius: 3 }} />
+                  {monthCompare.thisMonthLabel} (through day {monthCompare.today})
+                </div>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ display: 'inline-block', width: 12, height: 12, background: '#cbd5e1', borderRadius: 3 }} />
+                  {monthCompare.lastMonthLabel}
+                </div>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ display: 'inline-block', width: 12, height: 12, background: '#0058be', opacity: 0.55, borderRadius: 3 }} />
+                  Week in progress
                 </div>
               </div>
             </div>

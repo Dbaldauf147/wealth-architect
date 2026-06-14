@@ -200,6 +200,8 @@ export function monthCompare({ transactions, asOf = new Date() }) {
     thisMonthDays,
     lastMonthDays,
     today,
+    dailyThis,
+    dailyLast,
     cumThis,
     cumLast,
     thisTotalToDate,
