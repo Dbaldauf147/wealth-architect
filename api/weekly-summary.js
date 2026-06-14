@@ -1,4 +1,6 @@
+import { readFileSync } from 'fs';
 import nodemailer from 'nodemailer';
+import { Resvg } from '@resvg/resvg-js';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { buildWeeklySummary, lastCompletedWeek } from '../src/lib/weeklySummary.js';
@@ -10,6 +12,35 @@ import {
 } from '../src/lib/categorize.js';
 
 const DAY_MAP = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+
+// Font for chart text, bundled so resvg can render axis labels without relying
+// on (absent) system fonts in the serverless runtime. Loaded once per instance.
+// The new URL(..., import.meta.url) form lets Vercel's file tracer include it.
+let FONT_BUFFER = null;
+function getFontBuffer() {
+  if (!FONT_BUFFER) {
+    try {
+      FONT_BUFFER = readFileSync(new URL('./_assets/DejaVuSans.ttf', import.meta.url));
+    } catch (err) {
+      console.warn('Chart font load failed:', err.message);
+      FONT_BUFFER = null;
+    }
+  }
+  return FONT_BUFFER;
+}
+
+// Rasterize an SVG chart string to a PNG buffer at 2× the layout width for a
+// crisp result on high-DPI displays.
+function svgToPng(svg, width) {
+  const font = getFontBuffer();
+  const resvg = new Resvg(svg, {
+    fitTo: { mode: 'width', value: Math.round((width || 560) * 2) },
+    font: font
+      ? { fontBuffers: [font], loadSystemFonts: false, defaultFontFamily: 'DejaVu Sans' }
+      : { loadSystemFonts: true },
+  });
+  return resvg.render().asPng();
+}
 
 // Lazy singleton — Vercel may reuse the function instance across invocations.
 function getFirestoreDb() {
@@ -119,7 +150,25 @@ export default async function handler(req, res) {
       accountNicknames: (config && config.accountNicknames) || {},
       accountGroups: (config && config.accountGroups) || {},
     });
-    const html = renderWeeklyEmailHtml(summary);
+    // Render charts to PNG and attach them inline (cid:) — Gmail and others
+    // strip inline <svg>. If rasterizing a chart fails for any reason, fall
+    // back to the inline SVG so the email still sends (chart just won't show
+    // in SVG-stripping clients) rather than failing the whole send.
+    const attachments = [];
+    const html = renderWeeklyEmailHtml(summary, {
+      chart: (key, svg, meta) => {
+        try {
+          const png = svgToPng(svg, meta && meta.w);
+          const cid = `${key}@wealth-architect`;
+          attachments.push({ filename: `${key}.png`, content: png, cid, contentType: 'image/png' });
+          const widthAttr = meta && meta.w ? ` width="${meta.w}"` : '';
+          return `<img src="cid:${cid}"${widthAttr} style="display:block;max-width:100%;height:auto;border:0;" alt="" />`;
+        } catch (err) {
+          console.warn(`Chart "${key}" rasterize failed:`, err.message);
+          return svg;
+        }
+      },
+    });
 
     const user = process.env.GMAIL_USER;
     const pass = process.env.GMAIL_APP_PASSWORD;
@@ -142,6 +191,7 @@ export default async function handler(req, res) {
       to,
       subject,
       html,
+      attachments,
     });
 
     return res.status(200).json({

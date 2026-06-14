@@ -183,7 +183,13 @@ function renderRangeSparklineSvg(item) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="display:block;">${band}${avgLine}${spend}${dots}</svg>`;
 }
 
-export function renderWeeklyEmailHtml(summary) {
+/* `opts.chart(key, svgString, meta)` lets the caller decide how each chart is
+   embedded. The default inlines the SVG (fine for the in-app preview / browsers
+   that support it). The email sender passes a function that rasterizes the SVG
+   to a PNG and returns an <img src="cid:…"> instead, because Gmail and others
+   strip inline <svg>. */
+export function renderWeeklyEmailHtml(summary, opts = {}) {
+  const chart = opts.chart || ((key, svg) => svg);
   const { range, expenseTotal, wowDelta, wowPct, topCategories, topMerchants, uncategorized, transactionCount, uncategorizedCount, monthlyTrends, monthCompare, weekCompare, aboveRange } = summary;
 
   const deltaStr = wowPct == null
@@ -272,7 +278,7 @@ export function renderWeeklyEmailHtml(summary) {
               </td>
             </tr>
           </table>
-          ${renderMonthCompareSvg(mc)}
+          ${chart('monthChart', renderMonthCompareSvg(mc), { w: 560, h: 220 })}
           <table role="presentation" width="100%" style="border-collapse:collapse;margin-top:8px;">
             <tr>
               <td style="font-size:11px;color:#64748b;">
@@ -316,7 +322,7 @@ export function renderWeeklyEmailHtml(summary) {
               </td>
             </tr>
           </table>
-          ${renderWeekCompareSvg(wc)}
+          ${chart('weekChart', renderWeekCompareSvg(wc), { w: 560, h: 220 })}
           <table role="presentation" width="100%" style="border-collapse:collapse;margin-top:8px;">
             <tr>
               <td style="font-size:11px;color:#64748b;">
@@ -405,7 +411,7 @@ export function renderWeeklyEmailHtml(summary) {
         <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
           <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:4px;">Above Normal Range</div>
           <div style="font-size:12px;color:#64748b;margin-bottom:14px;">Categories spending more than their usual range (3-month average ±25%) this month.</div>
-          ${aboveRange.map(item => `
+          ${aboveRange.map((item, i) => `
           <table role="presentation" width="100%" style="border-collapse:collapse;margin-bottom:14px;">
             <tr>
               <td style="vertical-align:middle;padding-right:12px;">
@@ -414,7 +420,7 @@ export function renderWeeklyEmailHtml(summary) {
                 <div style="font-size:11px;color:#94a3b8;margin-top:2px;font-variant-numeric:tabular-nums;">Normal range ${money(item.low)} – ${money(item.high)}</div>
               </td>
               <td style="vertical-align:middle;text-align:right;width:188px;">
-                ${renderRangeSparklineSvg(item)}
+                ${chart('rangeChart' + i, renderRangeSparklineSvg(item), { w: 180, h: 56 })}
               </td>
             </tr>
           </table>`).join('')}
