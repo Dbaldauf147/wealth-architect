@@ -94,6 +94,67 @@ function renderMonthCompareSvg(mc) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VB_W} ${VB_H}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block;max-width:100%;height:auto;">${gridLines}${yLabels}${xLabels}${lastLine}${thisLine}${priorDot}${todayDot}</svg>`;
 }
 
+// Inline SVG of this-week-vs-normal cumulative spend (Mon→Sun), mirroring the
+// Overview page Weekly view. Solid blue = this week through today; dotted gray
+// = the recent-average ("normal") week.
+function renderWeekCompareSvg(wc) {
+  const VB_W = 560;
+  const VB_H = 220;
+  const pad = { top: 16, right: 16, bottom: 32, left: 52 };
+  const cW = VB_W - pad.left - pad.right;
+  const cH = VB_H - pad.top - pad.bottom;
+  const { dayLabels, todayIdx, thisCum, normalCum } = wc;
+  const yMax = Math.max(thisCum[todayIdx] || 0, normalCum[6] || 0, 1) * 1.08;
+
+  const xPos = idx => pad.left + (idx / 6) * cW;
+  const yPos = amt => pad.top + cH - (amt / yMax) * cH;
+
+  const thisPts = [];
+  for (let i = 0; i <= todayIdx; i++) thisPts.push({ x: xPos(i), y: yPos(thisCum[i]) });
+  const normalPts = [];
+  for (let i = 0; i < 7; i++) normalPts.push({ x: xPos(i), y: yPos(normalCum[i]) });
+  const normalPath = normalPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+  const thisPath = thisPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+
+  const tickCount = 4;
+  const yTicks = Array.from({ length: tickCount + 1 }, (_, i) => (yMax * i) / tickCount);
+
+  const gridLines = yTicks.map((t, i) => {
+    const y = yPos(t).toFixed(1);
+    const dash = i === 0 ? '0' : '2 4';
+    return `<line x1="${pad.left}" x2="${VB_W - pad.right}" y1="${y}" y2="${y}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="${dash}" />`;
+  }).join('');
+
+  const yLabels = yTicks.map(t => {
+    const y = (yPos(t) + 4).toFixed(1);
+    return `<text x="${pad.left - 8}" y="${y}" text-anchor="end" font-size="10" fill="#94a3b8" font-family="-apple-system,'Segoe UI',sans-serif">${fmtCompact(t)}</text>`;
+  }).join('');
+
+  const xLabels = dayLabels.map((lbl, i) => {
+    return `<text x="${xPos(i).toFixed(1)}" y="${VB_H - pad.bottom + 16}" text-anchor="middle" font-size="10" fill="#94a3b8" font-family="-apple-system,'Segoe UI',sans-serif">${lbl}</text>`;
+  }).join('');
+
+  const normalLine = normalPts.length >= 2
+    ? `<path d="${normalPath}" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round" />`
+    : '';
+  const thisLine = thisPts.length >= 2
+    ? `<path d="${thisPath}" fill="none" stroke="#0058be" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />`
+    : '';
+
+  let todayDot = '';
+  if (thisPts.length > 0) {
+    const last = thisPts[thisPts.length - 1];
+    todayDot = `
+      <line x1="${last.x.toFixed(1)}" x2="${last.x.toFixed(1)}" y1="${pad.top}" y2="${VB_H - pad.bottom}" stroke="#0058be" stroke-width="1" stroke-dasharray="2 3" opacity="0.4" />
+      <circle cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="5" fill="#0058be" stroke="#ffffff" stroke-width="2" />`;
+  }
+  const nx = xPos(todayIdx).toFixed(1);
+  const ny = yPos(normalCum[todayIdx] || 0).toFixed(1);
+  const priorDot = `<circle cx="${nx}" cy="${ny}" r="4" fill="#94a3b8" stroke="#ffffff" stroke-width="2" />`;
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VB_W} ${VB_H}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block;max-width:100%;height:auto;">${gridLines}${yLabels}${xLabels}${normalLine}${thisLine}${priorDot}${todayDot}</svg>`;
+}
+
 // Inline range sparkline mirroring the Budgets page "Normal Range Tracker"
 // graphic: a shaded green ±25% band, dashed average line, the 6-month spend
 // line, and dots with the current month accented (red when above range).
@@ -123,7 +184,7 @@ function renderRangeSparklineSvg(item) {
 }
 
 export function renderWeeklyEmailHtml(summary) {
-  const { range, expenseTotal, wowDelta, wowPct, topCategories, topMerchants, uncategorized, transactionCount, uncategorizedCount, monthlyTrends, monthCompare, aboveRange } = summary;
+  const { range, expenseTotal, wowDelta, wowPct, topCategories, topMerchants, uncategorized, transactionCount, uncategorizedCount, monthlyTrends, monthCompare, weekCompare, aboveRange } = summary;
 
   const deltaStr = wowPct == null
     ? 'No prior-week data'
@@ -219,6 +280,50 @@ export function renderWeeklyEmailHtml(summary) {
               </td>
               <td style="font-size:11px;color:#64748b;text-align:right;">
                 <span style="display:inline-block;width:18px;height:0;border-top:2px dashed #94a3b8;vertical-align:middle;margin-right:6px;"></span>${escapeHtml(mc.lastMonthLabel)}
+              </td>
+            </tr>
+          </table>
+          <div style="font-size:11px;color:${paceColor};margin-top:8px;">${paceLabel}</div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Excludes transfers, card payments, rent, investments, and retirement.</div>
+        </div>
+      </td>
+    </tr>`;
+    })() : ''}
+
+    ${weekCompare && (weekCompare.thisTotalToDate > 0 || weekCompare.normalFull > 0) ? (() => {
+      const wc = weekCompare;
+      const paceColor = wc.paceDelta > 0 ? '#b91c1c' : '#16a34a';
+      const paceSign = wc.paceDelta >= 0 ? '▲' : '▼';
+      const paceLabel = `${paceSign} ${money(Math.abs(wc.paceDelta))} ${wc.paceDelta >= 0 ? 'above' : 'below'} a normal week at ${escapeHtml(wc.dayLabels[wc.todayIdx])}`;
+      return `
+    <tr>
+      <td style="padding:0 28px 24px;">
+        <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:8px;">This Week vs Normal — Cumulative Spend</div>
+          <table role="presentation" width="100%" style="border-collapse:collapse;margin-bottom:12px;">
+            <tr>
+              <td style="font-size:12px;color:#64748b;">
+                <div style="font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#94a3b8;">This week so far</div>
+                <div style="font-size:18px;font-weight:700;color:#111;font-variant-numeric:tabular-nums;">${money(wc.thisTotalToDate)}</div>
+              </td>
+              <td style="font-size:12px;color:#64748b;text-align:center;">
+                <div style="font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#94a3b8;">Normal week</div>
+                <div style="font-size:18px;font-weight:700;color:#64748b;font-variant-numeric:tabular-nums;">${money(wc.normalFull)}</div>
+              </td>
+              <td style="font-size:12px;color:#64748b;text-align:right;">
+                <div style="font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#94a3b8;">vs normal</div>
+                <div style="font-size:18px;font-weight:700;color:${paceColor};font-variant-numeric:tabular-nums;">${paceSign} ${money(Math.abs(wc.paceDelta))}</div>
+              </td>
+            </tr>
+          </table>
+          ${renderWeekCompareSvg(wc)}
+          <table role="presentation" width="100%" style="border-collapse:collapse;margin-top:8px;">
+            <tr>
+              <td style="font-size:11px;color:#64748b;">
+                <span style="display:inline-block;width:18px;height:3px;background:#0058be;border-radius:2px;vertical-align:middle;margin-right:6px;"></span>This week (through ${escapeHtml(wc.dayLabels[wc.todayIdx])})
+              </td>
+              <td style="font-size:11px;color:#64748b;text-align:right;">
+                <span style="display:inline-block;width:18px;height:0;border-top:2px dashed #94a3b8;vertical-align:middle;margin-right:6px;"></span>Normal week (avg of last ${wc.weeksObserved})
               </td>
             </tr>
           </table>

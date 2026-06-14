@@ -485,6 +485,7 @@ export function buildWeeklySummary({ transactions, start, end, asOf = new Date()
 
   const trends = monthlyTrends({ transactions, weekEnd: end });
   const compare = monthCompare({ transactions, asOf });
+  const week = weekCompare({ transactions, asOf });
   const aboveRange = aboveRangeCategories({ transactions, asOf });
 
   return {
@@ -501,6 +502,7 @@ export function buildWeeklySummary({ transactions, start, end, asOf = new Date()
     nextCardPayment,
     monthlyTrends: trends,
     monthCompare: compare,
+    weekCompare: week,
     aboveRange,
     fmt,
   };
