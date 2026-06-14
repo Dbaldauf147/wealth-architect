@@ -445,7 +445,7 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
 <html>
 <head><meta charset="utf-8"><title>Weekly Spending Summary</title></head>
 <body style="margin:0;padding:24px;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111;">
-  <table role="presentation" width="100%" style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.06);overflow:hidden;">
+  <table role="presentation" width="100%" style="max-width:760px;margin:0 auto;background:#ffffff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.06);overflow:hidden;">
     ${body}
     <tr>
       <td style="padding:16px 28px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;">
