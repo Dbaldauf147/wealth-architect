@@ -213,6 +213,85 @@ export function monthCompare({ transactions, asOf = new Date() }) {
   };
 }
 
+/** This week's cumulative daily spend (Mon→today) vs a "normal" week — the
+ *  average week across the trailing `lookbackWeeks` completed weeks. Same spend
+ *  definition as monthCompare (skips transfers, card payments, rent,
+ *  investments, retirement). Lets the user see "am I spending more than usual
+ *  this week, at this point in the week?" Days are indexed 0=Mon..6=Sun. */
+export function weekCompare({ transactions, asOf = new Date(), lookbackWeeks = 8 }) {
+  const SKIP_CATS = new Set([
+    'transfer',
+    'credit card payment',
+    'credit card payments',
+    'investments',
+    'retirement',
+  ]);
+
+  const thisMon = weekStart(asOf); // midnight Monday of the current week
+  const todayIdx = (asOf.getDay() + 6) % 7; // 0=Mon..6=Sun
+  const lastCompletedSun = new Date(thisMon.getTime() - 1); // Sun 23:59 before this week
+  const windowStart = new Date(thisMon);
+  windowStart.setDate(windowStart.getDate() - 7 * lookbackWeeks);
+
+  const thisDaily = new Array(7).fill(0);
+  const normalSum = new Array(7).fill(0);
+  let earliest = null;
+
+  for (const t of (transactions || [])) {
+    if (!t.date) continue;
+    const d = parseDate(t.date);
+    if (!d) continue;
+    if (!earliest || d < earliest) earliest = d;
+    if (!(t.amount < 0)) continue;
+    const cat = (t.category || '').toLowerCase();
+    if (SKIP_CATS.has(cat)) continue;
+    if (isRent(t) || isCardPayment(t)) continue;
+    const amt = Math.abs(t.amount);
+    const idx = (d.getDay() + 6) % 7;
+    if (d >= thisMon && d <= asOf) {
+      thisDaily[idx] += amt;
+    } else if (d >= windowStart && d <= lastCompletedSun) {
+      normalSum[idx] += amt;
+    }
+  }
+
+  // How many completed weeks of history we actually have to average over, so a
+  // short history isn't divided by the full lookback (which would understate
+  // "normal"). At least 1 to avoid divide-by-zero.
+  let weeksObserved = lookbackWeeks;
+  if (earliest) {
+    const earliestMon = weekStart(earliest);
+    const available = Math.floor((lastCompletedSun.getTime() - earliestMon.getTime()) / (7 * 86400000)) + 1;
+    weeksObserved = Math.max(1, Math.min(lookbackWeeks, available));
+  }
+
+  const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const normalDaily = normalSum.map(s => s / weeksObserved);
+
+  // Cumulative curves. `thisCum` only runs through today (partial week).
+  const thisCum = new Array(7).fill(0);
+  for (let i = 0; i <= todayIdx; i++) thisCum[i] = (i ? thisCum[i - 1] : 0) + thisDaily[i];
+  const normalCum = new Array(7).fill(0);
+  for (let i = 0; i < 7; i++) normalCum[i] = (i ? normalCum[i - 1] : 0) + normalDaily[i];
+
+  const thisTotalToDate = thisCum[todayIdx] || 0;
+  const normalToSameDay = normalCum[todayIdx] || 0;
+  const normalFull = normalCum[6] || 0;
+  const paceDelta = thisTotalToDate - normalToSameDay;
+
+  return {
+    dayLabels,
+    todayIdx,
+    thisCum,
+    normalCum,
+    thisTotalToDate,
+    normalToSameDay,
+    normalFull,
+    paceDelta,
+    weeksObserved,
+  };
+}
+
 /** Month-to-date trends through `weekEnd`, compared with the same MTD window
  *  in the prior month. Returns headline totals, the period label, and the top
  *  category movers ranked by absolute $ delta. */

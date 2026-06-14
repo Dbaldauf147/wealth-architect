@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
-import { monthCompare as computeMonthCompare } from '../lib/weeklySummary';
+import { monthCompare as computeMonthCompare, weekCompare as computeWeekCompare } from '../lib/weeklySummary';
 import styles from './OverviewPage.module.css';
 
 function fmt(n) {
@@ -174,6 +174,12 @@ export function OverviewPage() {
   // the loading guard so the hook order stays stable across loading transitions.
   const monthCompare = useMemo(
     () => computeMonthCompare({ transactions }),
+    [transactions],
+  );
+
+  // This week vs a "normal" (recent-average) week — the Weekly toggle's data.
+  const weekCompare = useMemo(
+    () => computeWeekCompare({ transactions }),
     [transactions],
   );
 
@@ -783,7 +789,9 @@ export function OverviewPage() {
         <div className={styles.chartHeader} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <div>
             <div className={styles.chartTitle}>
-              {monthCompare.thisMonthLabel} vs {monthCompare.lastMonthLabel} — {spendView === 'weekly' ? 'Weekly Spend' : 'Cumulative Spend'}
+              {spendView === 'weekly'
+                ? 'This Week vs Normal — Cumulative Spend'
+                : `${monthCompare.thisMonthLabel} vs ${monthCompare.lastMonthLabel} — Cumulative Spend`}
             </div>
             <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 2 }}>
               Excludes transfers, card payments, rent, investments, and retirement contributions.
@@ -811,23 +819,43 @@ export function OverviewPage() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 18, fontFamily: 'var(--font-body)' }}>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>{monthCompare.thisMonthLabel} so far</div>
-              <div style={{ fontFamily: 'var(--font-headline)', fontSize: 18, fontWeight: 700, color: 'var(--color-text-primary)' }}>{fmt(monthCompare.thisTotalToDate)}</div>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>{monthCompare.lastMonthLabel} total</div>
-              <div style={{ fontFamily: 'var(--font-headline)', fontSize: 18, fontWeight: 700, color: 'var(--color-text-secondary)' }}>{fmt(monthCompare.lastTotalFinal)}</div>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>Pace</div>
-              <div style={{
-                fontFamily: 'var(--font-headline)', fontSize: 18, fontWeight: 700,
-                color: monthCompare.paceDelta > 0 ? '#ba1a1a' : '#009668',
-              }}>
-                {monthCompare.paceDelta >= 0 ? '+' : '−'}{fmt(Math.abs(monthCompare.paceDelta))}
+            {spendView === 'weekly' ? (<>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>This week so far</div>
+                <div style={{ fontFamily: 'var(--font-headline)', fontSize: 18, fontWeight: 700, color: 'var(--color-text-primary)' }}>{fmt(weekCompare.thisTotalToDate)}</div>
               </div>
-            </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>Normal week</div>
+                <div style={{ fontFamily: 'var(--font-headline)', fontSize: 18, fontWeight: 700, color: 'var(--color-text-secondary)' }}>{fmt(weekCompare.normalFull)}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>vs normal</div>
+                <div style={{
+                  fontFamily: 'var(--font-headline)', fontSize: 18, fontWeight: 700,
+                  color: weekCompare.paceDelta > 0 ? '#ba1a1a' : '#009668',
+                }}>
+                  {weekCompare.paceDelta >= 0 ? '+' : '−'}{fmt(Math.abs(weekCompare.paceDelta))}
+                </div>
+              </div>
+            </>) : (<>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>{monthCompare.thisMonthLabel} so far</div>
+                <div style={{ fontFamily: 'var(--font-headline)', fontSize: 18, fontWeight: 700, color: 'var(--color-text-primary)' }}>{fmt(monthCompare.thisTotalToDate)}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>{monthCompare.lastMonthLabel} total</div>
+                <div style={{ fontFamily: 'var(--font-headline)', fontSize: 18, fontWeight: 700, color: 'var(--color-text-secondary)' }}>{fmt(monthCompare.lastTotalFinal)}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>Pace</div>
+                <div style={{
+                  fontFamily: 'var(--font-headline)', fontSize: 18, fontWeight: 700,
+                  color: monthCompare.paceDelta > 0 ? '#ba1a1a' : '#009668',
+                }}>
+                  {monthCompare.paceDelta >= 0 ? '+' : '−'}{fmt(Math.abs(monthCompare.paceDelta))}
+                </div>
+              </div>
+            </>)}
           </div>
         </div>
 
@@ -936,39 +964,26 @@ export function OverviewPage() {
         {spendView === 'weekly' && (() => {
           const VB_W = 800;
           const VB_H = 340;
-          const pad = { top: 24, right: 24, bottom: 36, left: 64 };
+          const pad = { top: 20, right: 24, bottom: 36, left: 64 };
           const cW = VB_W - pad.left - pad.right;
           const cH = VB_H - pad.top - pad.bottom;
+          const { dayLabels, todayIdx, thisCum, normalCum } = weekCompare;
 
-          // Bucket daily spend into weeks-of-month (1–7, 8–14, …). For this
-          // month we stop at today so partial weeks aren't compared against
-          // last month's full weeks unfairly — the current week is flagged.
-          const bucket = (daily, monthDays, upToDay) => {
-            const weeks = [];
-            for (let start = 1; start <= monthDays; start += 7) {
-              const end = Math.min(start + 6, monthDays);
-              let sum = 0;
-              for (let d = start; d <= end; d++) {
-                if (upToDay != null && d > upToDay) continue;
-                sum += daily[d] || 0;
-              }
-              weeks.push({ label: `${start}–${end}`, sum, partial: upToDay != null && upToDay < end });
-            }
-            return weeks;
-          };
-          const weeksThis = bucket(monthCompare.dailyThis || [], monthCompare.thisMonthDays, monthCompare.today);
-          const weeksLast = bucket(monthCompare.dailyLast || [], monthCompare.lastMonthDays, null);
-          const nWeeks = Math.max(weeksThis.length, weeksLast.length);
           const yMax = Math.max(
-            ...weeksThis.map(w => w.sum),
-            ...weeksLast.map(w => w.sum),
+            thisCum[todayIdx] || 0,
+            normalCum[6] || 0,
             1,
-          ) * 1.12;
+          ) * 1.08;
 
+          const xPos = (idx) => pad.left + (idx / 6) * cW; // 7 day-of-week points
           const yPos = (amt) => pad.top + cH - (amt / yMax) * cH;
-          const groupW = cW / nWeeks;
-          const barW = Math.min(38, groupW * 0.32);
-          const gap = groupW * 0.06;
+
+          const thisPts = [];
+          for (let i = 0; i <= todayIdx; i++) thisPts.push({ x: xPos(i), y: yPos(thisCum[i]) });
+          const normalPts = [];
+          for (let i = 0; i < 7; i++) normalPts.push({ x: xPos(i), y: yPos(normalCum[i]) });
+          const normalPath = normalPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+          const thisPath = thisPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
 
           const tickCount = 4;
           const yTicks = Array.from({ length: tickCount + 1 }, (_, i) => (yMax * i) / tickCount);
@@ -990,52 +1005,51 @@ export function OverviewPage() {
                   </g>
                 ))}
 
-                {Array.from({ length: nWeeks }).map((_, w) => {
-                  const gx = pad.left + w * groupW + (groupW - (barW * 2 + gap)) / 2;
-                  const tw = weeksThis[w];
-                  const lw = weeksLast[w];
-                  const y0 = yPos(0);
-                  const labelDays = (tw || lw)?.label || '';
+                {/* x-axis day-of-week labels */}
+                {dayLabels.map((lbl, i) => (
+                  <text
+                    key={lbl} x={xPos(i)} y={VB_H - pad.bottom + 18}
+                    textAnchor="middle" fontSize="10"
+                    fill="var(--color-text-tertiary)" fontFamily="var(--font-body)"
+                  >
+                    {lbl}
+                  </text>
+                ))}
+
+                {/* Normal week line — dotted */}
+                {normalPts.length >= 2 && (
+                  <path d={normalPath} fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" />
+                )}
+                {/* This week line — solid */}
+                {thisPts.length >= 2 && (
+                  <path d={thisPath} fill="none" stroke="#0058be" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                )}
+
+                {/* Today marker */}
+                {thisPts.length > 0 && (() => {
+                  const last = thisPts[thisPts.length - 1];
                   return (
-                    <g key={w}>
-                      {/* last month bar (gray) */}
-                      {lw && (
-                        <rect
-                          x={gx} y={yPos(lw.sum)} width={barW} height={Math.max(0, y0 - yPos(lw.sum))}
-                          rx="3" fill="#cbd5e1"
-                        >
-                          <title>{`${monthCompare.lastMonthLabel} ${labelDays}: ${fmt(lw.sum)}`}</title>
-                        </rect>
-                      )}
-                      {/* this month bar (blue; lighter if the week is still in progress) */}
-                      {tw && (
-                        <rect
-                          x={gx + barW + gap} y={yPos(tw.sum)} width={barW} height={Math.max(0, y0 - yPos(tw.sum))}
-                          rx="3" fill="#0058be" opacity={tw.partial ? 0.55 : 1}
-                        >
-                          <title>{`${monthCompare.thisMonthLabel} ${labelDays}${tw.partial ? ' (in progress)' : ''}: ${fmt(tw.sum)}`}</title>
-                        </rect>
-                      )}
-                      {/* week label */}
-                      <text x={pad.left + w * groupW + groupW / 2} y={VB_H - pad.bottom + 18} textAnchor="middle" fontSize="10" fill="var(--color-text-tertiary)" fontFamily="var(--font-body)">
-                        {labelDays}
-                      </text>
-                    </g>
+                    <>
+                      <line x1={last.x} x2={last.x} y1={pad.top} y2={VB_H - pad.bottom} stroke="#0058be" strokeWidth="1" strokeDasharray="2 3" opacity="0.4" />
+                      <circle cx={last.x} cy={last.y} r="5" fill="#0058be" stroke="var(--color-surface)" strokeWidth="2" />
+                    </>
                   );
-                })}
+                })()}
+                {/* Comparable point on the normal week at the same weekday */}
+                {(() => {
+                  const x = xPos(todayIdx);
+                  const y = yPos(normalCum[todayIdx] || 0);
+                  return <circle cx={x} cy={y} r="4" fill="#94a3b8" stroke="var(--color-surface)" strokeWidth="2" />;
+                })()}
               </svg>
               <div style={{ display: 'flex', gap: 18, marginTop: 8, paddingLeft: 12, fontSize: 12, color: 'var(--color-text-secondary)' }}>
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ display: 'inline-block', width: 12, height: 12, background: '#0058be', borderRadius: 3 }} />
-                  {monthCompare.thisMonthLabel} (through day {monthCompare.today})
+                  <span style={{ display: 'inline-block', width: 18, height: 2.5, background: '#0058be', borderRadius: 2 }} />
+                  This week (through {dayLabels[todayIdx]})
                 </div>
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ display: 'inline-block', width: 12, height: 12, background: '#cbd5e1', borderRadius: 3 }} />
-                  {monthCompare.lastMonthLabel}
-                </div>
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ display: 'inline-block', width: 12, height: 12, background: '#0058be', opacity: 0.55, borderRadius: 3 }} />
-                  Week in progress
+                  <span style={{ display: 'inline-block', width: 18, height: 2, background: 'repeating-linear-gradient(90deg, #94a3b8 0 4px, transparent 4px 8px)' }} />
+                  Normal week (avg of last {weekCompare.weeksObserved})
                 </div>
               </div>
             </div>
