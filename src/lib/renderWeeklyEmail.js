@@ -183,13 +183,51 @@ function renderRangeSparklineSvg(item) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="display:block;">${band}${avgLine}${spend}${dots}</svg>`;
 }
 
+// Canonical list of reorderable / toggleable weekly-email sections. The header
+// (total + WoW) and footer are fixed and not part of this list. `id` is the
+// stable key persisted in config; `label` is what the Settings UI shows.
+export const WEEKLY_EMAIL_SECTIONS = [
+  { id: 'monthCompare', label: 'Month vs Last Month chart' },
+  { id: 'weekCompare', label: 'This Week vs Normal chart' },
+  { id: 'aboveRange', label: 'Above Normal Range' },
+  { id: 'topCategories', label: 'Top Categories' },
+  { id: 'topMerchants', label: 'Top Merchants' },
+  { id: 'monthlyTrends', label: 'Month-to-Date & Movers' },
+  { id: 'uncategorized', label: 'Uncategorized Transactions' },
+];
+
+export const DEFAULT_EMAIL_SECTIONS = WEEKLY_EMAIL_SECTIONS.map(s => ({ id: s.id, enabled: true }));
+
+// Reconcile a stored [{id, enabled}] config with the canonical list: keep the
+// stored order/enabled for known ids, drop unknown ids, and append any new
+// sections (enabled) at the end so a future-added section still shows up.
+export function normalizeEmailSections(stored) {
+  const known = new Set(WEEKLY_EMAIL_SECTIONS.map(s => s.id));
+  const out = [];
+  const seen = new Set();
+  for (const s of Array.isArray(stored) ? stored : []) {
+    if (s && known.has(s.id) && !seen.has(s.id)) {
+      out.push({ id: s.id, enabled: s.enabled !== false });
+      seen.add(s.id);
+    }
+  }
+  for (const s of WEEKLY_EMAIL_SECTIONS) {
+    if (!seen.has(s.id)) out.push({ id: s.id, enabled: true });
+  }
+  return out;
+}
+
 /* `opts.chart(key, svgString, meta)` lets the caller decide how each chart is
    embedded. The default inlines the SVG (fine for the in-app preview / browsers
    that support it). The email sender passes a function that rasterizes the SVG
    to a PNG and returns an <img src="cid:…"> instead, because Gmail and others
-   strip inline <svg>. */
+   strip inline <svg>.
+
+   `opts.sections` is a [{id, enabled}] config controlling which sections show
+   and in what order (see WEEKLY_EMAIL_SECTIONS). Defaults to all, in order. */
 export function renderWeeklyEmailHtml(summary, opts = {}) {
   const chart = opts.chart || ((key, svg) => svg);
+  const sections = normalizeEmailSections(opts.sections);
   const { range, expenseTotal, wowDelta, wowPct, topCategories, topMerchants, uncategorized, transactionCount, uncategorizedCount, monthlyTrends, monthCompare, weekCompare, aboveRange } = summary;
 
   const deltaStr = wowPct == null
@@ -233,33 +271,16 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
     ? `<p style="margin:8px 0 0;font-size:12px;color:#64748b;">…and ${uncategorized.length - 25} more. <a href="#" style="color:#0058be;">Review them all in the app.</a></p>`
     : '';
 
-  return `<!doctype html>
-<html>
-<head><meta charset="utf-8"><title>Weekly Spending Summary</title></head>
-<body style="margin:0;padding:24px;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111;">
-  <table role="presentation" width="100%" style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.06);overflow:hidden;">
-    <tr>
-      <td style="padding:24px 28px 16px;">
-        <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">Weekly Spending Summary</div>
-        <div style="font-size:14px;color:#64748b;margin-top:4px;">${shortDate(range.start)} – ${shortDate(range.end)}</div>
-      </td>
-    </tr>
-    <tr>
-      <td style="padding:0 28px 24px;">
-        <div style="font-size:42px;font-weight:700;color:#111;letter-spacing:-0.02em;line-height:1;">${money(expenseTotal)}</div>
-        <div style="font-size:13px;color:${deltaColor};margin-top:8px;">${deltaStr}</div>
-        <div style="font-size:12px;color:#64748b;margin-top:4px;">${transactionCount} transactions · ${uncategorizedCount} uncategorized</div>
-      </td>
-    </tr>
+  const parts = {};
 
-    ${monthCompare && (monthCompare.thisTotalToDate > 0 || monthCompare.lastTotalFinal > 0) ? (() => {
-      const mc = monthCompare;
-      const paceColor = mc.paceDelta > 0 ? '#b91c1c' : '#16a34a';
-      const paceSign = mc.paceDelta >= 0 ? '▲' : '▼';
-      const paceLabel = `${paceSign} ${money(Math.abs(mc.paceDelta))} ${mc.paceDelta >= 0 ? 'ahead of' : 'behind'} ${escapeHtml(mc.lastMonthLabel)} at day ${mc.today}`;
-      return `
+  parts.monthCompare = (monthCompare && (monthCompare.thisTotalToDate > 0 || monthCompare.lastTotalFinal > 0)) ? (() => {
+    const mc = monthCompare;
+    const paceColor = mc.paceDelta > 0 ? '#b91c1c' : '#16a34a';
+    const paceSign = mc.paceDelta >= 0 ? '▲' : '▼';
+    const paceLabel = `${paceSign} ${money(Math.abs(mc.paceDelta))} ${mc.paceDelta >= 0 ? 'ahead of' : 'behind'} ${escapeHtml(mc.lastMonthLabel)} at day ${mc.today}`;
+    return `
     <tr>
-      <td style="padding:0 28px 24px;">
+      <td style="padding:0 28px 20px;">
         <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
           <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:8px;">${escapeHtml(mc.thisMonthLabel)} vs ${escapeHtml(mc.lastMonthLabel)} — Cumulative Spend</div>
           <table role="presentation" width="100%" style="border-collapse:collapse;margin-bottom:12px;">
@@ -294,16 +315,16 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
         </div>
       </td>
     </tr>`;
-    })() : ''}
+  })() : '';
 
-    ${weekCompare && (weekCompare.thisTotalToDate > 0 || weekCompare.normalFull > 0) ? (() => {
-      const wc = weekCompare;
-      const paceColor = wc.paceDelta > 0 ? '#b91c1c' : '#16a34a';
-      const paceSign = wc.paceDelta >= 0 ? '▲' : '▼';
-      const paceLabel = `${paceSign} ${money(Math.abs(wc.paceDelta))} ${wc.paceDelta >= 0 ? 'above' : 'below'} a normal week at ${escapeHtml(wc.dayLabels[wc.todayIdx])}`;
-      return `
+  parts.weekCompare = (weekCompare && (weekCompare.thisTotalToDate > 0 || weekCompare.normalFull > 0)) ? (() => {
+    const wc = weekCompare;
+    const paceColor = wc.paceDelta > 0 ? '#b91c1c' : '#16a34a';
+    const paceSign = wc.paceDelta >= 0 ? '▲' : '▼';
+    const paceLabel = `${paceSign} ${money(Math.abs(wc.paceDelta))} ${wc.paceDelta >= 0 ? 'above' : 'below'} a normal week at ${escapeHtml(wc.dayLabels[wc.todayIdx])}`;
+    return `
     <tr>
-      <td style="padding:0 28px 24px;">
+      <td style="padding:0 28px 20px;">
         <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
           <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:8px;">This Week vs Normal — Cumulative Spend</div>
           <table role="presentation" width="100%" style="border-collapse:collapse;margin-bottom:12px;">
@@ -338,11 +359,11 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
         </div>
       </td>
     </tr>`;
-    })() : ''}
+  })() : '';
 
-    ${aboveRange && aboveRange.length ? `
+  parts.aboveRange = (aboveRange && aboveRange.length) ? `
     <tr>
-      <td style="padding:0 28px;">
+      <td style="padding:0 28px 20px;">
         <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
           <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:4px;">Above Normal Range</div>
           <div style="font-size:12px;color:#64748b;margin-bottom:14px;">Categories spending more than their usual range (3-month average ±25%) this month.</div>
@@ -361,11 +382,11 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
           </table>`).join('')}
         </div>
       </td>
-    </tr>` : ''}
+    </tr>` : '';
 
-    ${topCategories.length ? `
+  parts.topCategories = topCategories.length ? `
     <tr>
-      <td style="padding:0 28px;">
+      <td style="padding:0 28px 20px;">
         <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
           <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:8px;">Top Categories</div>
           <table role="presentation" width="100%" style="border-collapse:collapse;">
@@ -373,11 +394,11 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
           </table>
         </div>
       </td>
-    </tr>` : ''}
+    </tr>` : '';
 
-    ${topMerchants.length ? `
+  parts.topMerchants = topMerchants.length ? `
     <tr>
-      <td style="padding:20px 28px 0;">
+      <td style="padding:0 28px 20px;">
         <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
           <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:8px;">Top Merchants</div>
           <table role="presentation" width="100%" style="border-collapse:collapse;">
@@ -385,23 +406,23 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
           </table>
         </div>
       </td>
-    </tr>` : ''}
+    </tr>` : '';
 
-    ${monthlyTrends && (monthlyTrends.mtdTotal > 0 || monthlyTrends.priorMtdTotal > 0) ? (() => {
-      const mt = monthlyTrends;
-      const headlineColor = mt.mtdDelta >= 0 ? '#b91c1c' : '#16a34a';
-      const headlineDelta = mt.mtdPct == null
-        ? `${money(mt.mtdTotal)} so far this month (no prior data)`
-        : `${mt.mtdDelta >= 0 ? '▲' : '▼'} ${money(Math.abs(mt.mtdDelta))} (${mt.mtdPct >= 0 ? '+' : ''}${mt.mtdPct.toFixed(1)}%) vs. same days last month`;
+  parts.monthlyTrends = (monthlyTrends && (monthlyTrends.mtdTotal > 0 || monthlyTrends.priorMtdTotal > 0)) ? (() => {
+    const mt = monthlyTrends;
+    const headlineColor = mt.mtdDelta >= 0 ? '#b91c1c' : '#16a34a';
+    const headlineDelta = mt.mtdPct == null
+      ? `${money(mt.mtdTotal)} so far this month (no prior data)`
+      : `${mt.mtdDelta >= 0 ? '▲' : '▼'} ${money(Math.abs(mt.mtdDelta))} (${mt.mtdPct >= 0 ? '+' : ''}${mt.mtdPct.toFixed(1)}%) vs. same days last month`;
 
-      const moverRows = mt.topMovers.map(m => {
-        const up = m.delta >= 0;
-        const arrow = up ? '▲' : '▼';
-        const color = up ? '#b91c1c' : '#16a34a';
-        const pctStr = m.pct == null
-          ? '<span style="color:#64748b;">new this month</span>'
-          : `<span style="color:#64748b;">(${m.pct >= 0 ? '+' : ''}${m.pct.toFixed(0)}%)</span>`;
-        return `
+    const moverRows = mt.topMovers.map(m => {
+      const up = m.delta >= 0;
+      const arrow = up ? '▲' : '▼';
+      const color = up ? '#b91c1c' : '#16a34a';
+      const pctStr = m.pct == null
+        ? '<span style="color:#64748b;">new this month</span>'
+        : `<span style="color:#64748b;">(${m.pct >= 0 ? '+' : ''}${m.pct.toFixed(0)}%)</span>`;
+      return `
           <tr>
             <td style="padding:6px 0;font-size:13px;color:#111;">${escapeHtml(m.name)}</td>
             <td style="padding:6px 8px;font-size:12px;color:${color};white-space:nowrap;">${arrow} ${money(Math.abs(m.delta))}</td>
@@ -409,11 +430,11 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
               <strong style="color:#111;">${money(m.current)}</strong> ${pctStr}
             </td>
           </tr>`;
-      }).join('');
+    }).join('');
 
-      return `
+    return `
     <tr>
-      <td style="padding:20px 28px 0;">
+      <td style="padding:0 28px 20px;">
         <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
           <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:8px;">${escapeHtml(mt.monthLabel)} — Month-to-Date</div>
           <div style="font-size:24px;font-weight:700;color:#111;letter-spacing:-0.01em;line-height:1;">${money(mt.mtdTotal)}</div>
@@ -426,11 +447,11 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
         </div>
       </td>
     </tr>`;
-    })() : ''}
+  })() : '';
 
-    ${uncategorized.length ? `
+  parts.uncategorized = uncategorized.length ? `
     <tr>
-      <td style="padding:20px 28px 24px;">
+      <td style="padding:0 28px 20px;">
         <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
           <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:8px;">Uncategorized Transactions</div>
           <table role="presentation" width="100%" style="border-collapse:collapse;">
@@ -441,11 +462,32 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
       </td>
     </tr>` : `
     <tr>
-      <td style="padding:20px 28px 24px;">
-        <div style="border-top:1px solid #e2e8f0;padding-top:16px;font-size:13px;color:#16a34a;">✓ Everything categorized this week — nice.</div>
+      <td style="padding:0 28px 20px;">
+        <div style="border-top:1px solid #e2e8f0;padding-top:20px;font-size:13px;color:#16a34a;">✓ Everything categorized this week — nice.</div>
       </td>
-    </tr>`}
+    </tr>`;
 
+  const body = sections.filter(s => s.enabled).map(s => parts[s.id] || '').join('\n');
+
+  return `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Weekly Spending Summary</title></head>
+<body style="margin:0;padding:24px;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111;">
+  <table role="presentation" width="100%" style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.06);overflow:hidden;">
+    <tr>
+      <td style="padding:24px 28px 16px;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">Weekly Spending Summary</div>
+        <div style="font-size:14px;color:#64748b;margin-top:4px;">${shortDate(range.start)} – ${shortDate(range.end)}</div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:0 28px 24px;">
+        <div style="font-size:42px;font-weight:700;color:#111;letter-spacing:-0.02em;line-height:1;">${money(expenseTotal)}</div>
+        <div style="font-size:13px;color:${deltaColor};margin-top:8px;">${deltaStr}</div>
+        <div style="font-size:12px;color:#64748b;margin-top:4px;">${transactionCount} transactions · ${uncategorizedCount} uncategorized</div>
+      </td>
+    </tr>
+    ${body}
     <tr>
       <td style="padding:16px 28px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;">
         <div style="font-size:11px;color:#94a3b8;text-align:center;">Wealth Architect · Automated weekly summary</div>

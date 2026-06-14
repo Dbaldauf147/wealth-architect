@@ -11,6 +11,7 @@ import {
   applySubcategoryRulesToTransactions,
   applyOverrides,
 } from '../lib/categorize';
+import { normalizeEmailSections } from '../lib/renderWeeklyEmail';
 
 const CONFIG_DOC_PATH = ['config', 'default'];
 
@@ -120,6 +121,11 @@ const loadPaymentReminderPrefs = () => {
   return { ...DEFAULT_PAYMENT_REMINDER_PREFS, ...(stored || {}) };
 };
 const savePaymentReminderPrefs = (v) => saveJSON('paymentReminderPrefs', v);
+// Weekly-email section order + visibility — synced via Firestore so the server
+// cron renders sections in the user's chosen order. Stored as [{id, enabled}];
+// normalizeEmailSections fills in defaults / drops unknown ids.
+const loadWeeklyEmailSections = () => normalizeEmailSections(loadJSON('weeklyEmailSections', null));
+const saveWeeklyEmailSections = (v) => saveJSON('weeklyEmailSections', v);
 const loadCustomCategories = () => loadJSON('customCategories', []);
 const saveCustomCategories = (v) => saveJSON('customCategories', v);
 const loadHiddenCategories = () => new Set(loadJSON('hiddenCategories', []));
@@ -248,6 +254,10 @@ function mergedDiffersFromRemote(merged, remote) {
       if (a[k] !== bObj[k]) return true;
     }
   }
+  // Ordered email-section config — compare by serialized order + enabled flags.
+  if (JSON.stringify(merged.weeklyEmailSections) !== JSON.stringify(Array.isArray(remote.weeklyEmailSections) ? remote.weeklyEmailSections : null)) {
+    return true;
+  }
   return false;
 }
 
@@ -284,6 +294,7 @@ export function DataProvider({ children }) {
   const [customAssetClasses, setCustomAssetClasses] = useState(loadCustomAssetClasses);
   const [hiddenCards, setHiddenCards] = useState(loadHiddenCards);
   const [paymentReminderPrefs, setPaymentReminderPrefs] = useState(loadPaymentReminderPrefs);
+  const [weeklyEmailSections, setWeeklyEmailSections] = useState(loadWeeklyEmailSections);
   const [rawBalances, setRawBalances] = useState(initialCache?.balances || null);
   const [balanceHistory, setBalanceHistory] = useState(initialCache?.balanceHistory || []);
   // Only true on the first cold load when we have nothing on disk to show.
@@ -328,6 +339,7 @@ export function DataProvider({ children }) {
         const localCustomAssetClasses = loadCustomAssetClasses();
         const localHiddenCards = loadHiddenCards();
         const localPaymentReminderPrefs = loadPaymentReminderPrefs();
+        const localWeeklyEmailSections = loadJSON('weeklyEmailSections', null);
         const localCustomCats = loadCustomCategories();
         const localHiddenCats = loadHiddenCategories();
         const localHiddenIds = loadHiddenIds();
@@ -347,6 +359,8 @@ export function DataProvider({ children }) {
           customAssetClasses: unionStringArray(localCustomAssetClasses, remote.customAssetClasses),
           hiddenCards: unionStringArray(localHiddenCards, remote.hiddenCards),
           paymentReminderPrefs: { ...DEFAULT_PAYMENT_REMINDER_PREFS, ...(remote.paymentReminderPrefs || {}), ...localPaymentReminderPrefs },
+          // Ordered list — prefer this device's choice, else remote, else default.
+          weeklyEmailSections: normalizeEmailSections(localWeeklyEmailSections || remote.weeklyEmailSections),
           customCategories: unionStringArray(localCustomCats, remote.customCategories),
           hiddenCategories: unionSet(localHiddenCats, remote.hiddenCategories),
           hiddenTransactionIds: unionSet(localHiddenIds, remote.hiddenTransactionIds),
@@ -367,6 +381,7 @@ export function DataProvider({ children }) {
         setCustomAssetClasses(merged.customAssetClasses); saveCustomAssetClasses(merged.customAssetClasses);
         setHiddenCards(merged.hiddenCards); saveHiddenCards(merged.hiddenCards);
         setPaymentReminderPrefs(merged.paymentReminderPrefs); savePaymentReminderPrefs(merged.paymentReminderPrefs);
+        setWeeklyEmailSections(merged.weeklyEmailSections); saveWeeklyEmailSections(merged.weeklyEmailSections);
         setCustomCategories(merged.customCategories); saveCustomCategories(merged.customCategories);
         setHiddenCategories(merged.hiddenCategories); saveHiddenCategories(merged.hiddenCategories);
         setHiddenIds(merged.hiddenTransactionIds); saveHiddenIds(merged.hiddenTransactionIds);
@@ -391,6 +406,7 @@ export function DataProvider({ children }) {
             customAssetClasses: merged.customAssetClasses,
             hiddenCards: merged.hiddenCards,
             paymentReminderPrefs: merged.paymentReminderPrefs,
+            weeklyEmailSections: merged.weeklyEmailSections,
             customCategories: merged.customCategories,
             hiddenCategories: [...merged.hiddenCategories],
             hiddenTransactionIds: [...merged.hiddenTransactionIds],
@@ -427,6 +443,7 @@ export function DataProvider({ children }) {
         customAssetClasses,
         hiddenCards,
         paymentReminderPrefs,
+        weeklyEmailSections,
         customCategories,
         hiddenCategories: [...hiddenCategories],
         hiddenTransactionIds: [...hiddenIds],
@@ -449,6 +466,7 @@ export function DataProvider({ children }) {
     customAssetClasses,
     hiddenCards,
     paymentReminderPrefs,
+    weeklyEmailSections,
     customCategories,
     hiddenCategories,
     hiddenIds,
@@ -747,6 +765,14 @@ export function DataProvider({ children }) {
       savePaymentReminderPrefs(next);
       return next;
     });
+  }, []);
+
+  // Replace the full ordered email-section config (order + enabled). Always
+  // normalized so a bad input can't desync from the canonical section list.
+  const updateWeeklyEmailSections = useCallback((nextSections) => {
+    const normalized = normalizeEmailSections(nextSections);
+    setWeeklyEmailSections(normalized);
+    saveWeeklyEmailSections(normalized);
   }, []);
 
   const toggleHideCard = useCallback((cardName) => {
@@ -1075,6 +1101,7 @@ export function DataProvider({ children }) {
     removeCustomAssetClass,
     toggleHideCard,
     updatePaymentReminderPrefs,
+    updateWeeklyEmailSections,
     renameGroup,
     deleteGroup,
     toggleHideTransaction,
@@ -1109,6 +1136,7 @@ export function DataProvider({ children }) {
     removeCustomAssetClass,
     toggleHideCard,
     updatePaymentReminderPrefs,
+    updateWeeklyEmailSections,
     renameGroup,
     deleteGroup,
     toggleHideTransaction,
@@ -1140,6 +1168,7 @@ export function DataProvider({ children }) {
     customAssetClasses,
     hiddenCards,
     paymentReminderPrefs,
+    weeklyEmailSections,
     hiddenTransactions,
     hiddenCount: hiddenIds.size,
   }), [
@@ -1165,6 +1194,7 @@ export function DataProvider({ children }) {
     customAssetClasses,
     hiddenCards,
     paymentReminderPrefs,
+    weeklyEmailSections,
     hiddenTransactions,
     hiddenIds,
   ]);

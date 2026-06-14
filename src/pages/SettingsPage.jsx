@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { buildWeeklySummary, lastCompletedWeek } from '../lib/weeklySummary';
-import { renderWeeklyEmailHtml } from '../lib/renderWeeklyEmail';
+import { renderWeeklyEmailHtml, WEEKLY_EMAIL_SECTIONS } from '../lib/renderWeeklyEmail';
 import { previewPaymentReminder, renderPaymentReminderHtml } from '../lib/paymentReminder';
 import styles from './SettingsPage.module.css';
 
@@ -35,8 +35,9 @@ function saveEmailPrefs(prefs) {
 }
 
 export function SettingsPage() {
-  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs } = useData();
-  const { refresh, updatePaymentReminderPrefs } = useDataActions();
+  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, weeklyEmailSections } = useData();
+  const { refresh, updatePaymentReminderPrefs, updateWeeklyEmailSections } = useDataActions();
+  const SECTION_LABELS = Object.fromEntries(WEEKLY_EMAIL_SECTIONS.map(s => [s.id, s.label]));
   const [emailPrefs, setEmailPrefs] = useState(loadEmailPrefs);
   const [sendStatus, setSendStatus] = useState(null); // null | 'sending' | 'ok' | 'err'
   const [reminderTestStatus, setReminderTestStatus] = useState(null); // null | 'sending' | 'ok' | 'err' | 'none'
@@ -50,8 +51,23 @@ export function SettingsPage() {
       accountNicknames: accountNicknames || {},
       accountGroups: accountGroups || {},
     });
-    return renderWeeklyEmailHtml(summary);
-  }, [transactions, accountNicknames, accountGroups]);
+    return renderWeeklyEmailHtml(summary, { sections: weeklyEmailSections });
+  }, [transactions, accountNicknames, accountGroups, weeklyEmailSections]);
+
+  // Reorder / toggle weekly-email sections. Each handler rebuilds the full
+  // ordered list and persists it (which also syncs to Firestore for the cron).
+  function moveSection(idx, dir) {
+    const arr = (weeklyEmailSections || []).map(s => ({ ...s }));
+    const j = idx + dir;
+    if (j < 0 || j >= arr.length) return;
+    [arr[idx], arr[j]] = [arr[j], arr[idx]];
+    updateWeeklyEmailSections(arr);
+  }
+  function toggleSection(idx) {
+    const arr = (weeklyEmailSections || []).map(s => ({ ...s }));
+    arr[idx] = { ...arr[idx], enabled: !arr[idx].enabled };
+    updateWeeklyEmailSections(arr);
+  }
 
   function updatePrefs(patch) {
     setEmailPrefs(prev => {
@@ -284,6 +300,65 @@ export function SettingsPage() {
             </button>
             {sendStatus === 'ok' && <span style={{ color: '#16a34a', fontSize: 12, fontWeight: 600 }}>✓ Sent — check your inbox.</span>}
             {sendStatus === 'err' && <span style={{ color: '#b91c1c', fontSize: 12, fontWeight: 600 }}>Send failed. Backend not deployed yet?</span>}
+          </div>
+
+          <div className={styles.divider} />
+
+          <div className={styles.cardRow}>
+            <div className={styles.cardRowIcon}>
+              <span className="material-symbols-outlined">reorder</span>
+            </div>
+            <div className={styles.cardRowContent}>
+              <div className={styles.cardRowLabel}>Sections (order &amp; visibility)</div>
+              <div className={styles.cardRowValue} style={{ marginBottom: 8 }}>
+                Reorder with the arrows and toggle the checkbox to show or hide a section. The header and footer always appear.
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxWidth: 460 }}>
+                {(weeklyEmailSections || []).map((s, idx) => (
+                  <div
+                    key={s.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '8px 10px', borderRadius: 8,
+                      border: '1px solid var(--border-ghost)',
+                      background: s.enabled ? 'var(--color-surface)' : 'var(--color-surface-alt)',
+                      opacity: s.enabled ? 1 : 0.6,
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <button
+                        type="button"
+                        onClick={() => moveSection(idx, -1)}
+                        disabled={idx === 0}
+                        title="Move up"
+                        style={{ border: 'none', background: 'transparent', cursor: idx === 0 ? 'default' : 'pointer', color: 'var(--color-text-tertiary)', lineHeight: 0, padding: 0, opacity: idx === 0 ? 0.3 : 1 }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 18 }}>keyboard_arrow_up</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveSection(idx, 1)}
+                        disabled={idx === (weeklyEmailSections.length - 1)}
+                        title="Move down"
+                        style={{ border: 'none', background: 'transparent', cursor: idx === (weeklyEmailSections.length - 1) ? 'default' : 'pointer', color: 'var(--color-text-tertiary)', lineHeight: 0, padding: 0, opacity: idx === (weeklyEmailSections.length - 1) ? 0.3 : 1 }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 18 }}>keyboard_arrow_down</span>
+                      </button>
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-tertiary)', width: 18, textAlign: 'center' }}>{idx + 1}</span>
+                    <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                      {SECTION_LABELS[s.id] || s.id}
+                    </span>
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={s.enabled} onChange={() => toggleSection(idx)} />
+                      <span style={{ fontSize: 12, fontWeight: 600, color: s.enabled ? 'var(--color-success)' : 'var(--color-text-tertiary)' }}>
+                        {s.enabled ? 'Shown' : 'Hidden'}
+                      </span>
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
 
           <div className={styles.divider} />

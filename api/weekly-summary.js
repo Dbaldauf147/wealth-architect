@@ -157,6 +157,7 @@ export default async function handler(req, res) {
     // in SVG-stripping clients) rather than failing the whole send.
     const attachments = [];
     const html = renderWeeklyEmailHtml(summary, {
+      sections: config && config.weeklyEmailSections,
       chart: (key, svg, meta) => {
         try {
           const png = svgToPng(svg, meta && meta.w);
