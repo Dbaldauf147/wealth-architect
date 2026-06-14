@@ -94,8 +94,36 @@ function renderMonthCompareSvg(mc) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VB_W} ${VB_H}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block;max-width:100%;height:auto;">${gridLines}${yLabels}${xLabels}${lastLine}${thisLine}${priorDot}${todayDot}</svg>`;
 }
 
+// Inline range sparkline mirroring the Budgets page "Normal Range Tracker"
+// graphic: a shaded green ±25% band, dashed average line, the 6-month spend
+// line, and dots with the current month accented (red when above range).
+function renderRangeSparklineSvg(item) {
+  const w = 180, h = 56, padX = 4, padY = 4;
+  const { series, high, low, avg } = item;
+  if (!series || series.length === 0) return '';
+  const allVals = [...series.map(s => s.value), high, avg, low].filter(v => v > 0);
+  const max = allVals.length ? Math.max(...allVals) * 1.15 : 1;
+  const range = max || 1;
+  const yPos = v => padY + (h - 2 * padY) * (1 - v / range);
+  const xStep = (w - 2 * padX) / Math.max(series.length - 1, 1);
+  const xPos = i => padX + i * xStep;
+  const path = series.map((s, i) => `${i === 0 ? 'M' : 'L'} ${xPos(i).toFixed(1)} ${yPos(s.value).toFixed(1)}`).join(' ');
+  const yHigh = yPos(high), yLow = yPos(low), yAvg = yPos(avg);
+  const band = avg > 0 ? `<rect x="${padX}" y="${yHigh.toFixed(1)}" width="${w - 2 * padX}" height="${Math.max(yLow - yHigh, 1).toFixed(1)}" fill="#16a34a" opacity="0.12" rx="2" />` : '';
+  const avgLine = avg > 0 ? `<line x1="${padX}" y1="${yAvg.toFixed(1)}" x2="${w - padX}" y2="${yAvg.toFixed(1)}" stroke="#16a34a" stroke-width="1" stroke-dasharray="3 3" opacity="0.7" />` : '';
+  const spend = `<path d="${path}" fill="none" stroke="#64748b" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />`;
+  const dots = series.map((s, i) => {
+    const above = avg > 0 && s.value > high;
+    const below = avg > 0 && s.value < low && s.value > 0;
+    const color = s.isCurrent ? (above ? '#ba1a1a' : below ? '#e8a317' : '#16a34a') : '#94a3b8';
+    const r = s.isCurrent ? 3.5 : 2.5;
+    return `<circle cx="${xPos(i).toFixed(1)}" cy="${yPos(s.value).toFixed(1)}" r="${r}" fill="${color}" />`;
+  }).join('');
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="display:block;">${band}${avgLine}${spend}${dots}</svg>`;
+}
+
 export function renderWeeklyEmailHtml(summary) {
-  const { range, expenseTotal, wowDelta, wowPct, topCategories, topMerchants, uncategorized, transactionCount, uncategorizedCount, monthlyTrends, monthCompare } = summary;
+  const { range, expenseTotal, wowDelta, wowPct, topCategories, topMerchants, uncategorized, transactionCount, uncategorizedCount, monthlyTrends, monthCompare, aboveRange } = summary;
 
   const deltaStr = wowPct == null
     ? 'No prior-week data'
@@ -265,6 +293,29 @@ export function renderWeeklyEmailHtml(summary) {
       </td>
     </tr>`;
     })() : ''}
+
+    ${aboveRange && aboveRange.length ? `
+    <tr>
+      <td style="padding:20px 28px 0;">
+        <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:4px;">Above Normal Range</div>
+          <div style="font-size:12px;color:#64748b;margin-bottom:14px;">Categories spending more than their usual range (3-month average ±25%) this month.</div>
+          ${aboveRange.map(item => `
+          <table role="presentation" width="100%" style="border-collapse:collapse;margin-bottom:14px;">
+            <tr>
+              <td style="vertical-align:middle;padding-right:12px;">
+                <div style="font-size:13px;font-weight:700;color:#111;">${escapeHtml(item.name)}</div>
+                <div style="font-size:12px;color:#b91c1c;margin-top:2px;font-variant-numeric:tabular-nums;">▲ ${money(item.current)} <span style="color:#64748b;">(${item.overPct >= 0 ? '+' : ''}${Math.round(item.overPct)}% vs avg)</span></div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:2px;font-variant-numeric:tabular-nums;">Normal range ${money(item.low)} – ${money(item.high)}</div>
+              </td>
+              <td style="vertical-align:middle;text-align:right;width:188px;">
+                ${renderRangeSparklineSvg(item)}
+              </td>
+            </tr>
+          </table>`).join('')}
+        </div>
+      </td>
+    </tr>` : ''}
 
     ${uncategorized.length ? `
     <tr>
