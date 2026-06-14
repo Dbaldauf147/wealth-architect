@@ -340,6 +340,29 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
     </tr>`;
     })() : ''}
 
+    ${aboveRange && aboveRange.length ? `
+    <tr>
+      <td style="padding:0 28px;">
+        <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:4px;">Above Normal Range</div>
+          <div style="font-size:12px;color:#64748b;margin-bottom:14px;">Categories spending more than their usual range (3-month average ±25%) this month.</div>
+          ${aboveRange.map((item, i) => `
+          <table role="presentation" width="100%" style="border-collapse:collapse;margin-bottom:14px;">
+            <tr>
+              <td style="vertical-align:middle;padding-right:12px;">
+                <div style="font-size:13px;font-weight:700;color:#111;">${escapeHtml(item.name)}</div>
+                <div style="font-size:12px;color:#b91c1c;margin-top:2px;font-variant-numeric:tabular-nums;">▲ ${money(item.current)} <span style="color:#64748b;">(${item.overPct >= 0 ? '+' : ''}${Math.round(item.overPct)}% vs avg)</span></div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:2px;font-variant-numeric:tabular-nums;">Normal range ${money(item.low)} – ${money(item.high)}</div>
+              </td>
+              <td style="vertical-align:middle;text-align:right;width:188px;">
+                ${chart('rangeChart' + i, renderRangeSparklineSvg(item), { w: 180, h: 56 })}
+              </td>
+            </tr>
+          </table>`).join('')}
+        </div>
+      </td>
+    </tr>` : ''}
+
     ${topCategories.length ? `
     <tr>
       <td style="padding:0 28px;">
@@ -404,29 +427,6 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
       </td>
     </tr>`;
     })() : ''}
-
-    ${aboveRange && aboveRange.length ? `
-    <tr>
-      <td style="padding:20px 28px 0;">
-        <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
-          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:4px;">Above Normal Range</div>
-          <div style="font-size:12px;color:#64748b;margin-bottom:14px;">Categories spending more than their usual range (3-month average ±25%) this month.</div>
-          ${aboveRange.map((item, i) => `
-          <table role="presentation" width="100%" style="border-collapse:collapse;margin-bottom:14px;">
-            <tr>
-              <td style="vertical-align:middle;padding-right:12px;">
-                <div style="font-size:13px;font-weight:700;color:#111;">${escapeHtml(item.name)}</div>
-                <div style="font-size:12px;color:#b91c1c;margin-top:2px;font-variant-numeric:tabular-nums;">▲ ${money(item.current)} <span style="color:#64748b;">(${item.overPct >= 0 ? '+' : ''}${Math.round(item.overPct)}% vs avg)</span></div>
-                <div style="font-size:11px;color:#94a3b8;margin-top:2px;font-variant-numeric:tabular-nums;">Normal range ${money(item.low)} – ${money(item.high)}</div>
-              </td>
-              <td style="vertical-align:middle;text-align:right;width:188px;">
-                ${chart('rangeChart' + i, renderRangeSparklineSvg(item), { w: 180, h: 56 })}
-              </td>
-            </tr>
-          </table>`).join('')}
-        </div>
-      </td>
-    </tr>` : ''}
 
     ${uncategorized.length ? `
     <tr>
