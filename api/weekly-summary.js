@@ -63,6 +63,11 @@ async function fetchTransactionsFromSheet() {
       account: obj['Account'] || '',
       institution: obj['Institution'] || '',
       transactionId: obj['Transaction ID'] || '',
+      // Full Description is what many category rules match against (the short
+      // Description is often truncated). Without it, server-side rule matching
+      // silently fails and the email shows transactions as uncategorized even
+      // though the website categorizes them. Mirror sheets.js here.
+      fullDescription: obj['Full Description'] || '',
     };
   }).filter(t => t.date && t.description);
 }
