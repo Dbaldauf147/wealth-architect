@@ -288,9 +288,9 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
       const paceColor = wc.paceDelta > 0 ? '#b91c1c' : '#16a34a';
       const paceSign = wc.paceDelta >= 0 ? '▲' : '▼';
       return `
-          <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#64748b;margin-bottom:6px;">This Week vs Normal</div>
+          <div style="font-size:15px;font-weight:700;letter-spacing:0.03em;text-transform:uppercase;color:#334155;margin-bottom:10px;">This Week vs Normal</div>
           ${chart('weekChart', renderWeekCompareSvg(wc), { w: 560, h: 220 })}
-          <div style="font-size:11px;color:#64748b;margin-top:6px;font-variant-numeric:tabular-nums;">
+          <div style="font-size:15px;color:#475569;margin-top:10px;line-height:1.5;font-variant-numeric:tabular-nums;">
             <strong style="color:#111;">${money(wc.thisTotalToDate)}</strong> this wk · ${money(wc.normalFull)} normal · <span style="color:${paceColor};font-weight:700;">${paceSign} ${money(Math.abs(wc.paceDelta))}</span>
           </div>`;
     })() : '';
@@ -299,9 +299,9 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
       const paceColor = mc.paceDelta > 0 ? '#b91c1c' : '#16a34a';
       const paceSign = mc.paceDelta >= 0 ? '▲' : '▼';
       return `
-          <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#64748b;margin-bottom:6px;">${escapeHtml(mc.thisMonthLabel)} vs ${escapeHtml(mc.lastMonthLabel)}</div>
+          <div style="font-size:15px;font-weight:700;letter-spacing:0.03em;text-transform:uppercase;color:#334155;margin-bottom:10px;">${escapeHtml(mc.thisMonthLabel)} vs ${escapeHtml(mc.lastMonthLabel)}</div>
           ${chart('monthChart', renderMonthCompareSvg(mc), { w: 560, h: 220 })}
-          <div style="font-size:11px;color:#64748b;margin-top:6px;font-variant-numeric:tabular-nums;">
+          <div style="font-size:15px;color:#475569;margin-top:10px;line-height:1.5;font-variant-numeric:tabular-nums;">
             <strong style="color:#111;">${money(mc.thisTotalToDate)}</strong> ${escapeHtml(mc.thisMonthLabel)} · ${money(mc.lastTotalFinal)} ${escapeHtml(mc.lastMonthLabel)} · <span style="color:${paceColor};font-weight:700;">${paceSign} ${money(Math.abs(mc.paceDelta))}</span>
           </div>`;
     })() : '';
