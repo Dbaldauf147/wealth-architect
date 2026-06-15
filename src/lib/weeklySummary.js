@@ -166,6 +166,17 @@ export function monthCompare({ transactions, asOf = new Date() }) {
   const dailyThis = new Array(thisMonthDays + 1).fill(0);
   const dailyLast = new Array(lastMonthDays + 1).fill(0);
 
+  // Trailing 12 complete months (prior to the current month), keyed "year-month".
+  // We accumulate per-day spend for each so we can draw a "typical month"
+  // (12-month average) cumulative line alongside this/last month.
+  const TRAILING = 12;
+  const trailingKeys = new Set();
+  for (let i = 1; i <= TRAILING; i++) {
+    const d = new Date(thisYear, thisMonth - i, 1);
+    trailingKeys.add(`${d.getFullYear()}-${d.getMonth()}`);
+  }
+  const trailingDaily = new Map(); // key -> number[] indexed by day (1..31)
+
   for (const t of (transactions || [])) {
     if (!t.date || !(t.amount < 0)) continue;
     const cat = (t.category || '').toLowerCase();
@@ -182,12 +193,41 @@ export function monthCompare({ transactions, asOf = new Date() }) {
     } else if (y === lastYear && m === lastMonth && day <= lastMonthDays) {
       dailyLast[day] += amt;
     }
+    const mKey = `${y}-${m}`;
+    if (trailingKeys.has(mKey)) {
+      let arr = trailingDaily.get(mKey);
+      if (!arr) { arr = new Array(32).fill(0); trailingDaily.set(mKey, arr); }
+      arr[day] += amt;
+    }
   }
 
   const cumThis = new Array(today + 1).fill(0);
   for (let i = 1; i <= today; i++) cumThis[i] = cumThis[i - 1] + dailyThis[i];
   const cumLast = new Array(lastMonthDays + 1).fill(0);
   for (let i = 1; i <= lastMonthDays; i++) cumLast[i] = cumLast[i - 1] + dailyLast[i];
+
+  // 12-month "typical month" cumulative curve: average each day-of-month's
+  // spend across the trailing months that have data (a month counts toward a
+  // given day only if it's long enough to have that day), then cumulate.
+  const sumByDom = new Array(32).fill(0);
+  const countByDom = new Array(32).fill(0);
+  for (const [key, arr] of trailingDaily) {
+    const [yy, mm] = key.split('-').map(Number);
+    const dim = new Date(yy, mm + 1, 0).getDate();
+    for (let dd = 1; dd <= dim; dd++) {
+      sumByDom[dd] += arr[dd];
+      countByDom[dd] += 1;
+    }
+  }
+  const avgMonths = trailingDaily.size;
+  const avgCum = new Array(32).fill(0);
+  for (let i = 1; i <= 31; i++) {
+    const avgDay = countByDom[i] > 0 ? sumByDom[i] / countByDom[i] : 0;
+    avgCum[i] = avgCum[i - 1] + avgDay;
+  }
+  // Furthest day the average curve has data for (so the UI knows where to stop).
+  let avgDays = 0;
+  for (let i = 1; i <= 31; i++) if (countByDom[i] > 0) avgDays = i;
 
   const thisTotalToDate = cumThis[today] || 0;
   const lastTotalSame = cumLast[Math.min(today, lastMonthDays)] || 0;
@@ -204,6 +244,9 @@ export function monthCompare({ transactions, asOf = new Date() }) {
     dailyLast,
     cumThis,
     cumLast,
+    avgCum,
+    avgDays,
+    avgMonths,
     thisTotalToDate,
     lastTotalSame,
     lastTotalFinal,

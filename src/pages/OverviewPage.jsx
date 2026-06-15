@@ -866,9 +866,12 @@ export function OverviewPage() {
           const cW = VB_W - pad.left - pad.right;
           const cH = VB_H - pad.top - pad.bottom;
           const maxDay = Math.max(monthCompare.thisMonthDays, monthCompare.lastMonthDays);
+          const avgCum = monthCompare.avgCum || [];
+          const avgDays = monthCompare.avgDays || 0;
           const yMax = Math.max(
             monthCompare.cumThis[monthCompare.today] || 0,
             monthCompare.cumLast[monthCompare.lastMonthDays] || 0,
+            avgCum[avgDays] || 0,
             1,
           ) * 1.08;
 
@@ -879,8 +882,12 @@ export function OverviewPage() {
           for (let i = 1; i <= monthCompare.today; i++) thisPts.push({ x: xPos(i), y: yPos(monthCompare.cumThis[i]) });
           const lastPts = [];
           for (let i = 1; i <= monthCompare.lastMonthDays; i++) lastPts.push({ x: xPos(i), y: yPos(monthCompare.cumLast[i]) });
+          // 12-month average curve, clamped to the chart's day span.
+          const avgPts = [];
+          for (let i = 1; i <= Math.min(avgDays, maxDay); i++) avgPts.push({ x: xPos(i), y: yPos(avgCum[i]) });
           const lastPath = lastPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
           const thisPath = thisPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+          const avgPath = avgPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
 
           // Y-axis ticks — 4 lines.
           const tickCount = 4;
@@ -921,6 +928,10 @@ export function OverviewPage() {
                   </text>
                 ))}
 
+                {/* 12-month average line — amber dashed */}
+                {avgPts.length >= 2 && (
+                  <path d={avgPath} fill="none" stroke="#e8a317" strokeWidth="2" strokeDasharray="1 4" strokeLinecap="round" strokeLinejoin="round" />
+                )}
                 {/* Last month line — dotted */}
                 {lastPts.length >= 2 && (
                   <path d={lastPath} fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" />
@@ -956,6 +967,12 @@ export function OverviewPage() {
                   <span style={{ display: 'inline-block', width: 18, height: 2, background: 'repeating-linear-gradient(90deg, #94a3b8 0 4px, transparent 4px 8px)' }} />
                   {monthCompare.lastMonthLabel}
                 </div>
+                {avgPts.length >= 2 && (
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ display: 'inline-block', width: 18, height: 2, background: 'repeating-linear-gradient(90deg, #e8a317 0 2px, transparent 2px 5px)' }} />
+                    12-mo avg{monthCompare.avgMonths ? ` (${monthCompare.avgMonths} mo)` : ''}
+                  </div>
+                )}
               </div>
             </div>
           );
