@@ -121,6 +121,51 @@ const SEED_PROMOS = [
   },
 ];
 
+/* ── Reward optimization matrix: best card per spending category ──
+   Static reference of effective cash-back / points rates across the user's
+   cards, so the best card to swipe for each category is at a glance. */
+const REWARD_MATRIX = [
+  { cat: 'Amazon / Whole Foods / Amazon Fresh', best: 'Prime Visa', rate: '5%', runner: '—' },
+  { cat: 'Dining / Restaurants', best: 'Sapphire Reserve', rate: '~4.5% (3X)', runner: 'BofA 3% if selected' },
+  { cat: 'Gas / EV charging', best: 'BofA (if selected)', rate: '3%', runner: 'Prime Visa 2%' },
+  { cat: 'Travel — booked via Chase Travel', best: 'Sapphire Reserve', rate: '~12% (8X)', runner: 'Prime Visa 5%' },
+  { cat: 'Travel — booked direct (flights/hotels)', best: 'Sapphire Reserve', rate: '~6% (4X)', runner: 'BofA 3% if selected' },
+  { cat: 'Transit / rideshare', best: 'Prime Visa', rate: '2%', runner: '—' },
+  { cat: 'Groceries (supermarkets)', best: 'BofA', rate: '2%', runner: '—' },
+  { cat: 'Wholesale clubs', best: 'BofA', rate: '2%', runner: '—' },
+  { cat: 'Drugstores / pharmacies', best: 'BofA (if selected)', rate: '3%', runner: 'all others 1%' },
+  { cat: 'Online shopping (non-Amazon)', best: 'BofA (if selected)', rate: '3%', runner: 'all others 1%' },
+  { cat: 'Home improvement', best: 'BofA (if selected)', rate: '3%', runner: 'all others 1%' },
+  { cat: 'Everything else', best: 'Sapphire Reserve', rate: '~1.5%', runner: 'Prime Visa / BofA 1%' },
+];
+
+function rewardCardColor(best) {
+  const b = (best || '').toLowerCase();
+  if (b.includes('prime')) return '#00a8e1';
+  if (b.includes('sapphire')) return '#0058be';
+  if (b.includes('bofa') || b.includes('bank of america')) return '#e31837';
+  return '#475569';
+}
+
+// Per-card rate grid. `best` is the column index (0=Sapphire, 1=Prime, 2=BofA)
+// of the winning card for that row, used to highlight the best cell.
+const CARD_RATE_COLUMNS = ['Sapphire Reserve', 'Prime Visa', 'BofA Customized Cash'];
+const CARD_RATE_COLORS = ['#0058be', '#00a8e1', '#e31837'];
+const CARD_RATE_MATRIX = [
+  { cat: 'Amazon / Whole Foods / Amazon Fresh', rates: ['1X', '5%', '1%'], best: 1 },
+  { cat: 'Dining / Restaurants', rates: ['3X', '2%', '1% (or 3% if selected)'], best: 0 },
+  { cat: 'Gas / EV charging', rates: ['1X', '2%', '3% (your likely default)'], best: 2 },
+  { cat: 'Travel (booked direct)', rates: ['4X flights & hotels', '1%', '1% (or 3% if selected)'], best: 0 },
+  { cat: 'Travel (via card portal)', rates: ['8X (Chase Travel)', '5% (Chase Travel)', '1% (or 3% if selected)'], best: 0 },
+  { cat: 'Transit / rideshare', rates: ['1X', '2%', '1%'], best: 1 },
+  { cat: 'Groceries (supermarkets)', rates: ['1X', '1%', '2%'], best: 2 },
+  { cat: 'Wholesale clubs', rates: ['1X', '1%', '2%'], best: 2 },
+  { cat: 'Drugstores / pharmacies', rates: ['1X', '1%', '1% (or 3% if selected)'], best: 2 },
+  { cat: 'Online shopping', rates: ['1X', '1%', '1% (or 3% if selected)'], best: 2 },
+  { cat: 'Home improvement', rates: ['1X', '1%', '1% (or 3% if selected)'], best: 2 },
+  { cat: 'Everything else', rates: ['1X', '1%', '1%'], best: 0 },
+];
+
 const STORAGE_KEY = 'cardPromos';
 
 function loadPromos() {
@@ -275,6 +320,9 @@ export function CardPromosPage() {
         <StatCard label="Remaining" value={fmt(totals.remaining)} color="#e8a317" icon="schedule" sub="Still available this cycle" />
       </div>
 
+      {/* Cash-back reward matrix */}
+      <CashBackSummary />
+
       {/* Grouped by card */}
       {byCard.length === 0 && (
         <div style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
@@ -414,6 +462,90 @@ export function CardPromosPage() {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function CashBackSummary() {
+  const cardStyle = { background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' };
+  const th = { padding: '8px 10px', textAlign: 'left', fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', borderBottom: '1px solid var(--border-ghost)', whiteSpace: 'nowrap' };
+  const td = { padding: '9px 10px', fontSize: 12.5, borderBottom: '1px solid var(--border-ghost)', verticalAlign: 'middle' };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Best card per category */}
+      <div style={cardStyle}>
+        <div style={{ fontFamily: 'var(--font-headline)', fontSize: 16, fontWeight: 700, marginBottom: 2 }}>Cash Back by Category</div>
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 14 }}>The best card to use for each spending category, with effective rate and runner-up.</div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520 }}>
+            <thead>
+              <tr>
+                <th style={th}>Spending Category</th>
+                <th style={th}>🏆 Best Card</th>
+                <th style={{ ...th, textAlign: 'right' }}>Effective Rate</th>
+                <th style={th}>Runner-up</th>
+              </tr>
+            </thead>
+            <tbody>
+              {REWARD_MATRIX.map((r, i) => (
+                <tr key={i}>
+                  <td style={{ ...td, fontWeight: 600, color: 'var(--color-text-primary)' }}>{r.cat}</td>
+                  <td style={td}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: rewardCardColor(r.best), flexShrink: 0 }} />
+                      <span style={{ fontWeight: 600 }}>{r.best}</span>
+                    </span>
+                  </td>
+                  <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#16a34a', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{r.rate}</td>
+                  <td style={{ ...td, color: 'var(--color-text-tertiary)' }}>{r.runner}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Per-card rate grid */}
+      <div style={cardStyle}>
+        <div style={{ fontFamily: 'var(--font-headline)', fontSize: 16, fontWeight: 700, marginBottom: 2 }}>Rate by Card</div>
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 14 }}>Every card's rate per category — the best in each row is highlighted in green.</div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 580 }}>
+            <thead>
+              <tr>
+                <th style={th}>Spending Category</th>
+                {CARD_RATE_COLUMNS.map((c, i) => (
+                  <th key={i} style={{ ...th, textAlign: 'right' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: CARD_RATE_COLORS[i] }} />{c}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {CARD_RATE_MATRIX.map((r, i) => (
+                <tr key={i}>
+                  <td style={{ ...td, fontWeight: 600, color: 'var(--color-text-primary)' }}>{r.cat}</td>
+                  {r.rates.map((rate, j) => {
+                    const win = j === r.best;
+                    return (
+                      <td key={j} style={{
+                        ...td, textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums',
+                        fontWeight: win ? 700 : 500,
+                        color: win ? '#16a34a' : 'var(--color-text-secondary)',
+                        background: win ? 'rgba(22,163,74,0.07)' : 'transparent',
+                      }}>
+                        {rate}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
