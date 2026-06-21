@@ -130,6 +130,11 @@ const loadCustomCategories = () => loadJSON('customCategories', []);
 const saveCustomCategories = (v) => saveJSON('customCategories', v);
 const loadHiddenCategories = () => new Set(loadJSON('hiddenCategories', []));
 const saveHiddenCategories = (cats) => saveJSON('hiddenCategories', [...cats]);
+// Categories the user has opted out of the Normal Range Tracker. Synced via
+// Firestore so the server-side weekly email also drops them from its
+// "Above Normal Range" section. Stored as a plain string array.
+const loadRangeExcludedCategories = () => loadJSON('rangeExcludedCategories', []);
+const saveRangeExcludedCategories = (v) => saveJSON('rangeExcludedCategories', v);
 
 // ── Stale-while-revalidate cache for sheet data ─────────────────────────
 // The Google Sheets fetch is the slowest part of a cold load. We persist
@@ -230,6 +235,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.customAssetClasses, remote.customAssetClasses],
     [merged.hiddenCards, remote.hiddenCards],
     [[...merged.hiddenCategories], remote.hiddenCategories],
+    [merged.rangeExcludedCategories, remote.rangeExcludedCategories],
     [[...merged.hiddenTransactionIds], remote.hiddenTransactionIds],
   ];
   for (const [a, b] of checks) {
@@ -285,6 +291,7 @@ export function DataProvider({ children }) {
   const [dateOverrides, setDateOverrides] = useState(loadDateOverrides);
   const [customCategories, setCustomCategories] = useState(loadCustomCategories);
   const [hiddenCategories, setHiddenCategories] = useState(loadHiddenCategories);
+  const [rangeExcludedCategories, setRangeExcludedCategories] = useState(loadRangeExcludedCategories);
   const [transactionNotes, setTransactionNotes] = useState(loadNotes);
   const [accountNicknames, setAccountNicknames] = useState(loadAccountNicknames);
   const [accountGroups, setAccountGroups] = useState(loadAccountGroups);
@@ -342,6 +349,7 @@ export function DataProvider({ children }) {
         const localWeeklyEmailSections = loadJSON('weeklyEmailSections', null);
         const localCustomCats = loadCustomCategories();
         const localHiddenCats = loadHiddenCategories();
+        const localRangeExcluded = loadRangeExcludedCategories();
         const localHiddenIds = loadHiddenIds();
 
         const merged = {
@@ -363,6 +371,7 @@ export function DataProvider({ children }) {
           weeklyEmailSections: normalizeEmailSections(localWeeklyEmailSections || remote.weeklyEmailSections),
           customCategories: unionStringArray(localCustomCats, remote.customCategories),
           hiddenCategories: unionSet(localHiddenCats, remote.hiddenCategories),
+          rangeExcludedCategories: unionStringArray(localRangeExcluded, remote.rangeExcludedCategories),
           hiddenTransactionIds: unionSet(localHiddenIds, remote.hiddenTransactionIds),
         };
 
@@ -384,6 +393,7 @@ export function DataProvider({ children }) {
         setWeeklyEmailSections(merged.weeklyEmailSections); saveWeeklyEmailSections(merged.weeklyEmailSections);
         setCustomCategories(merged.customCategories); saveCustomCategories(merged.customCategories);
         setHiddenCategories(merged.hiddenCategories); saveHiddenCategories(merged.hiddenCategories);
+        setRangeExcludedCategories(merged.rangeExcludedCategories); saveRangeExcludedCategories(merged.rangeExcludedCategories);
         setHiddenIds(merged.hiddenTransactionIds); saveHiddenIds(merged.hiddenTransactionIds);
 
         // If the union added anything that wasn't in the remote, push it
@@ -409,6 +419,7 @@ export function DataProvider({ children }) {
             weeklyEmailSections: merged.weeklyEmailSections,
             customCategories: merged.customCategories,
             hiddenCategories: [...merged.hiddenCategories],
+            rangeExcludedCategories: merged.rangeExcludedCategories,
             hiddenTransactionIds: [...merged.hiddenTransactionIds],
             updatedAt: new Date().toISOString(),
           });
@@ -446,6 +457,7 @@ export function DataProvider({ children }) {
         weeklyEmailSections,
         customCategories,
         hiddenCategories: [...hiddenCategories],
+        rangeExcludedCategories,
         hiddenTransactionIds: [...hiddenIds],
         updatedAt: new Date().toISOString(),
       }).catch(err => console.warn('Firestore config sync (write) failed:', err));
@@ -469,6 +481,7 @@ export function DataProvider({ children }) {
     weeklyEmailSections,
     customCategories,
     hiddenCategories,
+    rangeExcludedCategories,
     hiddenIds,
   ]);
 
@@ -782,6 +795,20 @@ export function DataProvider({ children }) {
         ? prev.filter(n => n !== cardName)
         : [...prev, cardName];
       saveHiddenCards(next);
+      return next;
+    });
+  }, []);
+
+  // Add/remove a category from the Normal Range Tracker exclusion list. An
+  // excluded category disappears from the tracker on the Budgets page and from
+  // the weekly email's "Above Normal Range" section.
+  const toggleRangeExcludedCategory = useCallback((cat) => {
+    if (!cat) return;
+    setRangeExcludedCategories(prev => {
+      const next = prev.includes(cat)
+        ? prev.filter(c => c !== cat)
+        : [...prev, cat];
+      saveRangeExcludedCategories(next);
       return next;
     });
   }, []);
@@ -1100,6 +1127,7 @@ export function DataProvider({ children }) {
     addCustomAssetClass,
     removeCustomAssetClass,
     toggleHideCard,
+    toggleRangeExcludedCategory,
     updatePaymentReminderPrefs,
     updateWeeklyEmailSections,
     renameGroup,
@@ -1135,6 +1163,7 @@ export function DataProvider({ children }) {
     addCustomAssetClass,
     removeCustomAssetClass,
     toggleHideCard,
+    toggleRangeExcludedCategory,
     updatePaymentReminderPrefs,
     updateWeeklyEmailSections,
     renameGroup,
@@ -1158,6 +1187,7 @@ export function DataProvider({ children }) {
     subcategoryRules,
     customCategories,
     hiddenCategories,
+    rangeExcludedCategories,
     transactionNotes,
     accountNicknames,
     accountNumbers,
@@ -1184,6 +1214,7 @@ export function DataProvider({ children }) {
     subcategoryRules,
     customCategories,
     hiddenCategories,
+    rangeExcludedCategories,
     transactionNotes,
     accountNicknames,
     accountNumbers,

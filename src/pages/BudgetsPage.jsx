@@ -1,5 +1,5 @@
 import { useState, useMemo, Fragment } from 'react';
-import { useData } from '../contexts/DataContext';
+import { useData, useDataActions } from '../contexts/DataContext';
 import { useBudgets } from '../hooks/useBudgets';
 import { BudgetCard } from '../components/BudgetCard';
 import BudgetChart from '../components/BudgetChart';
@@ -131,7 +131,9 @@ function RangeSparkline({ series, low, high, avg }) {
 }
 
 export function BudgetsPage() {
-  const { analytics, transactions } = useData();
+  const { analytics, transactions, rangeExcludedCategories } = useData();
+  const { toggleRangeExcludedCategory } = useDataActions();
+  const rangeExcludedSet = useMemo(() => new Set(rangeExcludedCategories || []), [rangeExcludedCategories]);
   const { budgets, loading, addBudget, updateBudget, deleteBudget, addSubBudget, updateSubBudget, deleteSubBudget } = useBudgets();
   const totalExpenses = analytics?.totalExpenses || 0;
   const totalIncome = analytics?.totalIncome || 0;
@@ -368,6 +370,22 @@ export function BudgetsPage() {
       return next;
     });
   }
+  // Exclude a category from the tracker entirely (and from the weekly email),
+  // or restore a previously-excluded one. When excluding, also drop it from the
+  // active tracker selection so it disappears from the detail table immediately.
+  function toggleExcludeRangeCat(cat) {
+    const wasExcluded = rangeExcludedSet.has(cat);
+    toggleRangeExcludedCategory(cat);
+    if (!wasExcluded) {
+      setRangeCats(prev => {
+        if (!prev.has(cat)) return prev;
+        const next = new Set(prev);
+        next.delete(cat);
+        localStorage.setItem(RANGE_KEY, JSON.stringify([...next]));
+        return next;
+      });
+    }
+  }
 
   // All categories available from the data, sorted, with their bucketing status so the
   // selection pills can be grouped by Above / On Track / Under / No Baseline.
@@ -437,6 +455,7 @@ export function BudgetsPage() {
     const byCatMonth = new Map();
     for (const t of transactions) {
       if (!t.category || !rangeCats.has(t.category)) continue;
+      if (rangeExcludedSet.has(t.category)) continue;
       const amt = Number(t.amount) || 0;
       if (amt >= 0) continue;
       if (!t.date) continue;
@@ -483,7 +502,7 @@ export function BudgetsPage() {
     }
     result.sort((a, b) => a.cat.localeCompare(b.cat));
     return result;
-  }, [rangeCats, transactions]);
+  }, [rangeCats, transactions, rangeExcludedSet]);
 
   // New budget form
   const [adding, setAdding] = useState(false);
@@ -720,30 +739,63 @@ export function BudgetsPage() {
             ];
             const byStatus = pillBuckets.map(b => ({
               ...b,
-              cats: allCategoriesForRange.filter(c => c.status === b.key || (b.key === 'no-data' && c.status === 'no-spend')),
+              cats: allCategoriesForRange.filter(c => !rangeExcludedSet.has(c.name) && (c.status === b.key || (b.key === 'no-data' && c.status === 'no-spend'))),
             }));
+            // Excluded categories — shown in their own row so they can be
+            // restored. Sourced from the saved list (not just current data) so
+            // an excluded category with no recent spend can still be brought back.
+            const excludedCats = [...(rangeExcludedCategories || [])].sort((a, b) => a.localeCompare(b));
             const renderPill = (c, b) => {
               const on = rangeCats.has(c.name);
               return (
-                <button
+                <span
                   key={c.name}
-                  type="button"
-                  onClick={() => toggleRangeCat(c.name)}
-                  title={`${b.label} — click to ${on ? 'remove from' : 'add to'} the tracker`}
                   style={{
-                    padding: '4px 10px',
+                    display: 'inline-flex',
+                    alignItems: 'stretch',
                     borderRadius: 999,
-                    fontSize: 11.5,
-                    fontWeight: 600,
+                    overflow: 'hidden',
                     border: '1px solid',
                     borderColor: on ? b.borderOn : 'var(--border-ghost)',
                     background: on ? b.bg : 'var(--color-surface)',
-                    color: on ? b.fg : 'var(--color-text-tertiary)',
-                    cursor: 'pointer',
                   }}
                 >
-                  {c.name}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleRangeCat(c.name)}
+                    title={`${b.label} — click to ${on ? 'remove from' : 'add to'} the tracker`}
+                    style={{
+                      padding: '4px 6px 4px 10px',
+                      fontSize: 11.5,
+                      fontWeight: 600,
+                      border: 'none',
+                      background: 'transparent',
+                      color: on ? b.fg : 'var(--color-text-tertiary)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {c.name}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleExcludeRangeCat(c.name)}
+                    title={`Exclude ${c.name} from the tracker and weekly emails`}
+                    aria-label={`Exclude ${c.name}`}
+                    style={{
+                      padding: '0 7px 0 3px',
+                      border: 'none',
+                      background: 'transparent',
+                      color: 'var(--color-text-tertiary)',
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      lineHeight: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    ×
+                  </button>
+                </span>
               );
             };
             return (
@@ -763,6 +815,42 @@ export function BudgetsPage() {
                     </div>
                   </div>
                 ))}
+                {excludedCats.length > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, borderTop: '1px dashed var(--border-ghost)', paddingTop: 8 }}>
+                    <div style={{ minWidth: 110, paddingTop: 4 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: 'var(--color-surface-alt)', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Excluded
+                      </span>
+                      <span style={{ marginLeft: 6, fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{excludedCats.length}</span>
+                    </div>
+                    <div style={{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {excludedCats.map(name => (
+                        <button
+                          key={name}
+                          type="button"
+                          onClick={() => toggleExcludeRangeCat(name)}
+                          title={`Restore ${name} to the tracker and weekly emails`}
+                          style={{
+                            padding: '4px 10px',
+                            borderRadius: 999,
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            border: '1px dashed var(--border-ghost)',
+                            background: 'var(--color-surface)',
+                            color: 'var(--color-text-tertiary)',
+                            cursor: 'pointer',
+                            textDecoration: 'line-through',
+                          }}
+                        >
+                          {name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)', paddingTop: 2 }}>
+                  Click a category to track it; click the × to exclude it from the tracker and weekly emails.
+                </div>
               </div>
             );
           })()}

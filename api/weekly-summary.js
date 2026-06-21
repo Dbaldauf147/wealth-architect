@@ -149,6 +149,7 @@ export default async function handler(req, res) {
       end,
       accountNicknames: (config && config.accountNicknames) || {},
       accountGroups: (config && config.accountGroups) || {},
+      rangeExcludedCategories: (config && config.rangeExcludedCategories) || [],
     });
 
     // Render charts to PNG and attach them inline (cid:) — Gmail and others

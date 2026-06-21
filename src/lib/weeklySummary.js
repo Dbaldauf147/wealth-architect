@@ -341,7 +341,8 @@ export function weekCompare({ transactions, asOf = new Date(), lookbackWeeks = 8
  *  category is "above range" when this month's spend exceeds the high band.
  *  Returns one entry per above-range category (sorted by how far over), each
  *  with a 6-month series so the email can draw the same range sparkline. */
-export function aboveRangeCategories({ transactions, asOf = new Date() }) {
+export function aboveRangeCategories({ transactions, asOf = new Date(), excludedCategories = [] }) {
+  const excludedSet = new Set(excludedCategories || []);
   const currentKey = `${asOf.getFullYear()}-${String(asOf.getMonth() + 1).padStart(2, '0')}`;
   const baselineKeys = [];
   for (let i = 1; i <= 3; i++) {
@@ -361,6 +362,7 @@ export function aboveRangeCategories({ transactions, asOf = new Date() }) {
   const byCatMonth = new Map();
   for (const t of (transactions || [])) {
     if (!t.category || t.category === 'Income') continue;
+    if (excludedSet.has(t.category)) continue;
     const amt = Number(t.amount) || 0;
     if (amt >= 0) continue;
     const d = parseDate(t.date);
@@ -467,7 +469,7 @@ export function monthlyTrends({ transactions, weekEnd }) {
  *  `accountNicknames` and `accountGroups` are optional maps applied to
  *  user-visible account names so the email matches the in-app naming.
  *  Group membership takes precedence over individual nicknames. */
-export function buildWeeklySummary({ transactions, start, end, asOf = new Date(), accountNicknames = {}, accountGroups = {} }) {
+export function buildWeeklySummary({ transactions, start, end, asOf = new Date(), accountNicknames = {}, accountGroups = {}, rangeExcludedCategories = [] }) {
   const inRange = (transactions || []).filter(t => withinRange(t, start, end) && !isTransferLike(t));
   // Prior week of the same length for week-over-week comparison
   const spanMs = end.getTime() - start.getTime();
@@ -529,7 +531,7 @@ export function buildWeeklySummary({ transactions, start, end, asOf = new Date()
   const trends = monthlyTrends({ transactions, weekEnd: end });
   const compare = monthCompare({ transactions, asOf });
   const week = weekCompare({ transactions, asOf });
-  const aboveRange = aboveRangeCategories({ transactions, asOf });
+  const aboveRange = aboveRangeCategories({ transactions, asOf, excludedCategories: rangeExcludedCategories });
 
   return {
     range: { start: start.toISOString(), end: end.toISOString() },

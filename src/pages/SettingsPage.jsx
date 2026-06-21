@@ -35,7 +35,7 @@ function saveEmailPrefs(prefs) {
 }
 
 export function SettingsPage() {
-  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, weeklyEmailSections } = useData();
+  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, weeklyEmailSections, rangeExcludedCategories } = useData();
   const { refresh, updatePaymentReminderPrefs, updateWeeklyEmailSections } = useDataActions();
   const SECTION_LABELS = Object.fromEntries(WEEKLY_EMAIL_SECTIONS.map(s => [s.id, s.label]));
   const [emailPrefs, setEmailPrefs] = useState(loadEmailPrefs);
@@ -50,9 +50,10 @@ export function SettingsPage() {
       end,
       accountNicknames: accountNicknames || {},
       accountGroups: accountGroups || {},
+      rangeExcludedCategories: rangeExcludedCategories || [],
     });
     return renderWeeklyEmailHtml(summary, { sections: weeklyEmailSections });
-  }, [transactions, accountNicknames, accountGroups, weeklyEmailSections]);
+  }, [transactions, accountNicknames, accountGroups, weeklyEmailSections, rangeExcludedCategories]);
 
   // Reorder / toggle weekly-email sections. Each handler rebuilds the full
   // ordered list and persists it (which also syncs to Firestore for the cron).
