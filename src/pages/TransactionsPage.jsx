@@ -1214,8 +1214,8 @@ const TransactionRow = memo(function TransactionRow({
 });
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw } = useData();
-  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns } = useDataActions();
+  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View } = useData();
+  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns, setActiveTxnView, setShowAccounts, setPareto8020View } = useDataActions();
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
   const subDropdownRef = useRef(null);
@@ -1288,10 +1288,7 @@ export function TransactionsPage() {
     setVisibleColumns([...next]);
   };
   const resizingColRef = useRef(null);
-  const [showAccounts, setShowAccounts] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('showAccounts') ?? 'true'); }
-    catch { return true; }
-  });
+  // showAccounts now comes from DataContext (synced across devices).
   // organizedCategories / incomeCategories now come from DataContext (synced
   // across devices). The "needs review" bucket is anything in neither set.
   const [draggedCategory, setDraggedCategory] = useState(null);
@@ -1350,16 +1347,9 @@ export function TransactionsPage() {
     return { top, bottom, total };
   }
 
-  const [pareto8020View, setPareto8020View] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('pareto8020View') ?? 'false'); }
-    catch { return false; }
-  });
+  // pareto8020View now comes from DataContext (synced across devices).
   function togglePareto() {
-    setPareto8020View(prev => {
-      const next = !prev;
-      localStorage.setItem('pareto8020View', JSON.stringify(next));
-      return next;
-    });
+    setPareto8020View(prev => !prev);
   }
 
   /* Categories/subcategories hidden from bar + pie charts (and Pareto chip
@@ -1375,12 +1365,10 @@ export function TransactionsPage() {
   const [colorPicker, setColorPicker] = useState(null); // { name, x, y } | null
   const colorPickerRef = useRef(null);
 
-  /* Saved filter views — name -> snapshot of all filter state. The view
-     definitions live in DataContext (synced); which one is active stays
-     per-device below in `activeViewName` ('activeTxnView' in localStorage). */
+  /* Saved filter views — name -> snapshot of all filter state. View
+     definitions and the active selection both live in DataContext (synced). */
   const [viewsOpen, setViewsOpen] = useState(false);
   const [viewNameInput, setViewNameInput] = useState('');
-  const [activeViewName, setActiveViewName] = useState(() => localStorage.getItem('activeTxnView') || '');
   const [editingViewName, setEditingViewName] = useState(null);
   const viewsRef = useRef(null);
   function hideFromCharts(name, isSub) {
@@ -1434,16 +1422,12 @@ export function TransactionsPage() {
     const trimmed = (name || '').trim();
     if (!trimmed) return;
     saveTxnView(trimmed, captureView());
-    setActiveViewName(trimmed);
-    localStorage.setItem('activeTxnView', trimmed);
+    setActiveTxnView(trimmed);
     setViewNameInput('');
   }
   function deleteView(name) {
     deleteTxnView(name);
-    if (activeViewName === name) {
-      setActiveViewName('');
-      localStorage.removeItem('activeTxnView');
-    }
+    if (activeViewName === name) setActiveTxnView('');
     if (editingViewName === name) setEditingViewName(null);
   }
   function updateSavedView(name, patch) {
@@ -1545,8 +1529,7 @@ export function TransactionsPage() {
       amount: '', date: '', notes: '', institution: '', account: '',
     });
     setNoSubOnly(false);
-    setActiveViewName('');
-    localStorage.removeItem('activeTxnView');
+    setActiveTxnView('');
     setPage(0);
   }
 
@@ -2214,7 +2197,6 @@ export function TransactionsPage() {
             onClick={() => {
               const next = !showAccounts;
               setShowAccounts(next);
-              localStorage.setItem('showAccounts', JSON.stringify(next));
               if (!next) setActiveAccount('all');
             }}
           >
@@ -2593,8 +2575,7 @@ export function TransactionsPage() {
                           className={styles.viewsItemName}
                           onClick={() => {
                             applyView(savedViews[name]);
-                            setActiveViewName(name);
-                            localStorage.setItem('activeTxnView', name);
+                            setActiveTxnView(name);
                             setViewsOpen(false);
                           }}
                         >

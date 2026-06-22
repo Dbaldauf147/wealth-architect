@@ -148,9 +148,7 @@ const loadOrganizedCategories = () => new Set(loadJSON('organizedCategories', []
 const saveOrganizedCategories = (s) => saveJSON('organizedCategories', [...s]);
 const loadIncomeCategories = () => new Set(loadJSON('incomeCategories', []));
 const saveIncomeCategories = (s) => saveJSON('incomeCategories', [...s]);
-// Saved filter/column views on the Transactions page, keyed by name. The
-// view *definitions* sync; which one is active stays per-device (localStorage
-// key 'activeTxnView', owned by the page).
+// Saved filter/column views on the Transactions page, keyed by name.
 const loadSavedTxnViews = () => loadJSON('savedTxnViews', {});
 const saveSavedTxnViews = (v) => saveJSON('savedTxnViews', v);
 // Categories/subcategories hidden from the Transactions-page charts, and the
@@ -170,6 +168,16 @@ const loadCategoryColors = () => loadJSON('categoryColors', {});
 const saveCategoryColors = (v) => saveJSON('categoryColors', v);
 const loadVisibleColumns = () => loadJSON('visibleColumns', null);
 const saveVisibleColumns = (v) => saveJSON('visibleColumns', v);
+// Active saved-view selection (string name; '' = none). Stored as a raw string
+// (not JSON) to match the page's historical writes.
+const loadActiveTxnView = () => { try { return localStorage.getItem('activeTxnView') || ''; } catch { return ''; } };
+const saveActiveTxnView = (v) => { try { if (v) localStorage.setItem('activeTxnView', v); else localStorage.removeItem('activeTxnView'); } catch { /* ignore */ } };
+// Transactions-page display toggles. Stored null when unset so the cross-device
+// merge can fall back to the other device's value, then the default.
+const loadShowAccounts = () => loadJSON('showAccounts', null);
+const saveShowAccounts = (v) => saveJSON('showAccounts', v);
+const loadPareto8020View = () => loadJSON('pareto8020View', null);
+const savePareto8020View = (v) => saveJSON('pareto8020View', v);
 
 // ── Stale-while-revalidate cache for sheet data ─────────────────────────
 // The Google Sheets fetch is the slowest part of a cold load. We persist
@@ -314,6 +322,10 @@ function mergedDiffersFromRemote(merged, remote) {
   if (JSON.stringify(merged.visibleColumns ?? null) !== JSON.stringify(remote.visibleColumns ?? null)) {
     return true;
   }
+  // Active view + display toggles — single scalars.
+  if ((merged.activeTxnView || '') !== (remote.activeTxnView || '')) return true;
+  if ((merged.showAccounts ?? true) !== remote.showAccounts) return true;
+  if ((merged.pareto8020View ?? false) !== remote.pareto8020View) return true;
   return false;
 }
 
@@ -351,6 +363,9 @@ export function DataProvider({ children }) {
   const [columnWidths, setColumnWidthsState] = useState(loadTxnColumnWidths);
   const [categoryColors, setCategoryColorsState] = useState(loadCategoryColors);
   const [visibleColumns, setVisibleColumnsState] = useState(loadVisibleColumns);
+  const [activeTxnView, setActiveTxnViewState] = useState(loadActiveTxnView);
+  const [showAccounts, setShowAccountsState] = useState(() => loadShowAccounts() ?? true);
+  const [pareto8020View, setPareto8020ViewState] = useState(() => loadPareto8020View() ?? false);
   const [transactionNotes, setTransactionNotes] = useState(loadNotes);
   const [accountNicknames, setAccountNicknames] = useState(loadAccountNicknames);
   const [accountGroups, setAccountGroups] = useState(loadAccountGroups);
@@ -418,6 +433,9 @@ export function DataProvider({ children }) {
         const localColumnWidths = loadTxnColumnWidths();
         const localCategoryColors = loadCategoryColors();
         const localVisibleColumns = loadVisibleColumns();
+        const localActiveTxnView = loadActiveTxnView();
+        const localShowAccounts = loadShowAccounts();
+        const localPareto = loadPareto8020View();
         const localHiddenIds = loadHiddenIds();
 
         const merged = {
@@ -452,6 +470,10 @@ export function DataProvider({ children }) {
           // Single choice — prefer this device's column selection, else remote,
           // else null (= "show all", filled in by the page).
           visibleColumns: localVisibleColumns ?? remote.visibleColumns ?? null,
+          // Single scalars — prefer this device's value, else remote, else default.
+          activeTxnView: localActiveTxnView || remote.activeTxnView || '',
+          showAccounts: localShowAccounts ?? remote.showAccounts ?? true,
+          pareto8020View: localPareto ?? remote.pareto8020View ?? false,
           hiddenTransactionIds: unionSet(localHiddenIds, remote.hiddenTransactionIds),
         };
 
@@ -483,6 +505,9 @@ export function DataProvider({ children }) {
         setColumnWidthsState(merged.txnColumnWidths); saveTxnColumnWidths(merged.txnColumnWidths);
         setCategoryColorsState(merged.categoryColors); saveCategoryColors(merged.categoryColors);
         setVisibleColumnsState(merged.visibleColumns); saveVisibleColumns(merged.visibleColumns);
+        setActiveTxnViewState(merged.activeTxnView); saveActiveTxnView(merged.activeTxnView);
+        setShowAccountsState(merged.showAccounts); saveShowAccounts(merged.showAccounts);
+        setPareto8020ViewState(merged.pareto8020View); savePareto8020View(merged.pareto8020View);
         setHiddenIds(merged.hiddenTransactionIds); saveHiddenIds(merged.hiddenTransactionIds);
 
         // If the union added anything that wasn't in the remote, push it
@@ -518,6 +543,9 @@ export function DataProvider({ children }) {
             txnColumnWidths: merged.txnColumnWidths,
             categoryColors: merged.categoryColors,
             visibleColumns: merged.visibleColumns ?? null,
+            activeTxnView: merged.activeTxnView || '',
+            showAccounts: merged.showAccounts ?? true,
+            pareto8020View: merged.pareto8020View ?? false,
             hiddenTransactionIds: [...merged.hiddenTransactionIds],
             updatedAt: new Date().toISOString(),
           });
@@ -565,6 +593,9 @@ export function DataProvider({ children }) {
         txnColumnWidths: columnWidths,
         categoryColors,
         visibleColumns: visibleColumns ?? null,
+        activeTxnView: activeTxnView || '',
+        showAccounts,
+        pareto8020View,
         hiddenTransactionIds: [...hiddenIds],
         updatedAt: new Date().toISOString(),
       }).catch(err => console.warn('Firestore config sync (write) failed:', err));
@@ -598,6 +629,9 @@ export function DataProvider({ children }) {
     columnWidths,
     categoryColors,
     visibleColumns,
+    activeTxnView,
+    showAccounts,
+    pareto8020View,
     hiddenIds,
   ]);
 
@@ -1089,6 +1123,28 @@ export function DataProvider({ children }) {
     saveVisibleColumns(next);
   }, []);
 
+  const setActiveTxnView = useCallback((name) => {
+    const v = name || '';
+    setActiveTxnViewState(v);
+    saveActiveTxnView(v);
+  }, []);
+
+  const setShowAccounts = useCallback((value) => {
+    setShowAccountsState(prev => {
+      const next = typeof value === 'function' ? !!value(prev) : !!value;
+      saveShowAccounts(next);
+      return next;
+    });
+  }, []);
+
+  const setPareto8020View = useCallback((value) => {
+    setPareto8020ViewState(prev => {
+      const next = typeof value === 'function' ? !!value(prev) : !!value;
+      savePareto8020View(next);
+      return next;
+    });
+  }, []);
+
   const addCustomAssetClass = useCallback((className) => {
     const trimmed = (className || '').trim();
     if (!trimmed) return;
@@ -1418,6 +1474,9 @@ export function DataProvider({ children }) {
     setCategoryColor,
     resetCategoryColor,
     setVisibleColumns,
+    setActiveTxnView,
+    setShowAccounts,
+    setPareto8020View,
     updatePaymentReminderPrefs,
     updateWeeklyEmailSections,
     renameGroup,
@@ -1468,6 +1527,9 @@ export function DataProvider({ children }) {
     setCategoryColor,
     resetCategoryColor,
     setVisibleColumns,
+    setActiveTxnView,
+    setShowAccounts,
+    setPareto8020View,
     updatePaymentReminderPrefs,
     updateWeeklyEmailSections,
     renameGroup,
@@ -1501,6 +1563,9 @@ export function DataProvider({ children }) {
     columnWidths,
     categoryColors,
     visibleColumns,
+    activeTxnView,
+    showAccounts,
+    pareto8020View,
     transactionNotes,
     accountNicknames,
     accountNumbers,
@@ -1537,6 +1602,9 @@ export function DataProvider({ children }) {
     columnWidths,
     categoryColors,
     visibleColumns,
+    activeTxnView,
+    showAccounts,
+    pareto8020View,
     transactionNotes,
     accountNicknames,
     accountNumbers,
