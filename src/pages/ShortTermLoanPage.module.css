@@ -1,0 +1,339 @@
+/* ──────────────────────────────────────────────
+   Short-Term Loan — daily interest tracker
+   ────────────────────────────────────────────── */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* ── Header ── */
+.pageHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.pageTitle {
+  font-family: var(--font-headline);
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.pageSubtitle {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+  margin-top: 4px;
+}
+
+/* ── Hero: daily interest ── */
+.heroCard {
+  background: #0f172a;
+  border-radius: var(--radius-xl);
+  padding: 28px 32px;
+  color: #ffffff;
+  box-shadow: var(--shadow-md);
+}
+
+.heroLabel {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94a3b8;
+}
+
+.heroValue {
+  font-family: var(--font-headline);
+  font-size: 40px;
+  font-weight: 800;
+  margin-top: 6px;
+  line-height: 1.1;
+}
+
+.heroUnit {
+  font-size: 18px;
+  font-weight: 600;
+  color: #cbd5e1;
+  margin-left: 4px;
+}
+
+.heroMeta {
+  font-size: 13px;
+  color: #cbd5e1;
+  margin-top: 8px;
+}
+
+/* ── Stats grid ── */
+.statGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.statCard {
+  background: var(--color-surface);
+  border: var(--border-subtle);
+  border-radius: var(--radius-xl);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-xs);
+}
+
+.statLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+
+.statValue {
+  font-family: var(--font-headline);
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--color-text-primary);
+  margin-top: 6px;
+}
+
+.statSub {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  margin-top: 4px;
+}
+
+.statBad {
+  background: rgba(186, 26, 26, 0.06);
+  border-color: rgba(186, 26, 26, 0.25);
+}
+
+.statBad .statValue { color: var(--color-error); }
+
+.statGood {
+  background: rgba(0, 150, 104, 0.06);
+  border-color: rgba(0, 150, 104, 0.25);
+}
+
+.statGood .statValue { color: var(--color-success); }
+
+/* ── Note bar ── */
+.noteBar {
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+/* ── Cards (forms + log) ── */
+.card {
+  background: var(--color-surface);
+  border: var(--border-subtle);
+  border-radius: var(--radius-xl);
+  padding: 20px 24px;
+  box-shadow: var(--shadow-xs);
+}
+
+.cardTitle {
+  font-family: var(--font-headline);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: 16px;
+}
+
+/* ── Forms ── */
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px 16px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fieldWide {
+  grid-column: 1 / -1;
+}
+
+.fieldLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.optional {
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+}
+
+.input {
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-medium);
+  border-radius: var(--radius-lg);
+  padding: 9px 11px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-secondary);
+  box-shadow: 0 0 0 3px rgba(0, 88, 190, 0.12);
+}
+
+.formHint {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.formActions {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+/* Payment-entry row aligns inputs + button on one line, wrapping on small screens. */
+.payRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.payRow .field { flex: 1 1 140px; }
+.payRow .fieldWide { flex: 2 1 220px; grid-column: auto; }
+
+/* ── Buttons ── */
+.btnPrimary,
+.btnGhost,
+.btnDanger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  font-weight: 600;
+  border-radius: var(--radius-lg);
+  padding: 9px 16px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.btnPrimary {
+  background: var(--color-secondary);
+  color: #ffffff;
+}
+
+.btnPrimary:hover { background: #00499b; }
+
+.btnGhost {
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  border-color: #e2e8f0;
+}
+
+.btnGhost:hover { background: var(--color-surface-hover); }
+
+.btnDanger {
+  background: var(--color-surface);
+  color: var(--color-error);
+  border-color: rgba(186, 26, 26, 0.3);
+}
+
+.btnDanger:hover { background: rgba(186, 26, 26, 0.06); }
+
+/* ── Payment log table ── */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.table th {
+  text-align: left;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+  padding: 8px 10px;
+  border-bottom: var(--border-subtle);
+}
+
+.table td {
+  padding: 10px;
+  border-bottom: var(--border-ghost);
+  color: var(--color-text-primary);
+}
+
+.numCol {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.noteCell {
+  color: var(--color-text-secondary);
+}
+
+.actionCol {
+  text-align: right;
+  width: 44px;
+}
+
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-lg);
+}
+
+.iconBtn:hover {
+  color: var(--color-error);
+  background: rgba(186, 26, 26, 0.06);
+}
+
+.table tfoot td {
+  border-bottom: none;
+  border-top: var(--border-subtle);
+  padding-top: 12px;
+}
+
+.totalLabel {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.emptyRow {
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+  padding: 6px 0;
+}
+
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .statGrid { grid-template-columns: repeat(2, 1fr); }
+  .formGrid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 560px) {
+  .statGrid { grid-template-columns: 1fr; }
+  .formGrid { grid-template-columns: 1fr; }
+}

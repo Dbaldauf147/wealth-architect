@@ -135,6 +135,12 @@ const saveHiddenCategories = (cats) => saveJSON('hiddenCategories', [...cats]);
 // "Above Normal Range" section. Stored as a plain string array.
 const loadRangeExcludedCategories = () => loadJSON('rangeExcludedCategories', []);
 const saveRangeExcludedCategories = (v) => saveJSON('rangeExcludedCategories', v);
+// Short-term loan tracker — a single loan the user is paying daily interest on.
+// Stored as one object { name, lender, principal, rate, rateType, startDate,
+// note, payments: [{ id, date, amount, note }] }, or null when no loan is set.
+// Synced via Firestore so the loan + its payment log follow the user.
+const loadShortTermLoan = () => loadJSON('shortTermLoan', null);
+const saveShortTermLoan = (v) => saveJSON('shortTermLoan', v);
 
 // ── Stale-while-revalidate cache for sheet data ─────────────────────────
 // The Google Sheets fetch is the slowest part of a cold load. We persist
@@ -264,6 +270,10 @@ function mergedDiffersFromRemote(merged, remote) {
   if (JSON.stringify(merged.weeklyEmailSections) !== JSON.stringify(Array.isArray(remote.weeklyEmailSections) ? remote.weeklyEmailSections : null)) {
     return true;
   }
+  // Short-term loan — single object, compare serialized.
+  if (JSON.stringify(merged.shortTermLoan ?? null) !== JSON.stringify(remote.shortTermLoan ?? null)) {
+    return true;
+  }
   return false;
 }
 
@@ -292,6 +302,7 @@ export function DataProvider({ children }) {
   const [customCategories, setCustomCategories] = useState(loadCustomCategories);
   const [hiddenCategories, setHiddenCategories] = useState(loadHiddenCategories);
   const [rangeExcludedCategories, setRangeExcludedCategories] = useState(loadRangeExcludedCategories);
+  const [shortTermLoan, setShortTermLoan] = useState(loadShortTermLoan);
   const [transactionNotes, setTransactionNotes] = useState(loadNotes);
   const [accountNicknames, setAccountNicknames] = useState(loadAccountNicknames);
   const [accountGroups, setAccountGroups] = useState(loadAccountGroups);
@@ -350,6 +361,7 @@ export function DataProvider({ children }) {
         const localCustomCats = loadCustomCategories();
         const localHiddenCats = loadHiddenCategories();
         const localRangeExcluded = loadRangeExcludedCategories();
+        const localShortTermLoan = loadShortTermLoan();
         const localHiddenIds = loadHiddenIds();
 
         const merged = {
@@ -372,6 +384,8 @@ export function DataProvider({ children }) {
           customCategories: unionStringArray(localCustomCats, remote.customCategories),
           hiddenCategories: unionSet(localHiddenCats, remote.hiddenCategories),
           rangeExcludedCategories: unionStringArray(localRangeExcluded, remote.rangeExcludedCategories),
+          // Single object — prefer this device's copy, else remote, else none.
+          shortTermLoan: localShortTermLoan || remote.shortTermLoan || null,
           hiddenTransactionIds: unionSet(localHiddenIds, remote.hiddenTransactionIds),
         };
 
@@ -394,6 +408,7 @@ export function DataProvider({ children }) {
         setCustomCategories(merged.customCategories); saveCustomCategories(merged.customCategories);
         setHiddenCategories(merged.hiddenCategories); saveHiddenCategories(merged.hiddenCategories);
         setRangeExcludedCategories(merged.rangeExcludedCategories); saveRangeExcludedCategories(merged.rangeExcludedCategories);
+        setShortTermLoan(merged.shortTermLoan); saveShortTermLoan(merged.shortTermLoan);
         setHiddenIds(merged.hiddenTransactionIds); saveHiddenIds(merged.hiddenTransactionIds);
 
         // If the union added anything that wasn't in the remote, push it
@@ -420,6 +435,7 @@ export function DataProvider({ children }) {
             customCategories: merged.customCategories,
             hiddenCategories: [...merged.hiddenCategories],
             rangeExcludedCategories: merged.rangeExcludedCategories,
+            shortTermLoan: merged.shortTermLoan || null,
             hiddenTransactionIds: [...merged.hiddenTransactionIds],
             updatedAt: new Date().toISOString(),
           });
@@ -458,6 +474,7 @@ export function DataProvider({ children }) {
         customCategories,
         hiddenCategories: [...hiddenCategories],
         rangeExcludedCategories,
+        shortTermLoan: shortTermLoan || null,
         hiddenTransactionIds: [...hiddenIds],
         updatedAt: new Date().toISOString(),
       }).catch(err => console.warn('Firestore config sync (write) failed:', err));
@@ -482,6 +499,7 @@ export function DataProvider({ children }) {
     customCategories,
     hiddenCategories,
     rangeExcludedCategories,
+    shortTermLoan,
     hiddenIds,
   ]);
 
@@ -813,6 +831,58 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  // ── Short-term loan tracker actions ───────────────────────────────────
+  // Save/replace the loan's terms while preserving any existing payment log.
+  const saveLoanDetails = useCallback((details) => {
+    setShortTermLoan(prev => {
+      const next = {
+        name: '',
+        lender: '',
+        note: '',
+        startDate: '',
+        ...(prev || {}),
+        ...details,
+        principal: Number(details.principal) || 0,
+        rate: Number(details.rate) || 0,
+        rateType: details.rateType === 'apr' ? 'apr' : 'daily',
+        payments: (prev && Array.isArray(prev.payments)) ? prev.payments : [],
+      };
+      saveShortTermLoan(next);
+      return next;
+    });
+  }, []);
+
+  // Remove the loan entirely (terms + payment log).
+  const clearLoan = useCallback(() => {
+    setShortTermLoan(null);
+    saveShortTermLoan(null);
+  }, []);
+
+  const addLoanPayment = useCallback(({ date, amount, note } = {}) => {
+    setShortTermLoan(prev => {
+      if (!prev) return prev;
+      const payment = {
+        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        date: date || new Date().toISOString().slice(0, 10),
+        amount: Number(amount) || 0,
+        note: (note || '').trim(),
+      };
+      const next = { ...prev, payments: [...(prev.payments || []), payment] };
+      saveShortTermLoan(next);
+      return next;
+    });
+  }, []);
+
+  const removeLoanPayment = useCallback((id) => {
+    if (!id) return;
+    setShortTermLoan(prev => {
+      if (!prev) return prev;
+      const next = { ...prev, payments: (prev.payments || []).filter(p => p.id !== id) };
+      saveShortTermLoan(next);
+      return next;
+    });
+  }, []);
+
   const addCustomAssetClass = useCallback((className) => {
     const trimmed = (className || '').trim();
     if (!trimmed) return;
@@ -1128,6 +1198,10 @@ export function DataProvider({ children }) {
     removeCustomAssetClass,
     toggleHideCard,
     toggleRangeExcludedCategory,
+    saveLoanDetails,
+    clearLoan,
+    addLoanPayment,
+    removeLoanPayment,
     updatePaymentReminderPrefs,
     updateWeeklyEmailSections,
     renameGroup,
@@ -1164,6 +1238,10 @@ export function DataProvider({ children }) {
     removeCustomAssetClass,
     toggleHideCard,
     toggleRangeExcludedCategory,
+    saveLoanDetails,
+    clearLoan,
+    addLoanPayment,
+    removeLoanPayment,
     updatePaymentReminderPrefs,
     updateWeeklyEmailSections,
     renameGroup,
@@ -1188,6 +1266,7 @@ export function DataProvider({ children }) {
     customCategories,
     hiddenCategories,
     rangeExcludedCategories,
+    shortTermLoan,
     transactionNotes,
     accountNicknames,
     accountNumbers,
@@ -1215,6 +1294,7 @@ export function DataProvider({ children }) {
     customCategories,
     hiddenCategories,
     rangeExcludedCategories,
+    shortTermLoan,
     transactionNotes,
     accountNicknames,
     accountNumbers,
