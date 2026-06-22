@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'YOUR_API_KEY',
@@ -11,5 +11,16 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+
+// Use long-polling auto-detection instead of the default WebChannel/gRPC
+// streaming transport. The streaming transport is silently blocked by many
+// corporate proxies, VPNs, and some secondary networks — which made the
+// config sync (category rules + per-transaction overrides) fail on some
+// computers while working on others, so transactions showed up
+// uncategorized there. Auto-detect transparently falls back to plain HTTP
+// long-polling when the stream can't be established, while keeping the
+// faster transport where it works.
+export const db = initializeFirestore(app, {
+  experimentalAutoDetectLongPolling: true,
+});
 export default app;
