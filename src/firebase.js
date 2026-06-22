@@ -12,15 +12,15 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-// Use long-polling auto-detection instead of the default WebChannel/gRPC
-// streaming transport. The streaming transport is silently blocked by many
-// corporate proxies, VPNs, and some secondary networks — which made the
-// config sync (category rules + per-transaction overrides) fail on some
-// computers while working on others, so transactions showed up
-// uncategorized there. Auto-detect transparently falls back to plain HTTP
-// long-polling when the stream can't be established, while keeping the
-// faster transport where it works.
+// Force HTTP long-polling instead of the default WebChannel/gRPC streaming
+// transport. The streaming transport is silently blocked by many corporate
+// proxies, VPNs, and some secondary networks — which made the config sync
+// (category rules + per-transaction overrides) fail on some computers while
+// working on others, so transactions showed up uncategorized there.
+// Auto-detection still attempts the stream first and its fallback heuristic
+// is unreliable on some of those networks, so we force long-polling outright;
+// it's marginally slower to connect but works everywhere this app runs.
 export const db = initializeFirestore(app, {
-  experimentalAutoDetectLongPolling: true,
+  experimentalForceLongPolling: true,
 });
 export default app;
