@@ -141,6 +141,18 @@ const saveRangeExcludedCategories = (v) => saveJSON('rangeExcludedCategories', v
 // Synced via Firestore so the loan + its payment log follow the user.
 const loadShortTermLoan = () => loadJSON('shortTermLoan', null);
 const saveShortTermLoan = (v) => saveJSON('shortTermLoan', v);
+// Transactions-page category triage buckets. A category sits in exactly one
+// bucket: 'income', 'organized', or (default) 'needs review' = in neither set.
+// Synced so the Needs-Review/Organized/Income split matches across devices.
+const loadOrganizedCategories = () => new Set(loadJSON('organizedCategories', []));
+const saveOrganizedCategories = (s) => saveJSON('organizedCategories', [...s]);
+const loadIncomeCategories = () => new Set(loadJSON('incomeCategories', []));
+const saveIncomeCategories = (s) => saveJSON('incomeCategories', [...s]);
+// Saved filter/column views on the Transactions page, keyed by name. The
+// view *definitions* sync; which one is active stays per-device (localStorage
+// key 'activeTxnView', owned by the page).
+const loadSavedTxnViews = () => loadJSON('savedTxnViews', {});
+const saveSavedTxnViews = (v) => saveJSON('savedTxnViews', v);
 
 // ── Stale-while-revalidate cache for sheet data ─────────────────────────
 // The Google Sheets fetch is the slowest part of a cold load. We persist
@@ -242,6 +254,8 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.hiddenCards, remote.hiddenCards],
     [[...merged.hiddenCategories], remote.hiddenCategories],
     [merged.rangeExcludedCategories, remote.rangeExcludedCategories],
+    [[...merged.organizedCategories], remote.organizedCategories],
+    [[...merged.incomeCategories], remote.incomeCategories],
     [[...merged.hiddenTransactionIds], remote.hiddenTransactionIds],
   ];
   for (const [a, b] of checks) {
@@ -256,6 +270,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.accountGroups, remote.accountGroups],
     [merged.assetClasses, remote.assetClasses],
     [merged.paymentReminderPrefs, remote.paymentReminderPrefs],
+    [merged.savedTxnViews, remote.savedTxnViews],
   ];
   for (const [a, b] of maps) {
     const bObj = b && typeof b === 'object' ? b : {};
@@ -303,6 +318,9 @@ export function DataProvider({ children }) {
   const [hiddenCategories, setHiddenCategories] = useState(loadHiddenCategories);
   const [rangeExcludedCategories, setRangeExcludedCategories] = useState(loadRangeExcludedCategories);
   const [shortTermLoan, setShortTermLoan] = useState(loadShortTermLoan);
+  const [organizedCategories, setOrganizedCategories] = useState(loadOrganizedCategories);
+  const [incomeCategories, setIncomeCategories] = useState(loadIncomeCategories);
+  const [savedTxnViews, setSavedTxnViews] = useState(loadSavedTxnViews);
   const [transactionNotes, setTransactionNotes] = useState(loadNotes);
   const [accountNicknames, setAccountNicknames] = useState(loadAccountNicknames);
   const [accountGroups, setAccountGroups] = useState(loadAccountGroups);
@@ -362,6 +380,9 @@ export function DataProvider({ children }) {
         const localHiddenCats = loadHiddenCategories();
         const localRangeExcluded = loadRangeExcludedCategories();
         const localShortTermLoan = loadShortTermLoan();
+        const localOrganizedCats = loadOrganizedCategories();
+        const localIncomeCats = loadIncomeCategories();
+        const localSavedViews = loadSavedTxnViews();
         const localHiddenIds = loadHiddenIds();
 
         const merged = {
@@ -386,6 +407,9 @@ export function DataProvider({ children }) {
           rangeExcludedCategories: unionStringArray(localRangeExcluded, remote.rangeExcludedCategories),
           // Single object — prefer this device's copy, else remote, else none.
           shortTermLoan: localShortTermLoan || remote.shortTermLoan || null,
+          organizedCategories: unionSet(localOrganizedCats, remote.organizedCategories),
+          incomeCategories: unionSet(localIncomeCats, remote.incomeCategories),
+          savedTxnViews: unionMap(localSavedViews, remote.savedTxnViews),
           hiddenTransactionIds: unionSet(localHiddenIds, remote.hiddenTransactionIds),
         };
 
@@ -409,6 +433,9 @@ export function DataProvider({ children }) {
         setHiddenCategories(merged.hiddenCategories); saveHiddenCategories(merged.hiddenCategories);
         setRangeExcludedCategories(merged.rangeExcludedCategories); saveRangeExcludedCategories(merged.rangeExcludedCategories);
         setShortTermLoan(merged.shortTermLoan); saveShortTermLoan(merged.shortTermLoan);
+        setOrganizedCategories(merged.organizedCategories); saveOrganizedCategories(merged.organizedCategories);
+        setIncomeCategories(merged.incomeCategories); saveIncomeCategories(merged.incomeCategories);
+        setSavedTxnViews(merged.savedTxnViews); saveSavedTxnViews(merged.savedTxnViews);
         setHiddenIds(merged.hiddenTransactionIds); saveHiddenIds(merged.hiddenTransactionIds);
 
         // If the union added anything that wasn't in the remote, push it
@@ -436,6 +463,9 @@ export function DataProvider({ children }) {
             hiddenCategories: [...merged.hiddenCategories],
             rangeExcludedCategories: merged.rangeExcludedCategories,
             shortTermLoan: merged.shortTermLoan || null,
+            organizedCategories: [...merged.organizedCategories],
+            incomeCategories: [...merged.incomeCategories],
+            savedTxnViews: merged.savedTxnViews,
             hiddenTransactionIds: [...merged.hiddenTransactionIds],
             updatedAt: new Date().toISOString(),
           });
@@ -475,6 +505,9 @@ export function DataProvider({ children }) {
         hiddenCategories: [...hiddenCategories],
         rangeExcludedCategories,
         shortTermLoan: shortTermLoan || null,
+        organizedCategories: [...organizedCategories],
+        incomeCategories: [...incomeCategories],
+        savedTxnViews,
         hiddenTransactionIds: [...hiddenIds],
         updatedAt: new Date().toISOString(),
       }).catch(err => console.warn('Firestore config sync (write) failed:', err));
@@ -500,6 +533,9 @@ export function DataProvider({ children }) {
     hiddenCategories,
     rangeExcludedCategories,
     shortTermLoan,
+    organizedCategories,
+    incomeCategories,
+    savedTxnViews,
     hiddenIds,
   ]);
 
@@ -883,6 +919,57 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  // ── Transactions-page triage + saved views actions ────────────────────
+  // Move a category into exactly one bucket: 'income', 'organized', or
+  // 'review' (the default — removed from both sets).
+  const setCategoryBucket = useCallback((category, bucket) => {
+    if (!category) return;
+    setIncomeCategories(prev => {
+      const next = new Set(prev);
+      if (bucket === 'income') next.add(category); else next.delete(category);
+      saveIncomeCategories(next);
+      return next;
+    });
+    setOrganizedCategories(prev => {
+      const next = new Set(prev);
+      if (bucket === 'organized') next.add(category); else next.delete(category);
+      saveOrganizedCategories(next);
+      return next;
+    });
+  }, []);
+
+  const saveTxnView = useCallback((name, view) => {
+    const trimmed = (name || '').trim();
+    if (!trimmed || !view) return;
+    setSavedTxnViews(prev => {
+      const next = { ...prev, [trimmed]: view };
+      saveSavedTxnViews(next);
+      return next;
+    });
+  }, []);
+
+  const deleteTxnView = useCallback((name) => {
+    if (!name) return;
+    setSavedTxnViews(prev => {
+      if (!(name in prev)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      saveSavedTxnViews(next);
+      return next;
+    });
+  }, []);
+
+  const updateTxnView = useCallback((name, patch) => {
+    if (!name) return;
+    setSavedTxnViews(prev => {
+      const current = prev[name];
+      if (!current) return prev;
+      const next = { ...prev, [name]: { ...current, ...patch } };
+      saveSavedTxnViews(next);
+      return next;
+    });
+  }, []);
+
   const addCustomAssetClass = useCallback((className) => {
     const trimmed = (className || '').trim();
     if (!trimmed) return;
@@ -1202,6 +1289,10 @@ export function DataProvider({ children }) {
     clearLoan,
     addLoanPayment,
     removeLoanPayment,
+    setCategoryBucket,
+    saveTxnView,
+    deleteTxnView,
+    updateTxnView,
     updatePaymentReminderPrefs,
     updateWeeklyEmailSections,
     renameGroup,
@@ -1242,6 +1333,10 @@ export function DataProvider({ children }) {
     clearLoan,
     addLoanPayment,
     removeLoanPayment,
+    setCategoryBucket,
+    saveTxnView,
+    deleteTxnView,
+    updateTxnView,
     updatePaymentReminderPrefs,
     updateWeeklyEmailSections,
     renameGroup,
@@ -1267,6 +1362,9 @@ export function DataProvider({ children }) {
     hiddenCategories,
     rangeExcludedCategories,
     shortTermLoan,
+    organizedCategories,
+    incomeCategories,
+    savedTxnViews,
     transactionNotes,
     accountNicknames,
     accountNumbers,
@@ -1295,6 +1393,9 @@ export function DataProvider({ children }) {
     hiddenCategories,
     rangeExcludedCategories,
     shortTermLoan,
+    organizedCategories,
+    incomeCategories,
+    savedTxnViews,
     transactionNotes,
     accountNicknames,
     accountNumbers,

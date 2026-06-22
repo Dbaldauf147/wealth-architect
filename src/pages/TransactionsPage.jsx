@@ -1214,8 +1214,8 @@ const TransactionRow = memo(function TransactionRow({
 });
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount } = useData();
-  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction } = useDataActions();
+  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews } = useData();
+  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView } = useDataActions();
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
   const subDropdownRef = useRef(null);
@@ -1299,14 +1299,8 @@ export function TransactionsPage() {
     try { return JSON.parse(localStorage.getItem('showAccounts') ?? 'true'); }
     catch { return true; }
   });
-  const [organizedCategories, setOrganizedCategories] = useState(() => {
-    try { return new Set(JSON.parse(localStorage.getItem('organizedCategories') || '[]')); }
-    catch { return new Set(); }
-  });
-  const [incomeCategories, setIncomeCategories] = useState(() => {
-    try { return new Set(JSON.parse(localStorage.getItem('incomeCategories') || '[]')); }
-    catch { return new Set(); }
-  });
+  // organizedCategories / incomeCategories now come from DataContext (synced
+  // across devices). The "needs review" bucket is anything in neither set.
   const [draggedCategory, setDraggedCategory] = useState(null);
   const [dragOverBucket, setDragOverBucket] = useState(null);
   const dropdownRef = useRef(null);
@@ -1408,11 +1402,9 @@ export function TransactionsPage() {
   const [colorPicker, setColorPicker] = useState(null); // { name, x, y } | null
   const colorPickerRef = useRef(null);
 
-  /* Saved filter views — name -> snapshot of all filter state */
-  const [savedViews, setSavedViews] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('savedTxnViews') || '{}'); }
-    catch { return {}; }
-  });
+  /* Saved filter views — name -> snapshot of all filter state. The view
+     definitions live in DataContext (synced); which one is active stays
+     per-device below in `activeViewName` ('activeTxnView' in localStorage). */
   const [viewsOpen, setViewsOpen] = useState(false);
   const [viewNameInput, setViewNameInput] = useState('');
   const [activeViewName, setActiveViewName] = useState(() => localStorage.getItem('activeTxnView') || '');
@@ -1476,18 +1468,13 @@ export function TransactionsPage() {
   function saveView(name) {
     const trimmed = (name || '').trim();
     if (!trimmed) return;
-    const next = { ...savedViews, [trimmed]: captureView() };
-    setSavedViews(next);
-    localStorage.setItem('savedTxnViews', JSON.stringify(next));
+    saveTxnView(trimmed, captureView());
     setActiveViewName(trimmed);
     localStorage.setItem('activeTxnView', trimmed);
     setViewNameInput('');
   }
   function deleteView(name) {
-    const next = { ...savedViews };
-    delete next[name];
-    setSavedViews(next);
-    localStorage.setItem('savedTxnViews', JSON.stringify(next));
+    deleteTxnView(name);
     if (activeViewName === name) {
       setActiveViewName('');
       localStorage.removeItem('activeTxnView');
@@ -1497,11 +1484,8 @@ export function TransactionsPage() {
   function updateSavedView(name, patch) {
     const current = savedViews[name];
     if (!current) return;
-    const updated = { ...current, ...patch };
-    const next = { ...savedViews, [name]: updated };
-    setSavedViews(next);
-    localStorage.setItem('savedTxnViews', JSON.stringify(next));
-    if (activeViewName === name) applyView(updated);
+    updateTxnView(name, patch);
+    if (activeViewName === name) applyView({ ...current, ...patch });
   }
   function viewFilterChips(name, view) {
     if (!view) return [];
@@ -2056,21 +2040,9 @@ export function TransactionsPage() {
 
   function handleDropCategory(bucket) {
     if (!draggedCategory) return;
-    // A category lives in exactly one bucket: income, organized, or review (default).
-    setIncomeCategories(prev => {
-      const next = new Set(prev);
-      if (bucket === 'income') next.add(draggedCategory);
-      else next.delete(draggedCategory);
-      localStorage.setItem('incomeCategories', JSON.stringify([...next]));
-      return next;
-    });
-    setOrganizedCategories(prev => {
-      const next = new Set(prev);
-      if (bucket === 'organized') next.add(draggedCategory);
-      else next.delete(draggedCategory);
-      localStorage.setItem('organizedCategories', JSON.stringify([...next]));
-      return next;
-    });
+    // A category lives in exactly one bucket: income, organized, or review
+    // (default). Synced through DataContext so it matches across devices.
+    setCategoryBucket(draggedCategory, bucket);
     setDraggedCategory(null);
     setDragOverBucket(null);
     flashSaved();
