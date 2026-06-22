@@ -1214,8 +1214,8 @@ const TransactionRow = memo(function TransactionRow({
 });
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths } = useData();
-  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths } = useDataActions();
+  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw } = useData();
+  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns } = useDataActions();
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
   const subDropdownRef = useRef(null);
@@ -1274,22 +1274,18 @@ export function TransactionsPage() {
     { key: 'institution', label: 'Institution' },
     { key: 'account', label: 'Account' },
   ];
-  const [visibleColumns, setVisibleColumns] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('visibleColumns'));
-      if (saved && Array.isArray(saved)) return new Set(saved);
-    } catch {}
-    return new Set(ALL_COLUMNS.map(c => c.key));
-  });
+  // visibleColumns is synced via DataContext as an array of keys, or null =
+  // "show all". Derive the Set the rest of the page expects, defaulting to all.
+  const visibleColumns = useMemo(
+    () => (Array.isArray(visibleColumnsRaw) ? new Set(visibleColumnsRaw) : new Set(ALL_COLUMNS.map(c => c.key))),
+    [visibleColumnsRaw], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const [columnPickerOpen, setColumnPickerOpen] = useState(false);
   const columnPickerRef = useRef(null);
   const toggleColumn = (key) => {
-    setVisibleColumns(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) { if (next.size > 1) next.delete(key); } else next.add(key);
-      localStorage.setItem('visibleColumns', JSON.stringify([...next]));
-      return next;
-    });
+    const next = new Set(visibleColumns);
+    if (next.has(key)) { if (next.size > 1) next.delete(key); } else next.add(key);
+    setVisibleColumns([...next]);
   };
   const resizingColRef = useRef(null);
   const [showAccounts, setShowAccounts] = useState(() => {
@@ -1370,25 +1366,12 @@ export function TransactionsPage() {
      totals) now come from DataContext (synced across devices). */
 
   /* Per-category / per-subcategory color overrides */
-  const [categoryColors, setCategoryColors] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('categoryColors') || '{}'); }
-    catch { return {}; }
-  });
+  // categoryColors + setCategoryColor/resetCategoryColor now come from
+  // DataContext (synced across devices).
   const colorFor = useCallback(
     name => (categoryColors[name]) || pieColor(name),
     [categoryColors],
   );
-  function setCategoryColor(name, hex) {
-    const next = { ...categoryColors, [name]: hex };
-    setCategoryColors(next);
-    localStorage.setItem('categoryColors', JSON.stringify(next));
-  }
-  function resetCategoryColor(name) {
-    const next = { ...categoryColors };
-    delete next[name];
-    setCategoryColors(next);
-    localStorage.setItem('categoryColors', JSON.stringify(next));
-  }
   const [colorPicker, setColorPicker] = useState(null); // { name, x, y } | null
   const colorPickerRef = useRef(null);
 

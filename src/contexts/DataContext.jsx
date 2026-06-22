@@ -162,6 +162,14 @@ const loadChartHiddenSubs = () => new Set(loadJSON('chartHiddenSubs', []));
 const saveChartHiddenSubs = (s) => saveJSON('chartHiddenSubs', [...s]);
 const loadTxnColumnWidths = () => loadJSON('txnColumnWidths', {});
 const saveTxnColumnWidths = (v) => saveJSON('txnColumnWidths', v);
+// Per-category chart color overrides (name -> hex) and which transaction-table
+// columns are visible. Synced so colors and column selection match across
+// devices. visibleColumns is an array of column keys, or null = "show all"
+// (the page fills in its default column set when this is null).
+const loadCategoryColors = () => loadJSON('categoryColors', {});
+const saveCategoryColors = (v) => saveJSON('categoryColors', v);
+const loadVisibleColumns = () => loadJSON('visibleColumns', null);
+const saveVisibleColumns = (v) => saveJSON('visibleColumns', v);
 
 // ── Stale-while-revalidate cache for sheet data ─────────────────────────
 // The Google Sheets fetch is the slowest part of a cold load. We persist
@@ -283,6 +291,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.paymentReminderPrefs, remote.paymentReminderPrefs],
     [merged.savedTxnViews, remote.savedTxnViews],
     [merged.txnColumnWidths, remote.txnColumnWidths],
+    [merged.categoryColors, remote.categoryColors],
   ];
   for (const [a, b] of maps) {
     const bObj = b && typeof b === 'object' ? b : {};
@@ -299,6 +308,10 @@ function mergedDiffersFromRemote(merged, remote) {
   }
   // Short-term loan — single object, compare serialized.
   if (JSON.stringify(merged.shortTermLoan ?? null) !== JSON.stringify(remote.shortTermLoan ?? null)) {
+    return true;
+  }
+  // Visible columns — single array (or null), compare serialized.
+  if (JSON.stringify(merged.visibleColumns ?? null) !== JSON.stringify(remote.visibleColumns ?? null)) {
     return true;
   }
   return false;
@@ -336,6 +349,8 @@ export function DataProvider({ children }) {
   const [chartHiddenCats, setChartHiddenCatsState] = useState(loadChartHiddenCats);
   const [chartHiddenSubs, setChartHiddenSubsState] = useState(loadChartHiddenSubs);
   const [columnWidths, setColumnWidthsState] = useState(loadTxnColumnWidths);
+  const [categoryColors, setCategoryColorsState] = useState(loadCategoryColors);
+  const [visibleColumns, setVisibleColumnsState] = useState(loadVisibleColumns);
   const [transactionNotes, setTransactionNotes] = useState(loadNotes);
   const [accountNicknames, setAccountNicknames] = useState(loadAccountNicknames);
   const [accountGroups, setAccountGroups] = useState(loadAccountGroups);
@@ -401,6 +416,8 @@ export function DataProvider({ children }) {
         const localChartHiddenCats = loadChartHiddenCats();
         const localChartHiddenSubs = loadChartHiddenSubs();
         const localColumnWidths = loadTxnColumnWidths();
+        const localCategoryColors = loadCategoryColors();
+        const localVisibleColumns = loadVisibleColumns();
         const localHiddenIds = loadHiddenIds();
 
         const merged = {
@@ -431,6 +448,10 @@ export function DataProvider({ children }) {
           chartHiddenCats: unionSet(localChartHiddenCats, remote.chartHiddenCats),
           chartHiddenSubs: unionSet(localChartHiddenSubs, remote.chartHiddenSubs),
           txnColumnWidths: unionMap(localColumnWidths, remote.txnColumnWidths),
+          categoryColors: unionMap(localCategoryColors, remote.categoryColors),
+          // Single choice — prefer this device's column selection, else remote,
+          // else null (= "show all", filled in by the page).
+          visibleColumns: localVisibleColumns ?? remote.visibleColumns ?? null,
           hiddenTransactionIds: unionSet(localHiddenIds, remote.hiddenTransactionIds),
         };
 
@@ -460,6 +481,8 @@ export function DataProvider({ children }) {
         setChartHiddenCatsState(merged.chartHiddenCats); saveChartHiddenCats(merged.chartHiddenCats);
         setChartHiddenSubsState(merged.chartHiddenSubs); saveChartHiddenSubs(merged.chartHiddenSubs);
         setColumnWidthsState(merged.txnColumnWidths); saveTxnColumnWidths(merged.txnColumnWidths);
+        setCategoryColorsState(merged.categoryColors); saveCategoryColors(merged.categoryColors);
+        setVisibleColumnsState(merged.visibleColumns); saveVisibleColumns(merged.visibleColumns);
         setHiddenIds(merged.hiddenTransactionIds); saveHiddenIds(merged.hiddenTransactionIds);
 
         // If the union added anything that wasn't in the remote, push it
@@ -493,6 +516,8 @@ export function DataProvider({ children }) {
             chartHiddenCats: [...merged.chartHiddenCats],
             chartHiddenSubs: [...merged.chartHiddenSubs],
             txnColumnWidths: merged.txnColumnWidths,
+            categoryColors: merged.categoryColors,
+            visibleColumns: merged.visibleColumns ?? null,
             hiddenTransactionIds: [...merged.hiddenTransactionIds],
             updatedAt: new Date().toISOString(),
           });
@@ -538,6 +563,8 @@ export function DataProvider({ children }) {
         chartHiddenCats: [...chartHiddenCats],
         chartHiddenSubs: [...chartHiddenSubs],
         txnColumnWidths: columnWidths,
+        categoryColors,
+        visibleColumns: visibleColumns ?? null,
         hiddenTransactionIds: [...hiddenIds],
         updatedAt: new Date().toISOString(),
       }).catch(err => console.warn('Firestore config sync (write) failed:', err));
@@ -569,6 +596,8 @@ export function DataProvider({ children }) {
     chartHiddenCats,
     chartHiddenSubs,
     columnWidths,
+    categoryColors,
+    visibleColumns,
     hiddenIds,
   ]);
 
@@ -1032,6 +1061,34 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  const setCategoryColor = useCallback((name, hex) => {
+    if (!name) return;
+    setCategoryColorsState(prev => {
+      const next = { ...prev, [name]: hex };
+      saveCategoryColors(next);
+      return next;
+    });
+  }, []);
+
+  const resetCategoryColor = useCallback((name) => {
+    if (!name) return;
+    setCategoryColorsState(prev => {
+      if (!(name in prev)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      saveCategoryColors(next);
+      return next;
+    });
+  }, []);
+
+  // Replace the visible-column selection. Pass an array of column keys, or
+  // null to reset to the page's default (all columns).
+  const setVisibleColumns = useCallback((value) => {
+    const next = Array.isArray(value) ? value : null;
+    setVisibleColumnsState(next);
+    saveVisibleColumns(next);
+  }, []);
+
   const addCustomAssetClass = useCallback((className) => {
     const trimmed = (className || '').trim();
     if (!trimmed) return;
@@ -1358,6 +1415,9 @@ export function DataProvider({ children }) {
     setChartHiddenCats,
     setChartHiddenSubs,
     setColumnWidths,
+    setCategoryColor,
+    resetCategoryColor,
+    setVisibleColumns,
     updatePaymentReminderPrefs,
     updateWeeklyEmailSections,
     renameGroup,
@@ -1405,6 +1465,9 @@ export function DataProvider({ children }) {
     setChartHiddenCats,
     setChartHiddenSubs,
     setColumnWidths,
+    setCategoryColor,
+    resetCategoryColor,
+    setVisibleColumns,
     updatePaymentReminderPrefs,
     updateWeeklyEmailSections,
     renameGroup,
@@ -1436,6 +1499,8 @@ export function DataProvider({ children }) {
     chartHiddenCats,
     chartHiddenSubs,
     columnWidths,
+    categoryColors,
+    visibleColumns,
     transactionNotes,
     accountNicknames,
     accountNumbers,
@@ -1470,6 +1535,8 @@ export function DataProvider({ children }) {
     chartHiddenCats,
     chartHiddenSubs,
     columnWidths,
+    categoryColors,
+    visibleColumns,
     transactionNotes,
     accountNicknames,
     accountNumbers,
