@@ -1214,8 +1214,8 @@ const TransactionRow = memo(function TransactionRow({
 });
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews } = useData();
-  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView } = useDataActions();
+  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths } = useData();
+  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths } = useDataActions();
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
   const subDropdownRef = useRef(null);
@@ -1251,10 +1251,7 @@ export function TransactionsPage() {
   const [chartMode, setChartMode] = useState('stacked');
   const [chartMonthCount, setChartMonthCount] = useState(13);
   const [selectedMonth, setSelectedMonth] = useState(null);
-  const [columnWidths, setColumnWidths] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('txnColumnWidths') || '{}'); }
-    catch { return {}; }
-  });
+  // columnWidths now comes from DataContext (synced across devices).
   const [columnFilters, setColumnFilters] = useState({
     merchant: '',
     description: '',
@@ -1369,15 +1366,8 @@ export function TransactionsPage() {
     });
   }
 
-  /* Categories/subcategories hidden from bar + pie charts (and Pareto chip totals) */
-  const [chartHiddenCats, setChartHiddenCats] = useState(() => {
-    try { return new Set(JSON.parse(localStorage.getItem('chartHiddenCats') || '[]')); }
-    catch { return new Set(); }
-  });
-  const [chartHiddenSubs, setChartHiddenSubs] = useState(() => {
-    try { return new Set(JSON.parse(localStorage.getItem('chartHiddenSubs') || '[]')); }
-    catch { return new Set(); }
-  });
+  /* Categories/subcategories hidden from bar + pie charts (and Pareto chip
+     totals) now come from DataContext (synced across devices). */
 
   /* Per-category / per-subcategory color overrides */
   const [categoryColors, setCategoryColors] = useState(() => {
@@ -1412,21 +1402,17 @@ export function TransactionsPage() {
   const viewsRef = useRef(null);
   function hideFromCharts(name, isSub) {
     const setter = isSub ? setChartHiddenSubs : setChartHiddenCats;
-    const key = isSub ? 'chartHiddenSubs' : 'chartHiddenCats';
     setter(prev => {
       const next = new Set(prev);
       next.add(name);
-      localStorage.setItem(key, JSON.stringify([...next]));
       return next;
     });
   }
   function unhideFromCharts(name, isSub) {
     const setter = isSub ? setChartHiddenSubs : setChartHiddenCats;
-    const key = isSub ? 'chartHiddenSubs' : 'chartHiddenCats';
     setter(prev => {
       const next = new Set(prev);
       next.delete(name);
-      localStorage.setItem(key, JSON.stringify([...next]));
       return next;
     });
   }
@@ -1457,12 +1443,8 @@ export function TransactionsPage() {
       amount: '', date: '', notes: '', institution: '', account: '',
     });
     setNoSubOnly(!!view.noSubOnly);
-    const hc = new Set(view.chartHiddenCats || []);
-    const hs = new Set(view.chartHiddenSubs || []);
-    setChartHiddenCats(hc);
-    setChartHiddenSubs(hs);
-    localStorage.setItem('chartHiddenCats', JSON.stringify([...hc]));
-    localStorage.setItem('chartHiddenSubs', JSON.stringify([...hs]));
+    setChartHiddenCats(new Set(view.chartHiddenCats || []));
+    setChartHiddenSubs(new Set(view.chartHiddenSubs || []));
     setPage(0);
   }
   function saveView(name) {
@@ -2132,12 +2114,6 @@ export function TransactionsPage() {
       setColumnWidths(prev => ({ ...prev, [k]: newWidth }));
     };
     const onUp = () => {
-      if (resizingColRef.current) {
-        setColumnWidths(prev => {
-          localStorage.setItem('txnColumnWidths', JSON.stringify(prev));
-          return prev;
-        });
-      }
       resizingColRef.current = null;
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);

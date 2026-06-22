@@ -153,6 +153,15 @@ const saveIncomeCategories = (s) => saveJSON('incomeCategories', [...s]);
 // key 'activeTxnView', owned by the page).
 const loadSavedTxnViews = () => loadJSON('savedTxnViews', {});
 const saveSavedTxnViews = (v) => saveJSON('savedTxnViews', v);
+// Categories/subcategories hidden from the Transactions-page charts, and the
+// per-column widths of the transactions table. Synced so the chart hide-state
+// and table layout match across devices. (Active view selection stays local.)
+const loadChartHiddenCats = () => new Set(loadJSON('chartHiddenCats', []));
+const saveChartHiddenCats = (s) => saveJSON('chartHiddenCats', [...s]);
+const loadChartHiddenSubs = () => new Set(loadJSON('chartHiddenSubs', []));
+const saveChartHiddenSubs = (s) => saveJSON('chartHiddenSubs', [...s]);
+const loadTxnColumnWidths = () => loadJSON('txnColumnWidths', {});
+const saveTxnColumnWidths = (v) => saveJSON('txnColumnWidths', v);
 
 // ── Stale-while-revalidate cache for sheet data ─────────────────────────
 // The Google Sheets fetch is the slowest part of a cold load. We persist
@@ -256,6 +265,8 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.rangeExcludedCategories, remote.rangeExcludedCategories],
     [[...merged.organizedCategories], remote.organizedCategories],
     [[...merged.incomeCategories], remote.incomeCategories],
+    [[...merged.chartHiddenCats], remote.chartHiddenCats],
+    [[...merged.chartHiddenSubs], remote.chartHiddenSubs],
     [[...merged.hiddenTransactionIds], remote.hiddenTransactionIds],
   ];
   for (const [a, b] of checks) {
@@ -271,6 +282,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.assetClasses, remote.assetClasses],
     [merged.paymentReminderPrefs, remote.paymentReminderPrefs],
     [merged.savedTxnViews, remote.savedTxnViews],
+    [merged.txnColumnWidths, remote.txnColumnWidths],
   ];
   for (const [a, b] of maps) {
     const bObj = b && typeof b === 'object' ? b : {};
@@ -321,6 +333,9 @@ export function DataProvider({ children }) {
   const [organizedCategories, setOrganizedCategories] = useState(loadOrganizedCategories);
   const [incomeCategories, setIncomeCategories] = useState(loadIncomeCategories);
   const [savedTxnViews, setSavedTxnViews] = useState(loadSavedTxnViews);
+  const [chartHiddenCats, setChartHiddenCatsState] = useState(loadChartHiddenCats);
+  const [chartHiddenSubs, setChartHiddenSubsState] = useState(loadChartHiddenSubs);
+  const [columnWidths, setColumnWidthsState] = useState(loadTxnColumnWidths);
   const [transactionNotes, setTransactionNotes] = useState(loadNotes);
   const [accountNicknames, setAccountNicknames] = useState(loadAccountNicknames);
   const [accountGroups, setAccountGroups] = useState(loadAccountGroups);
@@ -383,6 +398,9 @@ export function DataProvider({ children }) {
         const localOrganizedCats = loadOrganizedCategories();
         const localIncomeCats = loadIncomeCategories();
         const localSavedViews = loadSavedTxnViews();
+        const localChartHiddenCats = loadChartHiddenCats();
+        const localChartHiddenSubs = loadChartHiddenSubs();
+        const localColumnWidths = loadTxnColumnWidths();
         const localHiddenIds = loadHiddenIds();
 
         const merged = {
@@ -410,6 +428,9 @@ export function DataProvider({ children }) {
           organizedCategories: unionSet(localOrganizedCats, remote.organizedCategories),
           incomeCategories: unionSet(localIncomeCats, remote.incomeCategories),
           savedTxnViews: unionMap(localSavedViews, remote.savedTxnViews),
+          chartHiddenCats: unionSet(localChartHiddenCats, remote.chartHiddenCats),
+          chartHiddenSubs: unionSet(localChartHiddenSubs, remote.chartHiddenSubs),
+          txnColumnWidths: unionMap(localColumnWidths, remote.txnColumnWidths),
           hiddenTransactionIds: unionSet(localHiddenIds, remote.hiddenTransactionIds),
         };
 
@@ -436,6 +457,9 @@ export function DataProvider({ children }) {
         setOrganizedCategories(merged.organizedCategories); saveOrganizedCategories(merged.organizedCategories);
         setIncomeCategories(merged.incomeCategories); saveIncomeCategories(merged.incomeCategories);
         setSavedTxnViews(merged.savedTxnViews); saveSavedTxnViews(merged.savedTxnViews);
+        setChartHiddenCatsState(merged.chartHiddenCats); saveChartHiddenCats(merged.chartHiddenCats);
+        setChartHiddenSubsState(merged.chartHiddenSubs); saveChartHiddenSubs(merged.chartHiddenSubs);
+        setColumnWidthsState(merged.txnColumnWidths); saveTxnColumnWidths(merged.txnColumnWidths);
         setHiddenIds(merged.hiddenTransactionIds); saveHiddenIds(merged.hiddenTransactionIds);
 
         // If the union added anything that wasn't in the remote, push it
@@ -466,6 +490,9 @@ export function DataProvider({ children }) {
             organizedCategories: [...merged.organizedCategories],
             incomeCategories: [...merged.incomeCategories],
             savedTxnViews: merged.savedTxnViews,
+            chartHiddenCats: [...merged.chartHiddenCats],
+            chartHiddenSubs: [...merged.chartHiddenSubs],
+            txnColumnWidths: merged.txnColumnWidths,
             hiddenTransactionIds: [...merged.hiddenTransactionIds],
             updatedAt: new Date().toISOString(),
           });
@@ -508,6 +535,9 @@ export function DataProvider({ children }) {
         organizedCategories: [...organizedCategories],
         incomeCategories: [...incomeCategories],
         savedTxnViews,
+        chartHiddenCats: [...chartHiddenCats],
+        chartHiddenSubs: [...chartHiddenSubs],
+        txnColumnWidths: columnWidths,
         hiddenTransactionIds: [...hiddenIds],
         updatedAt: new Date().toISOString(),
       }).catch(err => console.warn('Firestore config sync (write) failed:', err));
@@ -536,6 +566,9 @@ export function DataProvider({ children }) {
     organizedCategories,
     incomeCategories,
     savedTxnViews,
+    chartHiddenCats,
+    chartHiddenSubs,
+    columnWidths,
     hiddenIds,
   ]);
 
@@ -970,6 +1003,35 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  // Chart hide-state + column widths. These accept either a value or a
+  // (prev) => next updater so the Transactions page can keep its existing
+  // call sites; persistence + Firestore sync happen here.
+  const setChartHiddenCats = useCallback((updater) => {
+    setChartHiddenCatsState(prev => {
+      const raw = typeof updater === 'function' ? updater(prev) : updater;
+      const next = raw instanceof Set ? raw : new Set(raw || []);
+      saveChartHiddenCats(next);
+      return next;
+    });
+  }, []);
+
+  const setChartHiddenSubs = useCallback((updater) => {
+    setChartHiddenSubsState(prev => {
+      const raw = typeof updater === 'function' ? updater(prev) : updater;
+      const next = raw instanceof Set ? raw : new Set(raw || []);
+      saveChartHiddenSubs(next);
+      return next;
+    });
+  }, []);
+
+  const setColumnWidths = useCallback((updater) => {
+    setColumnWidthsState(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : (updater || {});
+      saveTxnColumnWidths(next);
+      return next;
+    });
+  }, []);
+
   const addCustomAssetClass = useCallback((className) => {
     const trimmed = (className || '').trim();
     if (!trimmed) return;
@@ -1293,6 +1355,9 @@ export function DataProvider({ children }) {
     saveTxnView,
     deleteTxnView,
     updateTxnView,
+    setChartHiddenCats,
+    setChartHiddenSubs,
+    setColumnWidths,
     updatePaymentReminderPrefs,
     updateWeeklyEmailSections,
     renameGroup,
@@ -1337,6 +1402,9 @@ export function DataProvider({ children }) {
     saveTxnView,
     deleteTxnView,
     updateTxnView,
+    setChartHiddenCats,
+    setChartHiddenSubs,
+    setColumnWidths,
     updatePaymentReminderPrefs,
     updateWeeklyEmailSections,
     renameGroup,
@@ -1365,6 +1433,9 @@ export function DataProvider({ children }) {
     organizedCategories,
     incomeCategories,
     savedTxnViews,
+    chartHiddenCats,
+    chartHiddenSubs,
+    columnWidths,
     transactionNotes,
     accountNicknames,
     accountNumbers,
@@ -1396,6 +1467,9 @@ export function DataProvider({ children }) {
     organizedCategories,
     incomeCategories,
     savedTxnViews,
+    chartHiddenCats,
+    chartHiddenSubs,
+    columnWidths,
     transactionNotes,
     accountNicknames,
     accountNumbers,
