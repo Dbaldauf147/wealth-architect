@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { fetchTransactions, fetchBalances, fetchBalanceHistory, computeAnalytics } from '../utils/sheets';
 import { db } from '../firebase';
 import {
@@ -329,6 +329,141 @@ function mergedDiffersFromRemote(merged, remote) {
   return false;
 }
 
+// Local values with everything "empty". Passing these to mergeConfig() makes
+// it return the remote doc verbatim (union with nothing), which is how live
+// snapshots from another device are adopted — so deletes propagate too.
+const EMPTY_LOCALS = {
+  categoryRules: [], subcategoryRules: [], categoryOverrides: {}, subcategoryOverrides: {},
+  dateOverrides: {}, transactionNotes: {}, accountNicknames: {}, accountGroups: {},
+  assetClasses: {}, customAssets: [], customLiabilities: [], customAssetClasses: [],
+  hiddenCards: [], paymentReminderPrefs: {}, weeklyEmailSections: null, customCategories: [],
+  hiddenCategories: new Set(), rangeExcludedCategories: [], shortTermLoan: null,
+  organizedCategories: new Set(), incomeCategories: new Set(), savedTxnViews: {},
+  chartHiddenCats: new Set(), chartHiddenSubs: new Set(), txnColumnWidths: {},
+  categoryColors: {}, visibleColumns: null, activeTxnView: '', showAccounts: null,
+  pareto8020View: null, hiddenTransactionIds: new Set(),
+};
+
+// Snapshot of every synced field from localStorage — the "local" side of the
+// hydration merge.
+function readLocalConfig() {
+  return {
+    categoryRules: loadCategoryRules(),
+    subcategoryRules: loadSubcategoryRules(),
+    categoryOverrides: loadCategoryOverrides(),
+    subcategoryOverrides: loadSubcategoryOverrides(),
+    dateOverrides: loadDateOverrides(),
+    transactionNotes: loadNotes(),
+    accountNicknames: loadAccountNicknames(),
+    accountGroups: loadAccountGroups(),
+    assetClasses: loadAssetClasses(),
+    customAssets: loadCustomAssets(),
+    customLiabilities: loadCustomLiabilities(),
+    customAssetClasses: loadCustomAssetClasses(),
+    hiddenCards: loadHiddenCards(),
+    paymentReminderPrefs: loadPaymentReminderPrefs(),
+    weeklyEmailSections: loadJSON('weeklyEmailSections', null),
+    customCategories: loadCustomCategories(),
+    hiddenCategories: loadHiddenCategories(),
+    rangeExcludedCategories: loadRangeExcludedCategories(),
+    shortTermLoan: loadShortTermLoan(),
+    organizedCategories: loadOrganizedCategories(),
+    incomeCategories: loadIncomeCategories(),
+    savedTxnViews: loadSavedTxnViews(),
+    chartHiddenCats: loadChartHiddenCats(),
+    chartHiddenSubs: loadChartHiddenSubs(),
+    txnColumnWidths: loadTxnColumnWidths(),
+    categoryColors: loadCategoryColors(),
+    visibleColumns: loadVisibleColumns(),
+    activeTxnView: loadActiveTxnView(),
+    showAccounts: loadShowAccounts(),
+    pareto8020View: loadPareto8020View(),
+    hiddenTransactionIds: loadHiddenIds(),
+  };
+}
+
+// Combine a remote Firestore doc with local values. With real localStorage
+// this is the union-merge used at hydration (no data loss); with EMPTY_LOCALS
+// it returns remote verbatim (used to adopt live updates from other devices).
+function mergeConfig(remote, locals) {
+  return {
+    categoryRules: unionRules(locals.categoryRules, Array.isArray(remote.categoryRules) ? remote.categoryRules : []),
+    subcategoryRules: unionRules(locals.subcategoryRules, Array.isArray(remote.subcategoryRules) ? remote.subcategoryRules : []),
+    categoryOverrides: unionMap(locals.categoryOverrides, remote.categoryOverrides),
+    subcategoryOverrides: unionMap(locals.subcategoryOverrides, remote.subcategoryOverrides),
+    dateOverrides: unionMap(locals.dateOverrides, remote.dateOverrides),
+    transactionNotes: unionMap(locals.transactionNotes, remote.transactionNotes),
+    accountNicknames: unionMap(locals.accountNicknames, remote.accountNicknames),
+    accountGroups: unionMap(locals.accountGroups, remote.accountGroups),
+    assetClasses: unionMap(locals.assetClasses, remote.assetClasses),
+    customAssets: unionByName(locals.customAssets, Array.isArray(remote.customAssets) ? remote.customAssets : []),
+    customLiabilities: unionByName(locals.customLiabilities, Array.isArray(remote.customLiabilities) ? remote.customLiabilities : []),
+    customAssetClasses: unionStringArray(locals.customAssetClasses, remote.customAssetClasses),
+    hiddenCards: unionStringArray(locals.hiddenCards, remote.hiddenCards),
+    paymentReminderPrefs: { ...DEFAULT_PAYMENT_REMINDER_PREFS, ...(remote.paymentReminderPrefs || {}), ...(locals.paymentReminderPrefs || {}) },
+    weeklyEmailSections: normalizeEmailSections(locals.weeklyEmailSections || remote.weeklyEmailSections),
+    customCategories: unionStringArray(locals.customCategories, remote.customCategories),
+    hiddenCategories: unionSet(locals.hiddenCategories, remote.hiddenCategories),
+    rangeExcludedCategories: unionStringArray(locals.rangeExcludedCategories, remote.rangeExcludedCategories),
+    shortTermLoan: locals.shortTermLoan || remote.shortTermLoan || null,
+    organizedCategories: unionSet(locals.organizedCategories, remote.organizedCategories),
+    incomeCategories: unionSet(locals.incomeCategories, remote.incomeCategories),
+    savedTxnViews: unionMap(locals.savedTxnViews, remote.savedTxnViews),
+    chartHiddenCats: unionSet(locals.chartHiddenCats, remote.chartHiddenCats),
+    chartHiddenSubs: unionSet(locals.chartHiddenSubs, remote.chartHiddenSubs),
+    txnColumnWidths: unionMap(locals.txnColumnWidths, remote.txnColumnWidths),
+    categoryColors: unionMap(locals.categoryColors, remote.categoryColors),
+    visibleColumns: locals.visibleColumns ?? remote.visibleColumns ?? null,
+    activeTxnView: locals.activeTxnView || remote.activeTxnView || '',
+    showAccounts: locals.showAccounts ?? remote.showAccounts ?? true,
+    pareto8020View: locals.pareto8020View ?? remote.pareto8020View ?? false,
+    hiddenTransactionIds: unionSet(locals.hiddenTransactionIds, remote.hiddenTransactionIds),
+  };
+}
+
+// The Firestore doc shape (Sets → arrays). `updatedAt` is added at write time.
+function buildSyncPayload(v) {
+  return {
+    categoryRules: v.categoryRules,
+    subcategoryRules: v.subcategoryRules,
+    categoryOverrides: v.categoryOverrides,
+    subcategoryOverrides: v.subcategoryOverrides,
+    dateOverrides: v.dateOverrides,
+    transactionNotes: v.transactionNotes,
+    accountNicknames: v.accountNicknames,
+    accountGroups: v.accountGroups,
+    assetClasses: v.assetClasses,
+    customAssets: v.customAssets,
+    customLiabilities: v.customLiabilities,
+    customAssetClasses: v.customAssetClasses,
+    hiddenCards: v.hiddenCards,
+    paymentReminderPrefs: v.paymentReminderPrefs,
+    weeklyEmailSections: v.weeklyEmailSections,
+    customCategories: v.customCategories,
+    hiddenCategories: [...v.hiddenCategories],
+    rangeExcludedCategories: v.rangeExcludedCategories,
+    shortTermLoan: v.shortTermLoan || null,
+    organizedCategories: [...v.organizedCategories],
+    incomeCategories: [...v.incomeCategories],
+    savedTxnViews: v.savedTxnViews,
+    chartHiddenCats: [...v.chartHiddenCats],
+    chartHiddenSubs: [...v.chartHiddenSubs],
+    txnColumnWidths: v.txnColumnWidths,
+    categoryColors: v.categoryColors,
+    visibleColumns: v.visibleColumns ?? null,
+    activeTxnView: v.activeTxnView || '',
+    showAccounts: v.showAccounts ?? true,
+    pareto8020View: v.pareto8020View ?? false,
+    hiddenTransactionIds: [...v.hiddenTransactionIds],
+  };
+}
+
+// Stable serialization used to detect "did anything actually change" and to
+// suppress write/read echoes between this device and Firestore.
+function serializeConfig(v) {
+  return JSON.stringify(buildSyncPayload(v));
+}
+
 export function DataProvider({ children }) {
   // Synchronously hydrate sheet data from the SWR cache so the first paint
   // can render real numbers instead of "Loading…". The background fetch
@@ -387,218 +522,121 @@ export function DataProvider({ children }) {
   const [error, setError] = useState(null);
   const [lastSync, setLastSync] = useState(initialCache?.lastSync ? new Date(initialCache.lastSync) : null);
 
-  // ── Firestore sync of all per-user categorization state ───────────────
+  // ── Firestore real-time sync of all per-user categorization state ──────
   // The Vercel weekly-summary Function reads this same doc so the email
   // applies the user's rules/overrides. localStorage is the fast read
   // source on the client; Firestore is the cross-device source of truth.
   //
-  // Hydration uses a *union merge* between localStorage and Firestore so a
-  // device opening with empty localStorage can't accidentally overwrite
-  // another device's data via Firestore. Deletes don't propagate
-  // cross-device, but no data is ever lost.
+  // A live onSnapshot listener keeps devices in sync in real time. The first
+  // server snapshot hydrates via a *union merge* with localStorage so a device
+  // opening with empty localStorage can't clobber another device's data; once
+  // hydrated, snapshots from other devices are adopted verbatim, so live edits
+  // (including deletions) propagate. A debounced writer pushes local changes
+  // back, and a serialized "last synced" shadow breaks read/write echo loops.
   const syncHydrated = useRef(false);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const ref = doc(db, ...CONFIG_DOC_PATH);
-        const snap = await getDoc(ref);
-        if (cancelled) return;
-        const remote = snap.exists() ? (snap.data() || {}) : {};
+  // Serialized snapshot of the config we last wrote to or received from
+  // Firestore. Echo guard: skip writes when state already matches it, and skip
+  // applying snapshots that merely reflect our own write.
+  const lastSyncedRef = useRef(null);
 
-        const localRules = loadCategoryRules();
-        const localSubRules = loadSubcategoryRules();
-        const localCatOv = loadCategoryOverrides();
-        const localSubOv = loadSubcategoryOverrides();
-        const localDateOv = loadDateOverrides();
-        const localNotes = loadNotes();
-        const localNicks = loadAccountNicknames();
-        const localGroups = loadAccountGroups();
-        const localAssetClasses = loadAssetClasses();
-        const localCustomAssets = loadCustomAssets();
-        const localCustomLiabilities = loadCustomLiabilities();
-        const localCustomAssetClasses = loadCustomAssetClasses();
-        const localHiddenCards = loadHiddenCards();
-        const localPaymentReminderPrefs = loadPaymentReminderPrefs();
-        const localWeeklyEmailSections = loadJSON('weeklyEmailSections', null);
-        const localCustomCats = loadCustomCategories();
-        const localHiddenCats = loadHiddenCategories();
-        const localRangeExcluded = loadRangeExcludedCategories();
-        const localShortTermLoan = loadShortTermLoan();
-        const localOrganizedCats = loadOrganizedCategories();
-        const localIncomeCats = loadIncomeCategories();
-        const localSavedViews = loadSavedTxnViews();
-        const localChartHiddenCats = loadChartHiddenCats();
-        const localChartHiddenSubs = loadChartHiddenSubs();
-        const localColumnWidths = loadTxnColumnWidths();
-        const localCategoryColors = loadCategoryColors();
-        const localVisibleColumns = loadVisibleColumns();
-        const localActiveTxnView = loadActiveTxnView();
-        const localShowAccounts = loadShowAccounts();
-        const localPareto = loadPareto8020View();
-        const localHiddenIds = loadHiddenIds();
-
-        const merged = {
-          categoryRules: unionRules(localRules, Array.isArray(remote.categoryRules) ? remote.categoryRules : []),
-          subcategoryRules: unionRules(localSubRules, Array.isArray(remote.subcategoryRules) ? remote.subcategoryRules : []),
-          categoryOverrides: unionMap(localCatOv, remote.categoryOverrides),
-          subcategoryOverrides: unionMap(localSubOv, remote.subcategoryOverrides),
-          dateOverrides: unionMap(localDateOv, remote.dateOverrides),
-          transactionNotes: unionMap(localNotes, remote.transactionNotes),
-          accountNicknames: unionMap(localNicks, remote.accountNicknames),
-          accountGroups: unionMap(localGroups, remote.accountGroups),
-          assetClasses: unionMap(localAssetClasses, remote.assetClasses),
-          customAssets: unionByName(localCustomAssets, Array.isArray(remote.customAssets) ? remote.customAssets : []),
-          customLiabilities: unionByName(localCustomLiabilities, Array.isArray(remote.customLiabilities) ? remote.customLiabilities : []),
-          customAssetClasses: unionStringArray(localCustomAssetClasses, remote.customAssetClasses),
-          hiddenCards: unionStringArray(localHiddenCards, remote.hiddenCards),
-          paymentReminderPrefs: { ...DEFAULT_PAYMENT_REMINDER_PREFS, ...(remote.paymentReminderPrefs || {}), ...localPaymentReminderPrefs },
-          // Ordered list — prefer this device's choice, else remote, else default.
-          weeklyEmailSections: normalizeEmailSections(localWeeklyEmailSections || remote.weeklyEmailSections),
-          customCategories: unionStringArray(localCustomCats, remote.customCategories),
-          hiddenCategories: unionSet(localHiddenCats, remote.hiddenCategories),
-          rangeExcludedCategories: unionStringArray(localRangeExcluded, remote.rangeExcludedCategories),
-          // Single object — prefer this device's copy, else remote, else none.
-          shortTermLoan: localShortTermLoan || remote.shortTermLoan || null,
-          organizedCategories: unionSet(localOrganizedCats, remote.organizedCategories),
-          incomeCategories: unionSet(localIncomeCats, remote.incomeCategories),
-          savedTxnViews: unionMap(localSavedViews, remote.savedTxnViews),
-          chartHiddenCats: unionSet(localChartHiddenCats, remote.chartHiddenCats),
-          chartHiddenSubs: unionSet(localChartHiddenSubs, remote.chartHiddenSubs),
-          txnColumnWidths: unionMap(localColumnWidths, remote.txnColumnWidths),
-          categoryColors: unionMap(localCategoryColors, remote.categoryColors),
-          // Single choice — prefer this device's column selection, else remote,
-          // else null (= "show all", filled in by the page).
-          visibleColumns: localVisibleColumns ?? remote.visibleColumns ?? null,
-          // Single scalars — prefer this device's value, else remote, else default.
-          activeTxnView: localActiveTxnView || remote.activeTxnView || '',
-          showAccounts: localShowAccounts ?? remote.showAccounts ?? true,
-          pareto8020View: localPareto ?? remote.pareto8020View ?? false,
-          hiddenTransactionIds: unionSet(localHiddenIds, remote.hiddenTransactionIds),
-        };
-
-        // Push merged state into React + localStorage.
-        setCategoryRules(merged.categoryRules); saveCategoryRules(merged.categoryRules);
-        setSubcategoryRules(merged.subcategoryRules); saveSubcategoryRules(merged.subcategoryRules);
-        setCategoryOverrides(merged.categoryOverrides); saveCategoryOverrides(merged.categoryOverrides);
-        setSubcategoryOverrides(merged.subcategoryOverrides); saveSubcategoryOverrides(merged.subcategoryOverrides);
-        setDateOverrides(merged.dateOverrides); saveDateOverrides(merged.dateOverrides);
-        setTransactionNotes(merged.transactionNotes); saveNotes(merged.transactionNotes);
-        setAccountNicknames(merged.accountNicknames); saveAccountNicknames(merged.accountNicknames);
-        setAccountGroups(merged.accountGroups); saveAccountGroups(merged.accountGroups);
-        setAssetClasses(merged.assetClasses); saveAssetClasses(merged.assetClasses);
-        setCustomAssets(merged.customAssets); saveCustomAssets(merged.customAssets);
-        setCustomLiabilities(merged.customLiabilities); saveCustomLiabilities(merged.customLiabilities);
-        setCustomAssetClasses(merged.customAssetClasses); saveCustomAssetClasses(merged.customAssetClasses);
-        setHiddenCards(merged.hiddenCards); saveHiddenCards(merged.hiddenCards);
-        setPaymentReminderPrefs(merged.paymentReminderPrefs); savePaymentReminderPrefs(merged.paymentReminderPrefs);
-        setWeeklyEmailSections(merged.weeklyEmailSections); saveWeeklyEmailSections(merged.weeklyEmailSections);
-        setCustomCategories(merged.customCategories); saveCustomCategories(merged.customCategories);
-        setHiddenCategories(merged.hiddenCategories); saveHiddenCategories(merged.hiddenCategories);
-        setRangeExcludedCategories(merged.rangeExcludedCategories); saveRangeExcludedCategories(merged.rangeExcludedCategories);
-        setShortTermLoan(merged.shortTermLoan); saveShortTermLoan(merged.shortTermLoan);
-        setOrganizedCategories(merged.organizedCategories); saveOrganizedCategories(merged.organizedCategories);
-        setIncomeCategories(merged.incomeCategories); saveIncomeCategories(merged.incomeCategories);
-        setSavedTxnViews(merged.savedTxnViews); saveSavedTxnViews(merged.savedTxnViews);
-        setChartHiddenCatsState(merged.chartHiddenCats); saveChartHiddenCats(merged.chartHiddenCats);
-        setChartHiddenSubsState(merged.chartHiddenSubs); saveChartHiddenSubs(merged.chartHiddenSubs);
-        setColumnWidthsState(merged.txnColumnWidths); saveTxnColumnWidths(merged.txnColumnWidths);
-        setCategoryColorsState(merged.categoryColors); saveCategoryColors(merged.categoryColors);
-        setVisibleColumnsState(merged.visibleColumns); saveVisibleColumns(merged.visibleColumns);
-        setActiveTxnViewState(merged.activeTxnView); saveActiveTxnView(merged.activeTxnView);
-        setShowAccountsState(merged.showAccounts); saveShowAccounts(merged.showAccounts);
-        setPareto8020ViewState(merged.pareto8020View); savePareto8020View(merged.pareto8020View);
-        setHiddenIds(merged.hiddenTransactionIds); saveHiddenIds(merged.hiddenTransactionIds);
-
-        // If the union added anything that wasn't in the remote, push it
-        // back immediately so other devices see the restored data on next
-        // load. This self-heals the case where a fresh device clobbered
-        // Firestore with empty values before the primary device synced.
-        if (mergedDiffersFromRemote(merged, remote)) {
-          await setDoc(ref, {
-            categoryRules: merged.categoryRules,
-            subcategoryRules: merged.subcategoryRules,
-            categoryOverrides: merged.categoryOverrides,
-            subcategoryOverrides: merged.subcategoryOverrides,
-            dateOverrides: merged.dateOverrides,
-            transactionNotes: merged.transactionNotes,
-            accountNicknames: merged.accountNicknames,
-            accountGroups: merged.accountGroups,
-            assetClasses: merged.assetClasses,
-            customAssets: merged.customAssets,
-            customLiabilities: merged.customLiabilities,
-            customAssetClasses: merged.customAssetClasses,
-            hiddenCards: merged.hiddenCards,
-            paymentReminderPrefs: merged.paymentReminderPrefs,
-            weeklyEmailSections: merged.weeklyEmailSections,
-            customCategories: merged.customCategories,
-            hiddenCategories: [...merged.hiddenCategories],
-            rangeExcludedCategories: merged.rangeExcludedCategories,
-            shortTermLoan: merged.shortTermLoan || null,
-            organizedCategories: [...merged.organizedCategories],
-            incomeCategories: [...merged.incomeCategories],
-            savedTxnViews: merged.savedTxnViews,
-            chartHiddenCats: [...merged.chartHiddenCats],
-            chartHiddenSubs: [...merged.chartHiddenSubs],
-            txnColumnWidths: merged.txnColumnWidths,
-            categoryColors: merged.categoryColors,
-            visibleColumns: merged.visibleColumns ?? null,
-            activeTxnView: merged.activeTxnView || '',
-            showAccounts: merged.showAccounts ?? true,
-            pareto8020View: merged.pareto8020View ?? false,
-            hiddenTransactionIds: [...merged.hiddenTransactionIds],
-            updatedAt: new Date().toISOString(),
-          });
-        }
-      } catch (err) {
-        console.warn('Firestore config sync (read) failed:', err);
-      } finally {
-        if (!cancelled) {
-          syncHydrated.current = true;
-          setConfigHydrated(true);
-        }
-      }
-    })();
-    return () => { cancelled = true; };
+  // Push a merged/adopted config object into React state + localStorage.
+  const applyConfig = useCallback((m) => {
+    setCategoryRules(m.categoryRules); saveCategoryRules(m.categoryRules);
+    setSubcategoryRules(m.subcategoryRules); saveSubcategoryRules(m.subcategoryRules);
+    setCategoryOverrides(m.categoryOverrides); saveCategoryOverrides(m.categoryOverrides);
+    setSubcategoryOverrides(m.subcategoryOverrides); saveSubcategoryOverrides(m.subcategoryOverrides);
+    setDateOverrides(m.dateOverrides); saveDateOverrides(m.dateOverrides);
+    setTransactionNotes(m.transactionNotes); saveNotes(m.transactionNotes);
+    setAccountNicknames(m.accountNicknames); saveAccountNicknames(m.accountNicknames);
+    setAccountGroups(m.accountGroups); saveAccountGroups(m.accountGroups);
+    setAssetClasses(m.assetClasses); saveAssetClasses(m.assetClasses);
+    setCustomAssets(m.customAssets); saveCustomAssets(m.customAssets);
+    setCustomLiabilities(m.customLiabilities); saveCustomLiabilities(m.customLiabilities);
+    setCustomAssetClasses(m.customAssetClasses); saveCustomAssetClasses(m.customAssetClasses);
+    setHiddenCards(m.hiddenCards); saveHiddenCards(m.hiddenCards);
+    setPaymentReminderPrefs(m.paymentReminderPrefs); savePaymentReminderPrefs(m.paymentReminderPrefs);
+    setWeeklyEmailSections(m.weeklyEmailSections); saveWeeklyEmailSections(m.weeklyEmailSections);
+    setCustomCategories(m.customCategories); saveCustomCategories(m.customCategories);
+    setHiddenCategories(m.hiddenCategories); saveHiddenCategories(m.hiddenCategories);
+    setRangeExcludedCategories(m.rangeExcludedCategories); saveRangeExcludedCategories(m.rangeExcludedCategories);
+    setShortTermLoan(m.shortTermLoan); saveShortTermLoan(m.shortTermLoan);
+    setOrganizedCategories(m.organizedCategories); saveOrganizedCategories(m.organizedCategories);
+    setIncomeCategories(m.incomeCategories); saveIncomeCategories(m.incomeCategories);
+    setSavedTxnViews(m.savedTxnViews); saveSavedTxnViews(m.savedTxnViews);
+    setChartHiddenCatsState(m.chartHiddenCats); saveChartHiddenCats(m.chartHiddenCats);
+    setChartHiddenSubsState(m.chartHiddenSubs); saveChartHiddenSubs(m.chartHiddenSubs);
+    setColumnWidthsState(m.txnColumnWidths); saveTxnColumnWidths(m.txnColumnWidths);
+    setCategoryColorsState(m.categoryColors); saveCategoryColors(m.categoryColors);
+    setVisibleColumnsState(m.visibleColumns); saveVisibleColumns(m.visibleColumns);
+    setActiveTxnViewState(m.activeTxnView); saveActiveTxnView(m.activeTxnView);
+    setShowAccountsState(m.showAccounts); saveShowAccounts(m.showAccounts);
+    setPareto8020ViewState(m.pareto8020View); savePareto8020View(m.pareto8020View);
+    setHiddenIds(m.hiddenTransactionIds); saveHiddenIds(m.hiddenTransactionIds);
   }, []);
 
+  // Live Firestore subscription. The first server snapshot hydrates via a
+  // union-merge with localStorage (so a fresh device can't clobber another
+  // device's data); later snapshots from other devices are adopted verbatim,
+  // so edits — including deletions — show up here in real time.
+  useEffect(() => {
+    const ref = doc(db, ...CONFIG_DOC_PATH);
+    const unsub = onSnapshot(ref, { includeMetadataChanges: true }, (snap) => {
+      // Ignore our own optimistic local writes echoing back, and cache-only
+      // fires — we reconcile against server truth.
+      if (snap.metadata.hasPendingWrites) return;
+      if (snap.metadata.fromCache) return;
+      const remote = snap.exists() ? (snap.data() || {}) : {};
+
+      if (!syncHydrated.current) {
+        const merged = mergeConfig(remote, readLocalConfig());
+        applyConfig(merged);
+        lastSyncedRef.current = serializeConfig(merged);
+        syncHydrated.current = true;
+        setConfigHydrated(true);
+        // Self-heal: if the union restored anything missing from the remote
+        // doc, push it back so other devices see it.
+        if (mergedDiffersFromRemote(merged, remote)) {
+          setDoc(ref, { ...buildSyncPayload(merged), updatedAt: new Date().toISOString() })
+            .catch(err => console.warn('Firestore config self-heal failed:', err));
+        }
+        return;
+      }
+
+      // Live update from another device — adopt remote as the source of truth.
+      const adopted = mergeConfig(remote, EMPTY_LOCALS);
+      const serialized = serializeConfig(adopted);
+      if (serialized === lastSyncedRef.current) return; // our own echo / no change
+      lastSyncedRef.current = serialized;
+      applyConfig(adopted);
+    }, (err) => {
+      console.warn('Firestore onSnapshot failed:', err);
+      // Don't strand the UI on a fresh device if the listener errors out.
+      if (!syncHydrated.current) { syncHydrated.current = true; setConfigHydrated(true); }
+    });
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Debounced writer. Serializes current state and writes only when it differs
+  // from what we last synced — which also prevents re-writing values we just
+  // adopted from a remote snapshot (no feedback loop).
   useEffect(() => {
     if (!syncHydrated.current) return;
+    const currentConfig = {
+      categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
+      transactionNotes, accountNicknames, accountGroups, assetClasses, customAssets,
+      customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, weeklyEmailSections,
+      customCategories, hiddenCategories, rangeExcludedCategories, shortTermLoan, organizedCategories,
+      incomeCategories, savedTxnViews, chartHiddenCats, chartHiddenSubs, txnColumnWidths: columnWidths,
+      categoryColors, visibleColumns, activeTxnView, showAccounts, pareto8020View,
+      hiddenTransactionIds: hiddenIds,
+    };
+    const serialized = serializeConfig(currentConfig);
+    if (serialized === lastSyncedRef.current) return; // nothing actually changed
     const handle = setTimeout(() => {
-      setDoc(doc(db, ...CONFIG_DOC_PATH), {
-        categoryRules,
-        subcategoryRules,
-        categoryOverrides,
-        subcategoryOverrides,
-        dateOverrides,
-        transactionNotes,
-        accountNicknames,
-        accountGroups,
-        assetClasses,
-        customAssets,
-        customLiabilities,
-        customAssetClasses,
-        hiddenCards,
-        paymentReminderPrefs,
-        weeklyEmailSections,
-        customCategories,
-        hiddenCategories: [...hiddenCategories],
-        rangeExcludedCategories,
-        shortTermLoan: shortTermLoan || null,
-        organizedCategories: [...organizedCategories],
-        incomeCategories: [...incomeCategories],
-        savedTxnViews,
-        chartHiddenCats: [...chartHiddenCats],
-        chartHiddenSubs: [...chartHiddenSubs],
-        txnColumnWidths: columnWidths,
-        categoryColors,
-        visibleColumns: visibleColumns ?? null,
-        activeTxnView: activeTxnView || '',
-        showAccounts,
-        pareto8020View,
-        hiddenTransactionIds: [...hiddenIds],
-        updatedAt: new Date().toISOString(),
-      }).catch(err => console.warn('Firestore config sync (write) failed:', err));
+      lastSyncedRef.current = serialized;
+      setDoc(doc(db, ...CONFIG_DOC_PATH), { ...buildSyncPayload(currentConfig), updatedAt: new Date().toISOString() })
+        .catch(err => console.warn('Firestore config sync (write) failed:', err));
     }, 500);
     return () => clearTimeout(handle);
   }, [
