@@ -2169,6 +2169,19 @@ export function TransactionsPage() {
     setBulkSubSearch('');
   }
 
+  /* Count of uncategorized transactions over $20 in the past 30 days */
+  const uncategorizedRecentCount = useMemo(() => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    return (transactions || []).filter(t => {
+      const cat = t.category || 'Uncategorized';
+      if (cat !== 'Uncategorized') return false;
+      if (Math.abs(t.amount) <= 20) return false;
+      const d = new Date(t.date);
+      return !isNaN(d) && d >= cutoff;
+    }).length;
+  }, [transactions]);
+
   /* Loading state */
   if (loading) {
     return (
@@ -2187,8 +2200,19 @@ export function TransactionsPage() {
       <div className={styles.pageHeader}>
         <div>
           <div className={styles.pageTitle}>Transactions</div>
-          <div className={styles.pageSubtitle}>
-            {filtered.length} transaction{filtered.length !== 1 ? 's' : ''} across {accountNames.length} account{accountNames.length !== 1 ? 's' : ''}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 2 }}>
+            <div className={styles.pageSubtitle} style={{ marginTop: 0 }}>
+              {filtered.length} transaction{filtered.length !== 1 ? 's' : ''} across {accountNames.length} account{accountNames.length !== 1 ? 's' : ''}
+            </div>
+            {uncategorizedRecentCount > 0 && (
+              <div
+                className={styles.uncategorizedAlert}
+                title="Uncategorized transactions over $20 in the past 30 days"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>error</span>
+                {uncategorizedRecentCount} uncategorized over $20 · past 30 days
+              </div>
+            )}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

@@ -27,6 +27,19 @@
   margin-top: 2px;
 }
 
+.uncategorizedAlert {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #ba1a1a;
+  background: rgba(186, 26, 26, 0.08);
+  border: 1px solid rgba(186, 26, 26, 0.2);
+  border-radius: 999px;
+}
+
 .exportBtn {
   display: flex;
   align-items: center;
