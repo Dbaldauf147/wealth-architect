@@ -34,10 +34,18 @@
   padding: 4px 10px;
   font-size: 12.5px;
   font-weight: 600;
+  font-family: inherit;
+  line-height: 1;
   color: #ba1a1a;
   background: rgba(186, 26, 26, 0.08);
   border: 1px solid rgba(186, 26, 26, 0.2);
   border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.uncategorizedAlert:hover {
+  background: rgba(186, 26, 26, 0.16);
 }
 
 .exportBtn {

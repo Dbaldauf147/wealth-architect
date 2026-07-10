@@ -630,6 +630,21 @@ function toIsoDate(dateStr) {
   return `${y}-${m}-${day}`;
 }
 
+/* Predicate: an uncategorized transaction over $20 within the last 30 days.
+   Shared by the header count badge and its click-to-filter behavior so both
+   always agree on what "counts". */
+function uncatOver20RecentCutoff() {
+  const c = new Date();
+  c.setDate(c.getDate() - 30);
+  return c.getTime();
+}
+function isUncatOver20Recent(t, cutoffMs) {
+  if ((t.category || 'Uncategorized') !== 'Uncategorized') return false;
+  if (Math.abs(t.amount) <= 20) return false;
+  const d = new Date(t.date);
+  return !isNaN(d) && d.getTime() >= cutoffMs;
+}
+
 /* Build a simple recurring-transaction list from raw transactions */
 function findRecurring(transactions) {
   // Group by normalised description
@@ -1242,6 +1257,7 @@ export function TransactionsPage() {
   const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
   const [bulkCategorySearch, setBulkCategorySearch] = useState('');
   const [noSubOnly, setNoSubOnly] = useState(false);
+  const [uncatRecentOnly, setUncatRecentOnly] = useState(false);
   const [bulkSubOpen, setBulkSubOpen] = useState(false);
   const [bulkSubSearch, setBulkSubSearch] = useState('');
   const bulkSubRef = useRef(null);
@@ -1606,6 +1622,10 @@ export function TransactionsPage() {
     if (noSubOnly) {
       list = list.filter(t => !t.subcategory);
     }
+    if (uncatRecentOnly) {
+      const cutoff = uncatOver20RecentCutoff();
+      list = list.filter(t => isUncatOver20Recent(t, cutoff));
+    }
     const sorted = [...list].sort((a, b) => {
       let cmp = 0;
       switch (sortCol) {
@@ -1622,7 +1642,7 @@ export function TransactionsPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return sorted;
-  }, [transactions, activeAccount, deferredSearch, includedCategories, includedSubcategories, selectedMonth, deferredColumnFilters, sortCol, sortDir, deferredNotes, noSubOnly]);
+  }, [transactions, activeAccount, deferredSearch, includedCategories, includedSubcategories, selectedMonth, deferredColumnFilters, sortCol, sortDir, deferredNotes, noSubOnly, uncatRecentOnly]);
 
   const paginated = useMemo(
     () => filtered.slice(0, (page + 1) * PAGE_SIZE),
@@ -2179,15 +2199,8 @@ export function TransactionsPage() {
 
   /* Count of uncategorized transactions over $20 in the past 30 days */
   const uncategorizedRecentCount = useMemo(() => {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 30);
-    return (transactions || []).filter(t => {
-      const cat = t.category || 'Uncategorized';
-      if (cat !== 'Uncategorized') return false;
-      if (Math.abs(t.amount) <= 20) return false;
-      const d = new Date(t.date);
-      return !isNaN(d) && d >= cutoff;
-    }).length;
+    const cutoff = uncatOver20RecentCutoff();
+    return (transactions || []).filter(t => isUncatOver20Recent(t, cutoff)).length;
   }, [transactions]);
 
   /* Loading state */
@@ -2213,17 +2226,34 @@ export function TransactionsPage() {
               {filtered.length} transaction{filtered.length !== 1 ? 's' : ''} across {accountNames.length} account{accountNames.length !== 1 ? 's' : ''}
             </div>
             {uncategorizedRecentCount > 0 && (
-              <div
+              <button
+                type="button"
                 className={styles.uncategorizedAlert}
-                title="Uncategorized transactions over $20 in the past 30 days"
+                aria-pressed={uncatRecentOnly}
+                title={uncatRecentOnly
+                  ? 'Showing uncategorized over $20 · past 30 days — click to clear'
+                  : 'Click to filter: uncategorized over $20 · past 30 days'}
+                onClick={() => { setUncatRecentOnly(v => !v); setPage(0); }}
+                style={uncatRecentOnly ? { background: '#ba1a1a', color: '#fff', borderColor: '#ba1a1a' } : undefined}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>error</span>
                 {uncategorizedRecentCount} uncategorized over $20 · past 30 days
-              </div>
+                {uncatRecentOnly && (
+                  <span className="material-symbols-outlined" style={{ fontSize: 15, marginLeft: 1 }}>close</span>
+                )}
+              </button>
             )}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            className={styles.exportBtn}
+            onClick={() => window.location.reload()}
+            title="Reload the page to pull the latest version"
+          >
+            <span className="material-symbols-outlined">refresh</span>
+            Refresh
+          </button>
           <button
             className={styles.exportBtn}
             onClick={() => {
