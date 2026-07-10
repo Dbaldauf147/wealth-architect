@@ -190,6 +190,11 @@ export function RecurringPage() {
   var expandedSubVal = expandedSub[0];
   var setExpandedSub = expandedSub[1];
 
+  // Which individual subscription (by key) is expanded to show its transactions.
+  var expandedItem = useState(null);
+  var expandedItemVal = expandedItem[0];
+  var setExpandedItem = expandedItem[1];
+
   var bucketSortState = useState({ col: 'totalSpent', dir: 'desc' });
   var bucketSort = bucketSortState[0];
   var setBucketSort = bucketSortState[1];
@@ -443,10 +448,15 @@ export function RecurringPage() {
                               {sortedItems.map(function(r) {
                                 var freqLabel = r.frequency === 'annual' ? 'Annual' : r.frequency === 'quarterly' ? 'Quarterly' : 'Monthly';
                                 var itemCancelled = statuses[r.key] === 'cancelled';
+                                var itemOpen = expandedItemVal === r.key;
                                 return (
-                                  <tr key={r.key} style={{ opacity: itemCancelled ? 0.5 : 1 }}>
+                                  <Fragment key={r.key}>
+                                  <tr style={{ opacity: itemCancelled ? 0.5 : 1, cursor: 'pointer' }} onClick={function() { setExpandedItem(itemOpen ? null : r.key); }}>
                                     <td style={{ paddingLeft: 32 }}>
-                                      <div className={styles.paymentName} style={{ textDecoration: itemCancelled ? 'line-through' : 'none' }}>{r.description}</div>
+                                      <div className={styles.paymentName} style={{ textDecoration: itemCancelled ? 'line-through' : 'none' }}>
+                                        <span className={styles.expandArrow}>{itemOpen ? '▾' : '▸'}</span>
+                                        {r.description}
+                                      </div>
                                     </td>
                                     <td className={styles.accountCell}>{r.account}</td>
                                     <td style={{ textAlign: 'center' }} onClick={function(e) { e.stopPropagation(); }}>
@@ -483,6 +493,35 @@ export function RecurringPage() {
                                       </div>
                                     </td>
                                   </tr>
+                                  {itemOpen && (
+                                    <tr>
+                                      <td colSpan="7" style={{ padding: 0 }}>
+                                        <table className={styles.table} style={{ margin: 0 }}>
+                                          <thead>
+                                            <tr style={{ background: 'var(--color-surface-alt, #f4f4f4)' }}>
+                                              <th style={{ paddingLeft: 48 }}>Date</th>
+                                              <th>Account</th>
+                                              <th style={{ textAlign: 'right' }}>Amount</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {r.txns.map(function(tx, ti) {
+                                              return (
+                                                <tr key={ti}>
+                                                  <td className={styles.accountCell} style={{ paddingLeft: 48 }}>{fmtDate(tx.date)}</td>
+                                                  <td className={styles.accountCell}>{tx.account || '—'}</td>
+                                                  <td style={{ textAlign: 'right' }}>
+                                                    <div className={styles.amountMain}>{fmt(tx.amount)}</div>
+                                                  </td>
+                                                </tr>
+                                              );
+                                            })}
+                                          </tbody>
+                                        </table>
+                                      </td>
+                                    </tr>
+                                  )}
+                                  </Fragment>
                                 );
                               })}
                             </tbody>
