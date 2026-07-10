@@ -435,6 +435,9 @@ export function RecurringPage() {
                                 <th className={styles.sortableTh} style={{ textAlign: 'center' }} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'occurrences', 'desc'); }}>
                                   Charges{sortArrow(itemSort, 'occurrences')}
                                 </th>
+                                <th className={styles.sortableTh} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'date', 'desc'); }}>
+                                  Last Charged{sortArrow(itemSort, 'date')}
+                                </th>
                                 <th className={styles.sortableTh} style={{ textAlign: 'right' }} onClick={function(e) { e.stopPropagation(); toggleSort(setItemSort, 'avgAmount', 'desc'); }}>
                                   Avg Amount{sortArrow(itemSort, 'avgAmount')}
                                 </th>
@@ -475,6 +478,7 @@ export function RecurringPage() {
                                     <td style={{ textAlign: 'center' }}>
                                       <span className={styles.freqBadge}>{r.occurrences}</span>
                                     </td>
+                                    <td className={styles.accountCell}>{r.txns.length > 0 ? fmtDate(r.txns[0].date) : '—'}</td>
                                     <td style={{ textAlign: 'right' }}>
                                       <div className={styles.amountMain}>{fmt(r.avgAmount)}</div>
                                       {!r.isFixed && (
@@ -495,7 +499,7 @@ export function RecurringPage() {
                                   </tr>
                                   {itemOpen && (
                                     <tr>
-                                      <td colSpan="7" style={{ padding: 0 }}>
+                                      <td colSpan="8" style={{ padding: 0 }}>
                                         <table className={styles.table} style={{ margin: 0 }}>
                                           <thead>
                                             <tr style={{ background: 'var(--color-surface-alt, #f4f4f4)' }}>
