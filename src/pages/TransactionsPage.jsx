@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback, useDeferredValue, memo } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { normalizeDesc } from '../lib/categorize';
 import styles from './TransactionsPage.module.css';
@@ -1533,6 +1533,14 @@ export function TransactionsPage() {
     setPage(0);
   }
 
+  /* Typed inputs drive the full filter → sort → chart recompute over every
+     transaction. Deferring them keeps the input responsive: React renders the
+     keystroke immediately and re-runs the heavy chain at low priority (and can
+     interrupt it if you keep typing). */
+  const deferredSearch = useDeferredValue(searchQuery);
+  const deferredColumnFilters = useDeferredValue(columnFilters);
+  const deferredNotes = useDeferredValue(transactionNotes);
+
   /* Filtered + sorted transactions */
   const filtered = useMemo(() => {
     let list = transactions || [];
@@ -1554,8 +1562,8 @@ export function TransactionsPage() {
         return key === selectedMonth;
       });
     }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
+    if (deferredSearch.trim()) {
+      const q = deferredSearch.toLowerCase();
       list = list.filter(
         t =>
           (t.description || '').toLowerCase().includes(q) ||
@@ -1568,7 +1576,7 @@ export function TransactionsPage() {
       );
     }
     // Per-column filters
-    const cf = columnFilters;
+    const cf = deferredColumnFilters;
     const anyCol = Object.values(cf).some(v => v && String(v).trim());
     if (anyCol) {
       const matchText = (val, q) => !q || (String(val || '').toLowerCase().includes(String(q).toLowerCase()));
@@ -1590,7 +1598,7 @@ export function TransactionsPage() {
         matchText(t.subcategory, cf.subcategory) &&
         matchAmount(t.amount, cf.amount) &&
         (cf.date ? formatDate(t.date).toLowerCase().includes(cf.date.toLowerCase()) || String(t.date || '').includes(cf.date) : true) &&
-        matchText(transactionNotes[t.transactionId] || '', cf.notes) &&
+        matchText(deferredNotes[t.transactionId] || '', cf.notes) &&
         matchText(t.institution, cf.institution) &&
         matchText(t.account, cf.account)
       );
@@ -1614,7 +1622,7 @@ export function TransactionsPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return sorted;
-  }, [transactions, activeAccount, searchQuery, includedCategories, includedSubcategories, selectedMonth, columnFilters, sortCol, sortDir, transactionNotes, noSubOnly]);
+  }, [transactions, activeAccount, deferredSearch, includedCategories, includedSubcategories, selectedMonth, deferredColumnFilters, sortCol, sortDir, deferredNotes, noSubOnly]);
 
   const paginated = useMemo(
     () => filtered.slice(0, (page + 1) * PAGE_SIZE),

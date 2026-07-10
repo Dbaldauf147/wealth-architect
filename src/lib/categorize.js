@@ -3,8 +3,21 @@
    localStorage access. The same logic must run in both places so the
    weekly summary email reflects the same categorized view as the website. */
 
+// Memoize normalization: the same merchant/rule descriptions are normalized
+// thousands of times (once per txn × rule in applyRules, again per visible row
+// in findMatchingRules). The regex is the hot path, so cache by input string.
+// The set of distinct descriptions is bounded (unique merchants + rules), and a
+// size guard keeps a long-lived process (e.g. the Vercel function) from growing
+// unbounded.
+const _normCache = new Map();
 export function normalizeDesc(s) {
-  return (s || '').toLowerCase().trim().replace(/[\s\-–—]+/g, ' ');
+  const key = s || '';
+  const hit = _normCache.get(key);
+  if (hit !== undefined) return hit;
+  const out = key.toLowerCase().trim().replace(/[\s\-–—]+/g, ' ');
+  if (_normCache.size > 20000) _normCache.clear();
+  _normCache.set(key, out);
+  return out;
 }
 
 /* Build a composite key for transactions without a stable transactionId */
