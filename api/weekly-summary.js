@@ -115,10 +115,15 @@ export default async function handler(req, res) {
     const isTest = req.query?.test === '1' || req.query?.test === 'true';
     const recipientOverride = req.body?.recipient;
 
+    // Firestore config (synced from the website). Read first so the send-day
+    // gate can honor the day the user picked in Settings; env var and 'sun' are
+    // fallbacks when nothing is set.
+    const config = await fetchCategoryConfig();
+
     // Cron-invoked calls come as GET from Vercel. If not a test, gate on day-of-week.
     if (!isTest) {
-      const configuredDay = (process.env.WEEKLY_EMAIL_DAY || 'sun').toLowerCase().slice(0, 3);
-      const configuredIdx = DAY_MAP[configuredDay];
+      const configuredDay = ((config && config.weeklyEmailDay) || process.env.WEEKLY_EMAIL_DAY || 'sun').toLowerCase().slice(0, 3);
+      const configuredIdx = DAY_MAP[configuredDay] ?? 0;
       const todayIdx = inTodayInZone(process.env.WEEKLY_EMAIL_TZ || 'America/New_York');
       if (configuredIdx !== todayIdx) {
         return res.status(200).json({ skipped: true, reason: `Today (${todayIdx}) != configured (${configuredIdx})` });
@@ -129,7 +134,6 @@ export default async function handler(req, res) {
 
     // Apply the same category rules + per-transaction overrides the website
     // applies, so the email reflects the same categorized view.
-    const config = await fetchCategoryConfig();
     let transactions = rawTransactions;
     if (config) {
       transactions = applyRulesToTransactions(transactions, config.categoryRules || []);

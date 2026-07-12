@@ -35,8 +35,11 @@ function saveEmailPrefs(prefs) {
 }
 
 export function SettingsPage() {
-  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, weeklyEmailSections, rangeExcludedCategories } = useData();
-  const { refresh, updatePaymentReminderPrefs, updateWeeklyEmailSections } = useDataActions();
+  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, weeklyEmailSections, weeklyEmailDay, rangeExcludedCategories } = useData();
+  const { refresh, updatePaymentReminderPrefs, updateWeeklyEmailSections, updateWeeklyEmailDay } = useDataActions();
+  // Send day is synced via DataContext (Firestore) so the cron reads it; fall
+  // back to Sunday for display when nothing has been chosen yet.
+  const sendDay = weeklyEmailDay || 'Sun';
   const SECTION_LABELS = Object.fromEntries(WEEKLY_EMAIL_SECTIONS.map(s => [s.id, s.label]));
   const [emailPrefs, setEmailPrefs] = useState(loadEmailPrefs);
   const [sendStatus, setSendStatus] = useState(null); // null | 'sending' | 'ok' | 'err'
@@ -267,12 +270,12 @@ export function SettingsPage() {
                   <button
                     key={d}
                     type="button"
-                    onClick={() => updatePrefs({ sendDay: d })}
+                    onClick={() => updateWeeklyEmailDay(d)}
                     style={{
                       padding: '4px 10px', fontSize: 12, fontWeight: 600,
-                      border: `1px solid ${emailPrefs.sendDay === d ? 'var(--color-secondary, #0058be)' : 'var(--border-ghost)'}`,
-                      background: emailPrefs.sendDay === d ? 'var(--color-secondary, #0058be)' : 'transparent',
-                      color: emailPrefs.sendDay === d ? '#fff' : 'var(--color-text-secondary)',
+                      border: `1px solid ${sendDay === d ? 'var(--color-secondary, #0058be)' : 'var(--border-ghost)'}`,
+                      background: sendDay === d ? 'var(--color-secondary, #0058be)' : 'transparent',
+                      color: sendDay === d ? '#fff' : 'var(--color-text-secondary)',
                       borderRadius: 6, cursor: 'pointer',
                     }}
                   >
@@ -281,7 +284,7 @@ export function SettingsPage() {
                 ))}
               </div>
               <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 6 }}>
-                Fires at 8:00 AM ET. Your preference is saved locally — once the backend is deployed I'll wire it in so the server reads it.
+                Fires at 8:00 AM ET on the selected day. Synced across your devices — the server reads this to decide when to send.
               </div>
             </div>
           </div>

@@ -126,6 +126,10 @@ const savePaymentReminderPrefs = (v) => saveJSON('paymentReminderPrefs', v);
 // normalizeEmailSections fills in defaults / drops unknown ids.
 const loadWeeklyEmailSections = () => normalizeEmailSections(loadJSON('weeklyEmailSections', null));
 const saveWeeklyEmailSections = (v) => saveJSON('weeklyEmailSections', v);
+// Day-of-week ('Sun'..'Sat') the weekly-summary cron sends on. Synced to
+// Firestore so the Vercel Function reads the user's choice; null = server default.
+const loadWeeklyEmailDay = () => loadJSON('weeklyEmailDay', null);
+const saveWeeklyEmailDay = (v) => saveJSON('weeklyEmailDay', v);
 const loadCustomCategories = () => loadJSON('customCategories', []);
 const saveCustomCategories = (v) => saveJSON('customCategories', v);
 const loadHiddenCategories = () => new Set(loadJSON('hiddenCategories', []));
@@ -322,6 +326,8 @@ function mergedDiffersFromRemote(merged, remote) {
   if (JSON.stringify(merged.visibleColumns ?? null) !== JSON.stringify(remote.visibleColumns ?? null)) {
     return true;
   }
+  // Weekly-email send day — single scalar.
+  if ((merged.weeklyEmailDay || '') !== (remote.weeklyEmailDay || '')) return true;
   // Active view + display toggles — single scalars.
   if ((merged.activeTxnView || '') !== (remote.activeTxnView || '')) return true;
   if ((merged.showAccounts ?? true) !== remote.showAccounts) return true;
@@ -336,7 +342,7 @@ const EMPTY_LOCALS = {
   categoryRules: [], subcategoryRules: [], categoryOverrides: {}, subcategoryOverrides: {},
   dateOverrides: {}, transactionNotes: {}, accountNicknames: {}, accountGroups: {},
   assetClasses: {}, customAssets: [], customLiabilities: [], customAssetClasses: [],
-  hiddenCards: [], paymentReminderPrefs: {}, weeklyEmailSections: null, customCategories: [],
+  hiddenCards: [], paymentReminderPrefs: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
   hiddenCategories: new Set(), rangeExcludedCategories: [], shortTermLoan: null,
   organizedCategories: new Set(), incomeCategories: new Set(), savedTxnViews: {},
   chartHiddenCats: new Set(), chartHiddenSubs: new Set(), txnColumnWidths: {},
@@ -363,6 +369,7 @@ function readLocalConfig() {
     hiddenCards: loadHiddenCards(),
     paymentReminderPrefs: loadPaymentReminderPrefs(),
     weeklyEmailSections: loadJSON('weeklyEmailSections', null),
+    weeklyEmailDay: loadJSON('weeklyEmailDay', null),
     customCategories: loadCustomCategories(),
     hiddenCategories: loadHiddenCategories(),
     rangeExcludedCategories: loadRangeExcludedCategories(),
@@ -402,6 +409,7 @@ function mergeConfig(remote, locals) {
     hiddenCards: unionStringArray(locals.hiddenCards, remote.hiddenCards),
     paymentReminderPrefs: { ...DEFAULT_PAYMENT_REMINDER_PREFS, ...(remote.paymentReminderPrefs || {}), ...(locals.paymentReminderPrefs || {}) },
     weeklyEmailSections: normalizeEmailSections(locals.weeklyEmailSections || remote.weeklyEmailSections),
+    weeklyEmailDay: locals.weeklyEmailDay || remote.weeklyEmailDay || null,
     customCategories: unionStringArray(locals.customCategories, remote.customCategories),
     hiddenCategories: unionSet(locals.hiddenCategories, remote.hiddenCategories),
     rangeExcludedCategories: unionStringArray(locals.rangeExcludedCategories, remote.rangeExcludedCategories),
@@ -439,6 +447,7 @@ function buildSyncPayload(v) {
     hiddenCards: v.hiddenCards,
     paymentReminderPrefs: v.paymentReminderPrefs,
     weeklyEmailSections: v.weeklyEmailSections,
+    weeklyEmailDay: v.weeklyEmailDay ?? null,
     customCategories: v.customCategories,
     hiddenCategories: [...v.hiddenCategories],
     rangeExcludedCategories: v.rangeExcludedCategories,
@@ -511,6 +520,7 @@ export function DataProvider({ children }) {
   const [hiddenCards, setHiddenCards] = useState(loadHiddenCards);
   const [paymentReminderPrefs, setPaymentReminderPrefs] = useState(loadPaymentReminderPrefs);
   const [weeklyEmailSections, setWeeklyEmailSections] = useState(loadWeeklyEmailSections);
+  const [weeklyEmailDay, setWeeklyEmailDay] = useState(loadWeeklyEmailDay);
   const [rawBalances, setRawBalances] = useState(initialCache?.balances || null);
   const [balanceHistory, setBalanceHistory] = useState(initialCache?.balanceHistory || []);
   // Only true on the first cold load when we have nothing on disk to show.
@@ -556,6 +566,7 @@ export function DataProvider({ children }) {
     setHiddenCards(m.hiddenCards); saveHiddenCards(m.hiddenCards);
     setPaymentReminderPrefs(m.paymentReminderPrefs); savePaymentReminderPrefs(m.paymentReminderPrefs);
     setWeeklyEmailSections(m.weeklyEmailSections); saveWeeklyEmailSections(m.weeklyEmailSections);
+    setWeeklyEmailDay(m.weeklyEmailDay); saveWeeklyEmailDay(m.weeklyEmailDay);
     setCustomCategories(m.customCategories); saveCustomCategories(m.customCategories);
     setHiddenCategories(m.hiddenCategories); saveHiddenCategories(m.hiddenCategories);
     setRangeExcludedCategories(m.rangeExcludedCategories); saveRangeExcludedCategories(m.rangeExcludedCategories);
@@ -625,7 +636,7 @@ export function DataProvider({ children }) {
     const currentConfig = {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
       transactionNotes, accountNicknames, accountGroups, assetClasses, customAssets,
-      customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, weeklyEmailSections,
+      customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, weeklyEmailSections, weeklyEmailDay,
       customCategories, hiddenCategories, rangeExcludedCategories, shortTermLoan, organizedCategories,
       incomeCategories, savedTxnViews, chartHiddenCats, chartHiddenSubs, txnColumnWidths: columnWidths,
       categoryColors, visibleColumns, activeTxnView, showAccounts, pareto8020View,
@@ -655,6 +666,7 @@ export function DataProvider({ children }) {
     hiddenCards,
     paymentReminderPrefs,
     weeklyEmailSections,
+    weeklyEmailDay,
     customCategories,
     hiddenCategories,
     rangeExcludedCategories,
@@ -974,6 +986,15 @@ export function DataProvider({ children }) {
     const normalized = normalizeEmailSections(nextSections);
     setWeeklyEmailSections(normalized);
     saveWeeklyEmailSections(normalized);
+  }, []);
+
+  // Set the weekly-summary send day ('Sun'..'Sat'); null clears back to the
+  // server default. Persists locally and (via the sync effect) to Firestore,
+  // where the Vercel cron reads it.
+  const updateWeeklyEmailDay = useCallback((day) => {
+    const next = day || null;
+    setWeeklyEmailDay(next);
+    saveWeeklyEmailDay(next);
   }, []);
 
   const toggleHideCard = useCallback((cardName) => {
@@ -1517,6 +1538,7 @@ export function DataProvider({ children }) {
     setPareto8020View,
     updatePaymentReminderPrefs,
     updateWeeklyEmailSections,
+    updateWeeklyEmailDay,
     renameGroup,
     deleteGroup,
     toggleHideTransaction,
@@ -1570,6 +1592,7 @@ export function DataProvider({ children }) {
     setPareto8020View,
     updatePaymentReminderPrefs,
     updateWeeklyEmailSections,
+    updateWeeklyEmailDay,
     renameGroup,
     deleteGroup,
     toggleHideTransaction,
@@ -1615,6 +1638,7 @@ export function DataProvider({ children }) {
     hiddenCards,
     paymentReminderPrefs,
     weeklyEmailSections,
+    weeklyEmailDay,
     hiddenTransactions,
     hiddenCount: hiddenIds.size,
   }), [
@@ -1654,6 +1678,7 @@ export function DataProvider({ children }) {
     hiddenCards,
     paymentReminderPrefs,
     weeklyEmailSections,
+    weeklyEmailDay,
     hiddenTransactions,
     hiddenIds,
   ]);
