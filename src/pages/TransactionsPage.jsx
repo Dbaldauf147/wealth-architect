@@ -1258,6 +1258,9 @@ export function TransactionsPage() {
   const [bulkCategorySearch, setBulkCategorySearch] = useState('');
   const [noSubOnly, setNoSubOnly] = useState(false);
   const [uncatRecentOnly, setUncatRecentOnly] = useState(false);
+  // Inclusive date-range filter (ISO yyyy-mm-dd). Empty string = open-ended.
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [bulkSubOpen, setBulkSubOpen] = useState(false);
   const [bulkSubSearch, setBulkSubSearch] = useState('');
   const bulkSubRef = useRef(null);
@@ -1414,6 +1417,8 @@ export function TransactionsPage() {
       searchQuery,
       columnFilters: { ...columnFilters },
       noSubOnly,
+      dateFrom,
+      dateTo,
       chartHiddenCats: [...chartHiddenCats],
       chartHiddenSubs: [...chartHiddenSubs],
     };
@@ -1430,6 +1435,8 @@ export function TransactionsPage() {
       amount: '', date: '', notes: '', institution: '', account: '',
     });
     setNoSubOnly(!!view.noSubOnly);
+    setDateFrom(view.dateFrom || '');
+    setDateTo(view.dateTo || '');
     setChartHiddenCats(new Set(view.chartHiddenCats || []));
     setChartHiddenSubs(new Set(view.chartHiddenSubs || []));
     setPage(0);
@@ -1545,6 +1552,8 @@ export function TransactionsPage() {
       amount: '', date: '', notes: '', institution: '', account: '',
     });
     setNoSubOnly(false);
+    setDateFrom('');
+    setDateTo('');
     setActiveTxnView('');
     setPage(0);
   }
@@ -1576,6 +1585,17 @@ export function TransactionsPage() {
         if (isNaN(d)) return false;
         const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
         return key === selectedMonth;
+      });
+    }
+    // Inclusive date range. ISO yyyy-mm-dd strings compare lexicographically.
+    if (dateFrom || dateTo) {
+      list = list.filter(t => {
+        if (!t.date) return false;
+        const iso = toIsoDate(t.date);
+        if (!iso) return false;
+        if (dateFrom && iso < dateFrom) return false;
+        if (dateTo && iso > dateTo) return false;
+        return true;
       });
     }
     if (deferredSearch.trim()) {
@@ -1642,7 +1662,7 @@ export function TransactionsPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return sorted;
-  }, [transactions, activeAccount, deferredSearch, includedCategories, includedSubcategories, selectedMonth, deferredColumnFilters, sortCol, sortDir, deferredNotes, noSubOnly, uncatRecentOnly]);
+  }, [transactions, activeAccount, deferredSearch, includedCategories, includedSubcategories, selectedMonth, deferredColumnFilters, sortCol, sortDir, deferredNotes, noSubOnly, uncatRecentOnly, dateFrom, dateTo]);
 
   const paginated = useMemo(
     () => filtered.slice(0, (page + 1) * PAGE_SIZE),
@@ -2573,6 +2593,53 @@ export function TransactionsPage() {
             outline: 'none',
           }}
         />
+        {/* Date range filter */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span
+            className="material-symbols-outlined"
+            style={{ fontSize: 18, color: (dateFrom || dateTo) ? 'var(--color-secondary, #0058be)' : 'var(--color-text-tertiary)' }}
+            title="Filter by date range"
+          >date_range</span>
+          <input
+            type="date"
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={e => { setDateFrom(e.target.value); setPage(0); }}
+            title="From date"
+            style={{
+              padding: '8px 10px', borderRadius: 10,
+              border: `1px solid ${dateFrom ? 'var(--color-secondary, #0058be)' : 'var(--border, #e2e2e2)'}`,
+              background: 'var(--surface, #fff)', fontSize: 13, outline: 'none', colorScheme: 'light',
+            }}
+          />
+          <span style={{ color: 'var(--color-text-tertiary)', fontSize: 13 }}>–</span>
+          <input
+            type="date"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={e => { setDateTo(e.target.value); setPage(0); }}
+            title="To date"
+            style={{
+              padding: '8px 10px', borderRadius: 10,
+              border: `1px solid ${dateTo ? 'var(--color-secondary, #0058be)' : 'var(--border, #e2e2e2)'}`,
+              background: 'var(--surface, #fff)', fontSize: 13, outline: 'none', colorScheme: 'light',
+            }}
+          />
+          {(dateFrom || dateTo) && (
+            <button
+              type="button"
+              onClick={() => { setDateFrom(''); setDateTo(''); setPage(0); }}
+              title="Clear date filter"
+              style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                padding: 4, borderRadius: 8, border: 'none', background: 'transparent',
+                cursor: 'pointer', color: 'var(--color-text-tertiary)',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
+            </button>
+          )}
+        </div>
         <div ref={viewsRef} className={styles.viewsWrap}>
           <button
             type="button"
