@@ -224,6 +224,54 @@ export function NetWorthPage() {
     return out;
   }, [chart]);
 
+  // TEMP DIAGNOSTIC: reconcile the current-balances net worth (hero) against the
+  // subset of accounts the chart is actually able to plot. The chart only counts
+  // an account if it is non-custom AND its exact name appears in Balance History
+  // (see the `series` memo). This surfaces every account that contributes to the
+  // hero total but is missing from the charted series, and why.
+  const reconcile = useMemo(() => {
+    if (!balances) return null;
+    const histNames = new Set();
+    const histNorm = new Map(); // normalized name -> original history name
+    for (const r of balanceHistory || []) {
+      if (r && r.account) {
+        histNames.add(r.account);
+        histNorm.set(String(r.account).trim().toLowerCase(), r.account);
+      }
+    }
+    const rows = [];
+    const add = (a, side) => {
+      if (!a || !a.name) return;
+      const exact = histNames.has(a.name);
+      const norm = String(a.name).trim().toLowerCase();
+      const nearMatch = !exact && histNorm.has(norm) ? histNorm.get(norm) : null;
+      const contribution = side === 'asset' ? (a.balance || 0) : -Math.abs(a.balance || 0);
+      // A row is charted only when it is non-custom AND has an exact-name match.
+      const charted = exact && !a.custom;
+      let reason = 'charted';
+      if (!charted) {
+        if (a.custom) reason = 'custom (excluded)';
+        else if (nearMatch) reason = 'name mismatch';
+        else reason = 'no history rows';
+      }
+      rows.push({ name: a.name, side, custom: !!a.custom, balance: a.balance || 0, contribution, charted, nearMatch, reason });
+    };
+    for (const a of balances.assets || []) add(a, 'asset');
+    for (const l of balances.liabilities || []) add(l, 'liability');
+
+    let inChart = 0, missing = 0, missingCustom = 0, missingMismatch = 0, missingNoHistory = 0;
+    for (const r of rows) {
+      if (r.charted) { inChart += r.contribution; continue; }
+      missing += r.contribution;
+      if (r.custom) missingCustom += r.contribution;
+      else if (r.nearMatch) missingMismatch += r.contribution;
+      else missingNoHistory += r.contribution;
+    }
+    // Culprits first: uncharted rows by descending absolute contribution.
+    rows.sort((a, b) => (a.charted - b.charted) || (Math.abs(b.contribution) - Math.abs(a.contribution)));
+    return { rows, inChart, missing, missingCustom, missingMismatch, missingNoHistory, total: balances.netWorth ?? 0 };
+  }, [balances, balanceHistory]);
+
   if (loading && (!balanceHistory || balanceHistory.length === 0)) {
     return (
       <div className={styles.page}>
@@ -400,6 +448,54 @@ export function NetWorthPage() {
             <div className={styles.statLabel}>Average</div>
             <div className={styles.statValue}>{fmt(stats.avg)}</div>
             <div className={styles.statSub}>{filtered.length} snapshots</div>
+          </div>
+        </div>
+      )}
+
+      {/* TEMP DIAGNOSTIC — remove after root-causing the net-worth/chart gap. */}
+      {reconcile && (
+        <div style={{
+          marginTop: 24, padding: 16, borderRadius: 12,
+          border: '1px solid var(--color-text-tertiary)', borderColor: 'rgba(128,128,128,0.3)',
+          background: 'rgba(128,128,128,0.06)', fontFamily: 'var(--font-headline)',
+        }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>🔎 Net-worth reconciliation (temporary)</div>
+          <div style={{ fontSize: 13, lineHeight: 1.7, marginBottom: 12, opacity: 0.85 }}>
+            Hero total (all current balances): <b>{fmt(reconcile.total)}</b><br />
+            In chart (non-custom + exact history match): <b>{fmt(reconcile.inChart)}</b><br />
+            Missing from chart: <b>{fmtSigned(reconcile.missing)}</b>
+            {'  '}— custom {fmtSigned(reconcile.missingCustom)}
+            {' · '}name mismatch {fmtSigned(reconcile.missingMismatch)}
+            {' · '}no history rows {fmtSigned(reconcile.missingNoHistory)}
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', fontSize: 12, width: '100%' }}>
+              <thead>
+                <tr style={{ textAlign: 'left', opacity: 0.7 }}>
+                  <th style={{ padding: '4px 10px 4px 0' }}>Account</th>
+                  <th style={{ padding: '4px 10px' }}>Side</th>
+                  <th style={{ padding: '4px 10px', textAlign: 'right' }}>Contribution</th>
+                  <th style={{ padding: '4px 10px' }}>In chart?</th>
+                  <th style={{ padding: '4px 10px' }}>Reason / near-match</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reconcile.rows.map((r, i) => (
+                  <tr key={i} style={{
+                    borderTop: '1px solid rgba(128,128,128,0.18)',
+                    background: r.charted ? 'transparent' : 'rgba(248,113,113,0.10)',
+                  }}>
+                    <td style={{ padding: '4px 10px 4px 0' }}>{r.name}</td>
+                    <td style={{ padding: '4px 10px' }}>{r.side}</td>
+                    <td style={{ padding: '4px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtSigned(r.contribution)}</td>
+                    <td style={{ padding: '4px 10px' }}>{r.charted ? '✓' : '—'}</td>
+                    <td style={{ padding: '4px 10px' }}>
+                      {r.reason}{r.nearMatch ? ` → history has "${r.nearMatch}"` : ''}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
