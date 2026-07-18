@@ -35,8 +35,8 @@ function saveEmailPrefs(prefs) {
 }
 
 export function SettingsPage() {
-  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, weeklyEmailSections, weeklyEmailDay, rangeExcludedCategories } = useData();
-  const { refresh, updatePaymentReminderPrefs, updateWeeklyEmailSections, updateWeeklyEmailDay } = useDataActions();
+  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay, rangeExcludedCategories } = useData();
+  const { refresh, updatePaymentReminderPrefs, updateCalendarSyncPrefs, updateWeeklyEmailSections, updateWeeklyEmailDay } = useDataActions();
   // Send day is synced via DataContext (Firestore) so the cron reads it; fall
   // back to Sunday for display when nothing has been chosen yet.
   const sendDay = weeklyEmailDay || 'Sun';
@@ -44,6 +44,7 @@ export function SettingsPage() {
   const [emailPrefs, setEmailPrefs] = useState(loadEmailPrefs);
   const [sendStatus, setSendStatus] = useState(null); // null | 'sending' | 'ok' | 'err'
   const [reminderTestStatus, setReminderTestStatus] = useState(null); // null | 'sending' | 'ok' | 'err' | 'none'
+  const [calSyncStatus, setCalSyncStatus] = useState(null); // null | 'syncing' | {ok} | 'err' | {skipped}
 
   const previewHtml = useMemo(() => {
     const { start, end } = lastCompletedWeek();
@@ -134,6 +135,23 @@ export function SettingsPage() {
       setReminderTestStatus('err');
     }
     setTimeout(() => setReminderTestStatus(null), 5000);
+  }
+
+  // Trigger the calendar-sync cron on demand. `test=1` bypasses the enable
+  // flag so a manual run works even while toggled off. Surfaces the counts the
+  // endpoint reports (or its skip reason when not configured yet).
+  async function syncCalendarNow() {
+    setCalSyncStatus('syncing');
+    try {
+      const res = await fetch('/api/calendar-sync?test=1', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (data && data.skipped) setCalSyncStatus({ skipped: true, reason: data.reason || 'Not configured' });
+      else if (!res.ok) setCalSyncStatus('err');
+      else setCalSyncStatus({ ok: true, upserted: (data.upserted || []).length, removed: (data.removed || []).length, failed: (data.failed || []).length });
+    } catch {
+      setCalSyncStatus('err');
+    }
+    setTimeout(() => setCalSyncStatus(null), 8000);
   }
 
   return (
@@ -502,6 +520,80 @@ export function SettingsPage() {
                   : 'Building preview…'}
               </div>
             )}
+          </div>
+        </div>
+      </section>
+
+      {/* Google Calendar Sync */}
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Google Calendar Sync</h3>
+        <div className={styles.card}>
+          <div className={styles.cardRow}>
+            <div className={styles.cardRowIcon}>
+              <span className="material-symbols-outlined">event</span>
+            </div>
+            <div className={styles.cardRowContent}>
+              <div className={styles.cardRowLabel}>Enabled</div>
+              <div className={styles.cardRowValue}>
+                Add an all-day Google Calendar event for each non-hidden card's next projected payment, and keep it in sync as dates shift.
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={calendarSyncPrefs?.enabled !== false}
+                    onChange={e => updateCalendarSyncPrefs({ enabled: e.target.checked })}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                    {calendarSyncPrefs?.enabled !== false ? 'On' : 'Off'}
+                  </span>
+                </label>
+              </div>
+            </div>
+            <div className={calendarSyncPrefs?.enabled !== false ? styles.statusBadgeGreen : ''} style={calendarSyncPrefs?.enabled === false ? { fontSize: 11, fontWeight: 700, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5 } : undefined}>
+              {calendarSyncPrefs?.enabled !== false ? 'Active' : 'Off'}
+            </div>
+          </div>
+
+          <div className={styles.divider} />
+
+          <div className={styles.cardRow}>
+            <div className={styles.cardRowIcon}>
+              <span className="material-symbols-outlined">schedule</span>
+            </div>
+            <div className={styles.cardRowContent}>
+              <div className={styles.cardRowLabel}>Schedule</div>
+              <div className={styles.cardRowValue}>
+                Daily at 10:30 AM ET. Upserts one event per card (it rolls forward as payments post), and removes events for hidden cards. Uses the paying account set above.
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 6 }}>
+                Requires one-time setup in Vercel (service account + <code>GOOGLE_CALENDAR_ID</code>, with the calendar shared to the service-account email). Until then, runs are a no-op.
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.divider} />
+
+          <div className={styles.cardActions}>
+            <button
+              className={styles.primaryBtn}
+              onClick={syncCalendarNow}
+              disabled={calSyncStatus === 'syncing'}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                {calSyncStatus === 'syncing' ? 'hourglass_empty' : 'sync'}
+              </span>
+              {calSyncStatus === 'syncing' ? 'Syncing...' : 'Sync to calendar now'}
+            </button>
+            {calSyncStatus && calSyncStatus.ok && (
+              <span style={{ color: '#16a34a', fontSize: 12, fontWeight: 600 }}>
+                ✓ Synced — {calSyncStatus.upserted} event{calSyncStatus.upserted === 1 ? '' : 's'} updated{calSyncStatus.removed ? `, ${calSyncStatus.removed} removed` : ''}{calSyncStatus.failed ? `, ${calSyncStatus.failed} failed` : ''}.
+              </span>
+            )}
+            {calSyncStatus && calSyncStatus.skipped && (
+              <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12, fontWeight: 600 }}>{calSyncStatus.reason}</span>
+            )}
+            {calSyncStatus === 'err' && <span style={{ color: '#b91c1c', fontSize: 12, fontWeight: 600 }}>Sync failed.</span>}
           </div>
         </div>
       </section>

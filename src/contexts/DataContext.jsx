@@ -121,6 +121,15 @@ const loadPaymentReminderPrefs = () => {
   return { ...DEFAULT_PAYMENT_REMINDER_PREFS, ...(stored || {}) };
 };
 const savePaymentReminderPrefs = (v) => saveJSON('paymentReminderPrefs', v);
+// Google Calendar auto-sync preferences — synced via Firestore so the server
+// cron (api/calendar-sync.js) honors enable/disable. Reuses the payment
+// reminder's paying-account setting, so only an on/off flag lives here.
+const DEFAULT_CALENDAR_SYNC_PREFS = { enabled: true };
+const loadCalendarSyncPrefs = () => {
+  const stored = loadJSON('calendarSyncPrefs', null);
+  return { ...DEFAULT_CALENDAR_SYNC_PREFS, ...(stored || {}) };
+};
+const saveCalendarSyncPrefs = (v) => saveJSON('calendarSyncPrefs', v);
 // Weekly-email section order + visibility — synced via Firestore so the server
 // cron renders sections in the user's chosen order. Stored as [{id, enabled}];
 // normalizeEmailSections fills in defaults / drops unknown ids.
@@ -301,6 +310,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.accountGroups, remote.accountGroups],
     [merged.assetClasses, remote.assetClasses],
     [merged.paymentReminderPrefs, remote.paymentReminderPrefs],
+    [merged.calendarSyncPrefs, remote.calendarSyncPrefs],
     [merged.savedTxnViews, remote.savedTxnViews],
     [merged.txnColumnWidths, remote.txnColumnWidths],
     [merged.categoryColors, remote.categoryColors],
@@ -342,7 +352,7 @@ const EMPTY_LOCALS = {
   categoryRules: [], subcategoryRules: [], categoryOverrides: {}, subcategoryOverrides: {},
   dateOverrides: {}, transactionNotes: {}, accountNicknames: {}, accountGroups: {},
   assetClasses: {}, customAssets: [], customLiabilities: [], customAssetClasses: [],
-  hiddenCards: [], paymentReminderPrefs: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
+  hiddenCards: [], paymentReminderPrefs: {}, calendarSyncPrefs: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
   hiddenCategories: new Set(), rangeExcludedCategories: [], shortTermLoan: null,
   organizedCategories: new Set(), incomeCategories: new Set(), savedTxnViews: {},
   chartHiddenCats: new Set(), chartHiddenSubs: new Set(), txnColumnWidths: {},
@@ -368,6 +378,7 @@ function readLocalConfig() {
     customAssetClasses: loadCustomAssetClasses(),
     hiddenCards: loadHiddenCards(),
     paymentReminderPrefs: loadPaymentReminderPrefs(),
+    calendarSyncPrefs: loadCalendarSyncPrefs(),
     weeklyEmailSections: loadJSON('weeklyEmailSections', null),
     weeklyEmailDay: loadJSON('weeklyEmailDay', null),
     customCategories: loadCustomCategories(),
@@ -408,6 +419,7 @@ function mergeConfig(remote, locals) {
     customAssetClasses: unionStringArray(locals.customAssetClasses, remote.customAssetClasses),
     hiddenCards: unionStringArray(locals.hiddenCards, remote.hiddenCards),
     paymentReminderPrefs: { ...DEFAULT_PAYMENT_REMINDER_PREFS, ...(remote.paymentReminderPrefs || {}), ...(locals.paymentReminderPrefs || {}) },
+    calendarSyncPrefs: { ...DEFAULT_CALENDAR_SYNC_PREFS, ...(remote.calendarSyncPrefs || {}), ...(locals.calendarSyncPrefs || {}) },
     weeklyEmailSections: normalizeEmailSections(locals.weeklyEmailSections || remote.weeklyEmailSections),
     weeklyEmailDay: locals.weeklyEmailDay || remote.weeklyEmailDay || null,
     customCategories: unionStringArray(locals.customCategories, remote.customCategories),
@@ -446,6 +458,7 @@ function buildSyncPayload(v) {
     customAssetClasses: v.customAssetClasses,
     hiddenCards: v.hiddenCards,
     paymentReminderPrefs: v.paymentReminderPrefs,
+    calendarSyncPrefs: v.calendarSyncPrefs,
     weeklyEmailSections: v.weeklyEmailSections,
     weeklyEmailDay: v.weeklyEmailDay ?? null,
     customCategories: v.customCategories,
@@ -519,6 +532,7 @@ export function DataProvider({ children }) {
   const [customAssetClasses, setCustomAssetClasses] = useState(loadCustomAssetClasses);
   const [hiddenCards, setHiddenCards] = useState(loadHiddenCards);
   const [paymentReminderPrefs, setPaymentReminderPrefs] = useState(loadPaymentReminderPrefs);
+  const [calendarSyncPrefs, setCalendarSyncPrefs] = useState(loadCalendarSyncPrefs);
   const [weeklyEmailSections, setWeeklyEmailSections] = useState(loadWeeklyEmailSections);
   const [weeklyEmailDay, setWeeklyEmailDay] = useState(loadWeeklyEmailDay);
   const [rawBalances, setRawBalances] = useState(initialCache?.balances || null);
@@ -565,6 +579,7 @@ export function DataProvider({ children }) {
     setCustomAssetClasses(m.customAssetClasses); saveCustomAssetClasses(m.customAssetClasses);
     setHiddenCards(m.hiddenCards); saveHiddenCards(m.hiddenCards);
     setPaymentReminderPrefs(m.paymentReminderPrefs); savePaymentReminderPrefs(m.paymentReminderPrefs);
+    setCalendarSyncPrefs(m.calendarSyncPrefs); saveCalendarSyncPrefs(m.calendarSyncPrefs);
     setWeeklyEmailSections(m.weeklyEmailSections); saveWeeklyEmailSections(m.weeklyEmailSections);
     setWeeklyEmailDay(m.weeklyEmailDay); saveWeeklyEmailDay(m.weeklyEmailDay);
     setCustomCategories(m.customCategories); saveCustomCategories(m.customCategories);
@@ -636,7 +651,7 @@ export function DataProvider({ children }) {
     const currentConfig = {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
       transactionNotes, accountNicknames, accountGroups, assetClasses, customAssets,
-      customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, weeklyEmailSections, weeklyEmailDay,
+      customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay,
       customCategories, hiddenCategories, rangeExcludedCategories, shortTermLoan, organizedCategories,
       incomeCategories, savedTxnViews, chartHiddenCats, chartHiddenSubs, txnColumnWidths: columnWidths,
       categoryColors, visibleColumns, activeTxnView, showAccounts, pareto8020View,
@@ -665,6 +680,7 @@ export function DataProvider({ children }) {
     customAssetClasses,
     hiddenCards,
     paymentReminderPrefs,
+    calendarSyncPrefs,
     weeklyEmailSections,
     weeklyEmailDay,
     customCategories,
@@ -976,6 +992,14 @@ export function DataProvider({ children }) {
     setPaymentReminderPrefs(prev => {
       const next = { ...prev, ...(patch || {}) };
       savePaymentReminderPrefs(next);
+      return next;
+    });
+  }, []);
+
+  const updateCalendarSyncPrefs = useCallback((patch) => {
+    setCalendarSyncPrefs(prev => {
+      const next = { ...prev, ...(patch || {}) };
+      saveCalendarSyncPrefs(next);
       return next;
     });
   }, []);
@@ -1537,6 +1561,7 @@ export function DataProvider({ children }) {
     setShowAccounts,
     setPareto8020View,
     updatePaymentReminderPrefs,
+    updateCalendarSyncPrefs,
     updateWeeklyEmailSections,
     updateWeeklyEmailDay,
     renameGroup,
@@ -1591,6 +1616,7 @@ export function DataProvider({ children }) {
     setShowAccounts,
     setPareto8020View,
     updatePaymentReminderPrefs,
+    updateCalendarSyncPrefs,
     updateWeeklyEmailSections,
     updateWeeklyEmailDay,
     renameGroup,
@@ -1637,6 +1663,7 @@ export function DataProvider({ children }) {
     customAssetClasses,
     hiddenCards,
     paymentReminderPrefs,
+    calendarSyncPrefs,
     weeklyEmailSections,
     weeklyEmailDay,
     hiddenTransactions,
@@ -1677,6 +1704,7 @@ export function DataProvider({ children }) {
     customAssetClasses,
     hiddenCards,
     paymentReminderPrefs,
+    calendarSyncPrefs,
     weeklyEmailSections,
     weeklyEmailDay,
     hiddenTransactions,
