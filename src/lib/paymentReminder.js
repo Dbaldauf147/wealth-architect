@@ -182,9 +182,12 @@ export function paymentWorkbookFilename(payload) {
 // Minimal HTML rendering for the email. Inline styles only, no external
 // fonts — most mail clients strip <style> blocks.
 // `opts.attachmentName`, when given, renders the "spreadsheet attached" note.
+// `opts.forced` marks a manually-triggered send for a payment that isn't
+// actually due tomorrow, so the reader isn't misled into paying early.
 export function renderPaymentReminderHtml(payload, opts = {}) {
   const { cardsDueTomorrow, totalDue, payingAccount, tomorrowDateKey } = payload;
   const attachmentName = opts.attachmentName || null;
+  const forced = !!opts.forced;
   const chargeCount = cardsDueTomorrow.reduce((s, c) => s + ((c.charges || []).length), 0);
 
   const fmt = (n) => new Intl.NumberFormat('en-US', {
@@ -215,6 +218,11 @@ export function renderPaymentReminderHtml(payload, opts = {}) {
       <div style="font-size:20px;font-weight:700;margin-top:4px;">Card ${cardsDueTomorrow.length === 1 ? 'payment' : 'payments'} due ${dueDateLabel}</div>
     </div>
     <div style="padding:24px;">
+      ${forced ? `
+        <div style="margin-bottom:18px;padding:12px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;font-size:12px;color:#92400e;line-height:1.5;">
+          <strong>Preview — triggered manually.</strong> Nothing is due tomorrow. This is the next projected payment (${escapeHtml(dueDateLabel)}), sent early so you can see the full report.
+        </div>
+      ` : ''}
       <table style="width:100%;border-collapse:collapse;">
         <thead>
           <tr>

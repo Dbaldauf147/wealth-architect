@@ -1,7 +1,12 @@
 import nodemailer from 'nodemailer';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { buildPaymentReminder, renderPaymentReminderHtml, paymentWorkbookFilename } from '../src/lib/paymentReminder.js';
+import {
+  buildPaymentReminder,
+  previewPaymentReminder,
+  renderPaymentReminderHtml,
+  paymentWorkbookFilename,
+} from '../src/lib/paymentReminder.js';
 import { buildPaymentWorkbook } from './_lib/paymentWorkbook.js';
 import {
   applyRulesToTransactions,
@@ -156,6 +161,11 @@ function canonicalizeTransactionAccounts(transactions, cards) {
 export default async function handler(req, res) {
   try {
     const isTest = req.query?.test === '1' || req.query?.test === 'true';
+    // force=1 sends against the NEXT projected payment when nothing is due
+    // tomorrow, so a fully-populated reminder (workbook included) can be
+    // triggered on demand instead of waiting for the cadence to come around.
+    // Never set by the cron — manual invocations only.
+    const isForce = req.query?.force === '1' || req.query?.force === 'true';
     const recipientOverride = req.body?.recipient;
     const tz = process.env.WEEKLY_EMAIL_TZ || 'America/New_York';
 
@@ -183,7 +193,7 @@ export default async function handler(req, res) {
     const prefs = (config && config.paymentReminderPrefs) || {};
     // User can disable from the Settings page. The cron still fires but we
     // bail before sending. Env var override forces send for testing.
-    if (prefs.enabled === false && !isTest) {
+    if (prefs.enabled === false && !isTest && !isForce) {
       return res.status(200).json({ skipped: true, reason: 'Disabled in Settings' });
     }
 
@@ -194,23 +204,50 @@ export default async function handler(req, res) {
       || prefs.payingAccountLast4
       || '1118';
 
-    const payload = buildPaymentReminder({
+    const hiddenCards = (config && Array.isArray(config.hiddenCards)) ? config.hiddenCards : [];
+    const nicknames = (config && config.accountNicknames) || {};
+
+    let payload = buildPaymentReminder({
       cards,
       transactions,
       balances,
       asOf: new Date(),
       tz,
       payingAccountLast4: last4,
-      hiddenCards: (config && Array.isArray(config.hiddenCards)) ? config.hiddenCards : [],
-      nicknames: (config && config.accountNicknames) || {},
+      hiddenCards,
+      nicknames,
     });
 
-    if (!payload) {
-      return res.status(200).json({ skipped: true, reason: 'No card payments projected for tomorrow' });
+    // Nothing due tomorrow: with force=1, re-run dated to the day before the
+    // earliest upcoming payment — the same path the Settings preview uses —
+    // so the email is real data for a real (just not imminent) payment.
+    let forcedFor = null;
+    if (!payload && isForce) {
+      const preview = previewPaymentReminder({
+        transactions,
+        balances,
+        hiddenCards,
+        nicknames,
+        payingAccountLast4: last4,
+        tz,
+      });
+      if (preview && preview.payload) {
+        payload = preview.payload;
+        forcedFor = preview.projectedDate;
+      }
     }
 
-    if (isTest && req.query?.dry === '1') {
-      return res.status(200).json({ payload });
+    if (!payload) {
+      return res.status(200).json({
+        skipped: true,
+        reason: isForce
+          ? 'No projected card payments at all'
+          : 'No card payments projected for tomorrow',
+      });
+    }
+
+    if ((isTest || isForce) && req.query?.dry === '1') {
+      return res.status(200).json({ payload, forced: !!forcedFor });
     }
 
     const user = process.env.GMAIL_USER;
@@ -221,7 +258,12 @@ export default async function handler(req, res) {
     const cardLabel = payload.cardsDueTomorrow.length === 1
       ? payload.cardsDueTomorrow[0].displayName
       : `${payload.cardsDueTomorrow.length} cards`;
-    const subject = `${isTest ? '[Test] ' : ''}Card payment due tomorrow — ${cardLabel}`;
+    // A forced send is for a payment that isn't imminent, so the subject must
+    // not claim "due tomorrow" — name the projected date instead.
+    const whenLabel = forcedFor
+      ? `projected ${new Date(`${payload.tomorrowDateKey}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+      : 'due tomorrow';
+    const subject = `${isTest ? '[Test] ' : ''}${forcedFor ? '[Preview] ' : ''}Card payment ${whenLabel} — ${cardLabel}`;
 
     // Excel backing file: the charges that add up to each projected payment.
     // A workbook failure must not cost the user the reminder itself, so we
@@ -244,6 +286,7 @@ export default async function handler(req, res) {
     // that actually made it onto the message.
     const html = renderPaymentReminderHtml(payload, {
       attachmentName: attachments.length ? attachments[0].filename : null,
+      forced: !!forcedFor,
     });
 
     const transporter = nodemailer.createTransport({
@@ -273,6 +316,8 @@ export default async function handler(req, res) {
       payingAccountBalance: payload.payingAccount ? payload.payingAccount.balance : null,
       attachment: attachments.length ? attachments[0].filename : null,
       workbookError,
+      forced: !!forcedFor,
+      projectedDate: payload.tomorrowDateKey,
     });
   } catch (err) {
     console.error('payment-reminder error:', err);
