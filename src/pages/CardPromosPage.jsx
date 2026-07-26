@@ -66,6 +66,13 @@ function autoUsedForPromo(promo, transactions) {
   return sum;
 }
 
+// The CSR sub-tab owns any promo whose card reads as a Sapphire Reserve, so a
+// renamed/nicknamed card ("CSR", "Chase Sapphire Reserve …") still lands there.
+function isSapphireCard(card) {
+  const c = (card || '').toLowerCase();
+  return c.includes('sapphire') || c.trim() === 'csr';
+}
+
 /* ── Seed data: Chase Sapphire Reserve benefits ── */
 const SEED_PROMOS = [
   {
@@ -187,6 +194,7 @@ export function CardPromosPage() {
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState({});
   const [showSeedBtn, setShowSeedBtn] = useState(false);
+  const [view, setView] = useState('csr'); // 'csr' | 'promos'
 
   useEffect(() => savePromos(promos), [promos]);
 
@@ -201,19 +209,26 @@ export function CardPromosPage() {
     return map;
   }, [promos, transactions]);
 
+  // Each sub-tab is a slice of the same promo list: CSR benefits vs. everything else.
+  const csrCount = useMemo(() => promos.filter(p => isSapphireCard(p.card)).length, [promos]);
+  const visiblePromos = useMemo(
+    () => promos.filter(p => isSapphireCard(p.card) === (view === 'csr')),
+    [promos, view]
+  );
+
   const byCard = useMemo(() => {
     const groups = {};
-    for (const p of promos) {
+    for (const p of visiblePromos) {
       if (!groups[p.card]) groups[p.card] = [];
       groups[p.card].push(p);
     }
     return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [promos]);
+  }, [visiblePromos]);
 
   const totals = useMemo(() => {
     let totalValue = 0;
     let totalUsed = 0;
-    for (const p of promos) {
+    for (const p of visiblePromos) {
       const value = Number(p.value) || 0;
       const used = effectiveUsed.get(p.id) || 0;
       totalValue += value;
@@ -225,18 +240,19 @@ export function CardPromosPage() {
       remaining: totalValue - totalUsed,
       pct: totalValue > 0 ? totalUsed / totalValue : 0,
     };
-  }, [promos, effectiveUsed]);
+  }, [visiblePromos, effectiveUsed]);
 
   function addPromo() {
     const newPromo = {
       id: `promo-${Date.now()}`,
-      card: '',
+      // Prefill the card on the CSR tab so the new promo stays on the tab you added it from.
+      card: view === 'csr' ? 'Chase Sapphire Reserve' : '',
       name: 'New Benefit',
       value: 0,
       used: 0,
       period: 'annual',
       notes: '',
-      color: '#475569',
+      color: view === 'csr' ? '#0058be' : '#475569',
       renewsOn: '',
     };
     setPromos(prev => [newPromo, ...prev]);
@@ -281,15 +297,38 @@ export function CardPromosPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-      {/* Header */}
+      {/* Header + sub-tabs */}
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
         <div>
           <div style={{ fontFamily: 'var(--font-headline)', fontSize: 24, fontWeight: 700, marginBottom: 4 }}>Card Promotions</div>
           <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>
-            Track statement credits and benefits across your credit cards
+            {view === 'csr'
+              ? 'Statement credits and benefits included with your Chase Sapphire Reserve'
+              : 'Track statement credits and benefits across your other credit cards'}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'inline-flex', gap: 2, background: 'var(--color-surface-alt)', padding: 2, borderRadius: 10 }}>
+            {[{ key: 'csr', label: 'Chase Sapphire Reserve' }, { key: 'promos', label: 'Card Promotions' }].map(t => (
+              <button
+                key={t.key}
+                onClick={() => setView(t.key)}
+                style={{
+                  padding: '6px 14px',
+                  border: 'none',
+                  background: view === t.key ? 'var(--color-surface)' : 'transparent',
+                  boxShadow: view === t.key ? 'var(--shadow-xs)' : 'none',
+                  borderRadius: 8,
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: view === t.key ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
           <button onClick={addPromo} style={btnPrimaryStyle}>
             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
             Add Promo
@@ -320,13 +359,17 @@ export function CardPromosPage() {
         <StatCard label="Remaining" value={fmt(totals.remaining)} color="#e8a317" icon="schedule" sub="Still available this cycle" />
       </div>
 
-      {/* Cash-back reward matrix */}
-      <CashBackSummary />
+      {/* Cash-back reward matrix — cross-card comparison, so it lives on the general tab */}
+      {view === 'promos' && <CashBackSummary />}
 
       {/* Grouped by card */}
       {byCard.length === 0 && (
         <div style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
-          No promos yet. Click "Add Promo" to get started.
+          {view === 'csr'
+            ? 'No Chase Sapphire Reserve benefits yet. Click "Add Promo" to get started.'
+            : csrCount > 0
+              ? 'No promos on other cards yet. Click "Add Promo" to add one, or switch to the Chase Sapphire Reserve tab.'
+              : 'No promos yet. Click "Add Promo" to get started.'}
         </div>
       )}
 
