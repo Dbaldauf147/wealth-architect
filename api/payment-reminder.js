@@ -1,7 +1,8 @@
 import nodemailer from 'nodemailer';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { buildPaymentReminder, renderPaymentReminderHtml } from '../src/lib/paymentReminder.js';
+import { buildPaymentReminder, renderPaymentReminderHtml, paymentWorkbookFilename } from '../src/lib/paymentReminder.js';
+import { buildPaymentWorkbook } from './_lib/paymentWorkbook.js';
 import {
   applyRulesToTransactions,
   applySubcategoryRulesToTransactions,
@@ -217,11 +218,33 @@ export default async function handler(req, res) {
     const to = recipientOverride || process.env.EMAIL_TO || user;
     if (!user || !pass) throw new Error('Missing GMAIL_USER or GMAIL_APP_PASSWORD env var');
 
-    const html = renderPaymentReminderHtml(payload);
     const cardLabel = payload.cardsDueTomorrow.length === 1
       ? payload.cardsDueTomorrow[0].displayName
       : `${payload.cardsDueTomorrow.length} cards`;
     const subject = `${isTest ? '[Test] ' : ''}Card payment due tomorrow — ${cardLabel}`;
+
+    // Excel backing file: the charges that add up to each projected payment.
+    // A workbook failure must not cost the user the reminder itself, so we
+    // fall back to sending the email unattached.
+    const attachments = [];
+    let workbookError = null;
+    try {
+      const filename = paymentWorkbookFilename(payload);
+      attachments.push({
+        filename,
+        content: await buildPaymentWorkbook(payload),
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+    } catch (err) {
+      workbookError = err.message || String(err);
+      console.error('payment-reminder workbook build failed:', err);
+    }
+
+    // Rendered after the workbook so the body only advertises an attachment
+    // that actually made it onto the message.
+    const html = renderPaymentReminderHtml(payload, {
+      attachmentName: attachments.length ? attachments[0].filename : null,
+    });
 
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
@@ -235,14 +258,21 @@ export default async function handler(req, res) {
       to,
       subject,
       html,
+      attachments,
     });
 
     return res.status(200).json({
       sent: true,
       to,
-      cardsDueTomorrow: payload.cardsDueTomorrow.map(c => ({ name: c.displayName, amount: c.amount })),
+      cardsDueTomorrow: payload.cardsDueTomorrow.map(c => ({
+        name: c.displayName,
+        amount: c.amount,
+        chargeCount: (c.charges || []).length,
+      })),
       totalDue: payload.totalDue,
       payingAccountBalance: payload.payingAccount ? payload.payingAccount.balance : null,
+      attachment: attachments.length ? attachments[0].filename : null,
+      workbookError,
     });
   } catch (err) {
     console.error('payment-reminder error:', err);

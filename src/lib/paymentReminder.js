@@ -139,6 +139,14 @@ export function buildPaymentReminder(opts) {
       displayName: nicknames[entry.card] || entry.card,
       amount: entry.estimatedNextAmount || 0,
       date: entry.nextPaymentDate,
+      // Line-item backing for the projected amount — the charges since the
+      // last payment that sum to it, plus the payment history behind the
+      // date projection. Consumed by the Excel attachment builder.
+      charges: entry.chargesSinceLast || [],
+      payments: entry.payments || [],
+      lastPayment: entry.lastPayment || null,
+      cadenceDays: entry.cadenceDays || null,
+      recurrence: entry.recurrence || null,
     });
   }
 
@@ -158,10 +166,26 @@ export function buildPaymentReminder(opts) {
   };
 }
 
+/** Filename for the Excel attachment, e.g.
+ *  "card-charges-amazon-prime-card-2026-07-25.xlsx". Lives here (rather than
+ *  next to the exceljs builder) so the Settings preview can name the
+ *  attachment without pulling a server-only dependency into the bundle. */
+export function paymentWorkbookFilename(payload) {
+  const { cardsDueTomorrow = [], tomorrowDateKey } = payload || {};
+  const slug = cardsDueTomorrow.length === 1
+    ? String(cardsDueTomorrow[0].displayName || cardsDueTomorrow[0].name)
+        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    : `${cardsDueTomorrow.length}-cards`;
+  return `card-charges-${slug || 'card'}-${tomorrowDateKey || 'upcoming'}.xlsx`;
+}
+
 // Minimal HTML rendering for the email. Inline styles only, no external
 // fonts — most mail clients strip <style> blocks.
-export function renderPaymentReminderHtml(payload) {
+// `opts.attachmentName`, when given, renders the "spreadsheet attached" note.
+export function renderPaymentReminderHtml(payload, opts = {}) {
   const { cardsDueTomorrow, totalDue, payingAccount, tomorrowDateKey } = payload;
+  const attachmentName = opts.attachmentName || null;
+  const chargeCount = cardsDueTomorrow.reduce((s, c) => s + ((c.charges || []).length), 0);
 
   const fmt = (n) => new Intl.NumberFormat('en-US', {
     style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2,
@@ -178,6 +202,7 @@ export function renderPaymentReminderHtml(payload) {
   const cardRows = cardsDueTomorrow.map(c => `
     <tr>
       <td style="padding:10px 12px;border-top:1px solid #e2e8f0;font-family:Arial,sans-serif;font-size:14px;color:#0f172a;">${escapeHtml(c.displayName)}</td>
+      <td style="padding:10px 12px;border-top:1px solid #e2e8f0;font-family:Arial,sans-serif;font-size:13px;color:#64748b;text-align:right;">${(c.charges || []).length}</td>
       <td style="padding:10px 12px;border-top:1px solid #e2e8f0;font-family:Arial,sans-serif;font-size:14px;color:#0f172a;text-align:right;font-weight:600;">${fmt(c.amount)}</td>
     </tr>
   `).join('');
@@ -194,13 +219,14 @@ export function renderPaymentReminderHtml(payload) {
         <thead>
           <tr>
             <th style="text-align:left;padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:#64748b;">Card</th>
+            <th style="text-align:right;padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:#64748b;">Charges</th>
             <th style="text-align:right;padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:#64748b;">Projected</th>
           </tr>
         </thead>
         <tbody>${cardRows}</tbody>
         <tfoot>
           <tr>
-            <td style="padding:12px;border-top:2px solid #0f172a;font-family:Arial,sans-serif;font-size:14px;font-weight:700;">Total projected</td>
+            <td colspan="2" style="padding:12px;border-top:2px solid #0f172a;font-family:Arial,sans-serif;font-size:14px;font-weight:700;">Total projected</td>
             <td style="padding:12px;border-top:2px solid #0f172a;font-family:Arial,sans-serif;font-size:14px;font-weight:700;text-align:right;">${fmt(totalDue)}</td>
           </tr>
         </tfoot>
@@ -226,6 +252,16 @@ export function renderPaymentReminderHtml(payload) {
           Couldn't find the paying account ending in 1118 in your latest balances.
         </div>
       `}
+
+      ${attachmentName ? `
+        <div style="margin-top:20px;padding:14px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;">
+          <div style="font-size:13px;font-weight:700;color:#1e40af;margin-bottom:4px;">📎 Excel backing file attached</div>
+          <div style="font-size:12px;color:#1e3a8a;line-height:1.5;">
+            <strong>${escapeHtml(attachmentName)}</strong> — every charge behind ${cardsDueTomorrow.length === 1 ? 'this projection' : 'these projections'}
+            (${chargeCount} ${chargeCount === 1 ? 'charge' : 'charges'}), one sheet per card, plus a summary and payment history.
+          </div>
+        </div>
+      ` : ''}
 
       <div style="margin-top:20px;font-size:11px;color:#94a3b8;line-height:1.5;">
         Projected dates and amounts come from your historical payment cadence and charges since your last payment. Real statement due dates and balances may differ — confirm in your card issuer's app before relying on these numbers.

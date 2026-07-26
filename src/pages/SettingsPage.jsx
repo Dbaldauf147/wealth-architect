@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { buildWeeklySummary, lastCompletedWeek } from '../lib/weeklySummary';
 import { renderWeeklyEmailHtml, WEEKLY_EMAIL_SECTIONS } from '../lib/renderWeeklyEmail';
-import { previewPaymentReminder, renderPaymentReminderHtml } from '../lib/paymentReminder';
+import { previewPaymentReminder, renderPaymentReminderHtml, paymentWorkbookFilename } from '../lib/paymentReminder';
 import styles from './SettingsPage.module.css';
 
 function relTime(date) {
@@ -112,7 +112,13 @@ export function SettingsPage() {
   }, [transactions, balances, hiddenCards, accountNicknames, paymentReminderPrefs]);
 
   const reminderPreviewHtml = useMemo(
-    () => (reminderPreview && reminderPreview.payload) ? renderPaymentReminderHtml(reminderPreview.payload) : null,
+    () => (reminderPreview && reminderPreview.payload)
+      ? renderPaymentReminderHtml(reminderPreview.payload, {
+          // The real send attaches this workbook; name it so the preview
+          // matches what actually lands in the inbox.
+          attachmentName: paymentWorkbookFilename(reminderPreview.payload),
+        })
+      : null,
     [reminderPreview],
   );
 
