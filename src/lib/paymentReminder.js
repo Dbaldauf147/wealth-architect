@@ -76,6 +76,28 @@ function localDateKey(date, tz) {
   return f.format(date);
 }
 
+// Projected payment dates come out of the schedule as `new Date(y, m, d)` —
+// midnight in the *server's* zone, standing for a calendar day with no
+// time-of-day meaning. Running that instant through localDateKey shifts it
+// back a day whenever the server is ahead of `tz` (Vercel runs UTC, the user
+// is Eastern: 2026-07-26T00:00Z reads as 8pm on Jul 25 in New York), which
+// fired reminders two days early and labelled them with the wrong date. Read
+// the calendar day off the Date's own components instead of reinterpreting it.
+function calendarDateKey(date) {
+  if (!date) return null;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+// Shift a YYYY-MM-DD key by whole days. Done on the key rather than by adding
+// 86400000ms to a Date so DST transitions can't move the result.
+function addDaysToKey(key, n) {
+  if (!key) return null;
+  const [y, m, d] = key.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+}
+
 // Pull the paying account (e.g. BoA Checking ending in 1118) from the
 // asset list. Matches by trailing 4-digit suffix so a nickname change
 // or institution rename in Tiller doesn't break the lookup.
@@ -119,11 +141,9 @@ export function buildPaymentReminder(opts) {
 
   if (!Array.isArray(cards) || cards.length === 0) return null;
 
-  // Compute tomorrow's date key in the target tz by adding 24h to asOf.
-  // 24h is good enough for a daily cron; DST edges shift the wall clock
-  // but the date arithmetic still rolls forward by one calendar day.
-  const tomorrow = new Date(asOf.getTime() + 86400000);
-  const tomorrowKey = localDateKey(tomorrow, tz);
+  // "Tomorrow" is the day after today *as the user sees it*, so today's key
+  // comes from the target tz and the roll-forward happens on the key.
+  const tomorrowKey = addDaysToKey(localDateKey(asOf, tz), 1);
 
   const hiddenSet = new Set(hiddenCards || []);
 
@@ -133,7 +153,7 @@ export function buildPaymentReminder(opts) {
   for (const entry of schedule) {
     if (!entry.nextPaymentDate) continue;
     if (hiddenSet.has(entry.card)) continue;
-    if (localDateKey(entry.nextPaymentDate, tz) !== tomorrowKey) continue;
+    if (calendarDateKey(entry.nextPaymentDate) !== tomorrowKey) continue;
     cardsDueTomorrow.push({
       name: entry.card,
       displayName: nicknames[entry.card] || entry.card,
@@ -314,7 +334,12 @@ export function previewPaymentReminder(opts) {
   if (upcoming.length === 0) return null;
 
   const projectedDate = upcoming[0];
-  const previewAsOf = new Date(projectedDate.getTime() - 86400000);
+  // Land previewAsOf on the day before the projected calendar day *in tz*, so
+  // buildPaymentReminder's "is this due tomorrow?" test matches. Noon UTC is
+  // the anchor because it falls on the same calendar day for every zone from
+  // UTC-11 to UTC+11, which covers any tz this app is configured with.
+  const dayBeforeKey = addDaysToKey(calendarDateKey(projectedDate), -1);
+  const previewAsOf = new Date(`${dayBeforeKey}T12:00:00Z`);
 
   const payload = buildPaymentReminder({
     cards,
