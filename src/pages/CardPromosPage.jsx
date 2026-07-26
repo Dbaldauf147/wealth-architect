@@ -18,6 +18,28 @@ function periodWindowStart(period) {
   return null; // one-time → no window
 }
 
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function parseISODate(s) {
+  if (!s) return null;
+  const d = new Date(String(s).slice(0, 10) + 'T00:00:00');
+  return isNaN(d) ? null : d;
+}
+
+// A promo counts as manually completed only if it was marked within the CURRENT
+// cycle — so a monthly credit ticked in July shows up unused again in August.
+// One-time promos have no window, so they stay completed once marked.
+function isPromoCompleted(p) {
+  if (!p.completedAt) return false;
+  const start = periodWindowStart(p.period);
+  if (!start) return true;
+  const d = parseISODate(p.completedAt);
+  return d ? d >= start : true;
+}
+
 function normalizeDesc(s) {
   return (s || '').toLowerCase().trim().replace(/[\s\-–—]+/g, ' ');
 }
@@ -198,11 +220,17 @@ export function CardPromosPage() {
 
   useEffect(() => savePromos(promos), [promos]);
 
-  // Resolve "effective used" per promo: auto-tracked from transactions if a match
-  // field is set, otherwise the manual "used" value the user typed.
+  // Resolve "effective used" per promo, in priority order:
+  //   1. manually marked complete this cycle → count the full value
+  //   2. auto-tracked from transactions if a match field is set
+  //   3. the manual "used" value the user typed
   const effectiveUsed = useMemo(() => {
     const map = new Map();
     for (const p of promos) {
+      if (isPromoCompleted(p)) {
+        map.set(p.id, Number(p.value) || 0);
+        continue;
+      }
       const auto = autoUsedForPromo(p, transactions);
       map.set(p.id, auto != null ? auto : (Number(p.used) || 0));
     }
@@ -239,6 +267,8 @@ export function CardPromosPage() {
       totalUsed,
       remaining: totalValue - totalUsed,
       pct: totalValue > 0 ? totalUsed / totalValue : 0,
+      doneCount: visiblePromos.filter(isPromoCompleted).length,
+      count: visiblePromos.length,
     };
   }, [visiblePromos, effectiveUsed]);
 
@@ -285,9 +315,15 @@ export function CardPromosPage() {
     setPromos(prev => prev.filter(p => p.id !== id));
   }
 
+  // Manual completion log: stamps today's date, or clears it to reopen the promo.
+  function toggleCompleted(promo) {
+    const done = isPromoCompleted(promo);
+    setPromos(prev => prev.map(p => p.id === promo.id ? { ...p, completedAt: done ? '' : todayISO() } : p));
+  }
+
   function resetAllUsage() {
-    if (!confirm('Reset "used" amounts to $0 on all promos? (Useful at start of a new cycle.)')) return;
-    setPromos(prev => prev.map(p => ({ ...p, used: 0 })));
+    if (!confirm('Reset all promos for a new cycle? This clears manual "used" amounts and un-marks anything logged as completed.')) return;
+    setPromos(prev => prev.map(p => ({ ...p, used: 0, completedAt: '' })));
   }
 
   function restoreSeed() {
@@ -353,10 +389,11 @@ export function CardPromosPage() {
       </div>
 
       {/* Totals */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16 }}>
         <StatCard label="Total Value" value={fmt(totals.totalValue)} color="#0058be" icon="redeem" />
         <StatCard label="Used" value={fmt(totals.totalUsed)} color="#16a34a" icon="check_circle" sub={`${Math.round(totals.pct * 100)}% of total`} />
         <StatCard label="Remaining" value={fmt(totals.remaining)} color="#e8a317" icon="schedule" sub="Still available this cycle" />
+        <StatCard label="Completed" value={`${totals.doneCount} of ${totals.count}`} color="#7c3aed" icon="task_alt" sub="Manually logged this cycle" />
       </div>
 
       {/* Cash-back reward matrix — cross-card comparison, so it lives on the general tab */}
@@ -387,6 +424,7 @@ export function CardPromosPage() {
                 <div style={{ fontFamily: 'var(--font-headline)', fontSize: 16, fontWeight: 700 }}>{displayName(cardName) || '(Unnamed card)'}</div>
                 <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
                   {fmt(cardUsed)} used of {fmt(cardValue)} ({cardValue > 0 ? Math.round((cardUsed / cardValue) * 100) : 0}%)
+                  {' · '}{cardPromos.filter(isPromoCompleted).length} of {cardPromos.length} logged complete
                 </div>
               </div>
             </div>
@@ -395,7 +433,8 @@ export function CardPromosPage() {
               {cardPromos.map(p => {
                 const isEditing = editingId === p.id;
                 const usedNow = effectiveUsed.get(p.id) || 0;
-                const isAuto = promoHasAutoMatch(p);
+                const isDone = isPromoCompleted(p);
+                const isAuto = promoHasAutoMatch(p) && !isDone;
                 const pct = p.value > 0 ? Math.min(1, usedNow / Number(p.value)) : 0;
                 const remaining = Math.max(0, (Number(p.value) || 0) - usedNow);
 
@@ -406,9 +445,10 @@ export function CardPromosPage() {
                         <LabeledInput label="Card" value={editDraft.card} onChange={v => setEditDraft({ ...editDraft, card: v })} />
                         <LabeledInput label="Name" value={editDraft.name} onChange={v => setEditDraft({ ...editDraft, name: v })} />
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 8, marginBottom: 8 }}>
                         <LabeledInput label="Total $" type="number" value={editDraft.value} onChange={v => setEditDraft({ ...editDraft, value: v })} />
                         <LabeledInput label="Used $ (manual)" type="number" value={editDraft.used} onChange={v => setEditDraft({ ...editDraft, used: v })} />
+                        <LabeledInput label="Completed on" type="date" value={editDraft.completedAt} onChange={v => setEditDraft({ ...editDraft, completedAt: v })} />
                         <div>
                           <div style={labelStyle}>Period</div>
                           <select value={editDraft.period || 'annual'} onChange={e => setEditDraft({ ...editDraft, period: e.target.value })} style={inputStyle}>
@@ -430,7 +470,7 @@ export function CardPromosPage() {
                         <LabeledInput label="Or Merchant contains" value={editDraft.matchDescription} onChange={v => setEditDraft({ ...editDraft, matchDescription: v })} />
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 8 }}>
-                        If any match field is set, "used" auto-sums the absolute value of matching transactions in the current cycle (manual "Used $" is ignored). Sign doesn't matter — tag the original travel charge (negative) to track redeemable spend, or tag the statement credit (positive) to track actual redemption. Multiple match fields are OR'd. "Merchant contains" matches anywhere in the transaction's merchant text.
+                        Marking a promo complete (the checkbox on the row, or "Completed on" above) wins over everything below and counts the full value. Otherwise: if any match field is set, "used" auto-sums the absolute value of matching transactions in the current cycle (manual "Used $" is ignored). Sign doesn't matter — tag the original travel charge (negative) to track redeemable spend, or tag the statement credit (positive) to track actual redemption. Multiple match fields are OR'd. "Merchant contains" matches anywhere in the transaction's merchant text.
                       </div>
                       <LabeledInput label="Notes" value={editDraft.notes} onChange={v => setEditDraft({ ...editDraft, notes: v })} />
                       <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
@@ -442,10 +482,37 @@ export function CardPromosPage() {
                 }
 
                 return (
-                  <div key={p.id} style={{ border: '1px solid var(--border-ghost)', borderRadius: 8, padding: 14, display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+                  <div key={p.id} style={{
+                    border: isDone ? '1px solid rgba(22,163,74,0.35)' : '1px solid var(--border-ghost)',
+                    background: isDone ? 'rgba(22,163,74,0.04)' : 'transparent',
+                    borderRadius: 8, padding: 14, display: 'flex', gap: 12, alignItems: 'flex-start',
+                  }}>
+                    {/* Manual completion checkbox */}
+                    <button
+                      onClick={() => toggleCompleted(p)}
+                      title={isDone
+                        ? `Marked complete${(() => { const d = parseISODate(p.completedAt); return d ? ` on ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''; })()} — click to reopen`
+                        : 'Mark this benefit as used/completed'}
+                      style={{
+                        flexShrink: 0, marginTop: 1, width: 22, height: 22, borderRadius: 6, cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        border: isDone ? '1px solid #16a34a' : '1.5px solid var(--border-ghost)',
+                        background: isDone ? '#16a34a' : 'var(--color-surface)',
+                        color: isDone ? '#fff' : 'var(--color-text-tertiary)',
+                        padding: 0,
+                      }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 15, opacity: isDone ? 1 : 0.35 }}>check</span>
+                    </button>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-                        <div style={{ fontFamily: 'var(--font-headline)', fontSize: 14, fontWeight: 700 }}>{p.name}</div>
+                        <div style={{ fontFamily: 'var(--font-headline)', fontSize: 14, fontWeight: 700, textDecoration: isDone ? 'line-through' : 'none', textDecorationColor: 'rgba(22,163,74,0.5)' }}>{p.name}</div>
+                        {isDone && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'rgba(22,163,74,0.12)', color: '#16a34a', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>task_alt</span>
+                            Completed
+                          </span>
+                        )}
                         <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'var(--color-surface-alt)', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                           {p.period}
                         </span>
@@ -487,7 +554,16 @@ export function CardPromosPage() {
                         <div style={{ height: '100%', width: `${pct * 100}%`, background: pct >= 1 ? '#16a34a' : cardColor, transition: 'width 0.2s' }} />
                       </div>
                       <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
-                        {fmt(usedNow)} used · <strong style={{ color: remaining > 0 ? '#16a34a' : 'var(--color-text-tertiary)' }}>{fmt(remaining)} remaining</strong> of {fmt(p.value)}
+                        {isDone ? (
+                          <span style={{ color: '#16a34a', fontWeight: 600 }}>
+                            Logged as completed{(() => {
+                              const d = parseISODate(p.completedAt);
+                              return d ? ` on ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : '';
+                            })()} · {fmt(p.value)} counted
+                          </span>
+                        ) : (
+                          <>{fmt(usedNow)} used · <strong style={{ color: remaining > 0 ? '#16a34a' : 'var(--color-text-tertiary)' }}>{fmt(remaining)} remaining</strong> of {fmt(p.value)}</>
+                        )}
                       </div>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
