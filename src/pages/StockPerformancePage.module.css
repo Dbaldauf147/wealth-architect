@@ -417,6 +417,127 @@
   border-color: var(--color-secondary);
 }
 
+/* ── Column mapping ── */
+.mapGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 16px 0;
+}
+
+.mapField {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.mapLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.req {
+  font-size: 9px;
+  font-style: normal;
+  letter-spacing: 0.04em;
+  color: var(--color-secondary);
+}
+
+.select {
+  width: 100%;
+  padding: 7px 10px;
+  font-family: var(--font-headline);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-medium);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+}
+
+.select:focus {
+  outline: none;
+  border-color: var(--color-secondary);
+}
+
+.mapHint {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.chip {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-full);
+}
+
+.chipGood {
+  color: var(--color-success);
+  background: rgba(0, 150, 104, 0.1);
+}
+
+.chipWarn {
+  color: var(--color-error);
+  background: rgba(186, 26, 26, 0.08);
+}
+
+.mergeBox {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-xl);
+}
+
+.modeRow {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 10px;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+}
+
+.mergeSummary {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.checkbox input {
+  margin-top: 2px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
 /* ── Buttons ── */
 .primaryBtn,
 .ghostBtn,
@@ -484,6 +605,13 @@
   border-radius: var(--radius-xl);
 }
 
+.infoCard {
+  padding: 16px 18px;
+  background: rgba(0, 88, 190, 0.05);
+  border: 1px solid rgba(0, 88, 190, 0.22);
+  border-radius: var(--radius-xl);
+}
+
 .noteTitle {
   display: flex;
   align-items: center;
@@ -525,11 +653,13 @@
 
 @media (max-width: 1100px) {
   .statGrid { grid-template-columns: repeat(2, 1fr); }
+  .mapGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 768px) {
   .hero { padding: 20px; }
   .heroValue { font-size: 32px; }
   .statGrid { grid-template-columns: 1fr; }
+  .mapGrid { grid-template-columns: 1fr; }
   .inputField input { width: 120px; }
 }

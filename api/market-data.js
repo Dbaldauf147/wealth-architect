@@ -25,10 +25,11 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 // Only bare price indices lack dividends.
 const PRICE_ONLY_INDICES = new Set(['^GSPC', '^DJI', '^IXIC', '^RUT']);
 
-async function yahooChart(host, symbol, { period1, period2, interval = '1d' }) {
+async function yahooChart(host, symbol, { period1, period2, interval = '1d', events = '' }) {
   const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}`
     + `?period1=${period1}&period2=${period2}&interval=${interval}`
-    + '&includeAdjustedClose=true';
+    + '&includeAdjustedClose=true'
+    + (events ? `&events=${encodeURIComponent(events)}` : '');
   const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' } });
   const json = await res.json().catch(() => null);
   const result = json?.chart?.result?.[0];
@@ -50,7 +51,18 @@ async function yahooChart(host, symbol, { period1, period2, interval = '1d' }) {
     points.push([stamps[i], Number(c.toFixed(4))]);
   }
   if (!points.length) throw new Error('no usable closes');
-  return points;
+
+  // Split events, oldest first. A holder's share count multiplies by
+  // numerator/denominator on the split date, so a 6:1 turns 10 shares into 60.
+  const splits = Object.values(result.events?.splits || {})
+    .map(s => ({
+      date: new Date(s.date * 1000).toISOString().slice(0, 10),
+      ratio: s.denominator ? s.numerator / s.denominator : null,
+    }))
+    .filter(s => Number.isFinite(s.ratio) && s.ratio > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  return { points, splits, marketPrice: result.meta?.regularMarketPrice ?? null };
 }
 
 // Try the symbol on every host before giving up on it.
@@ -80,7 +92,7 @@ async function handleSeries(symbol, startISO) {
 
   const attempts = [];
   try {
-    const points = await fetchAcrossHosts(symbol, window);
+    const { points } = await fetchAcrossHosts(symbol, window);
     return { symbol, source: 'yahoo', totalReturn: !PRICE_ONLY_INDICES.has(symbol), points };
   } catch (err) {
     attempts.push(...(err.attempts || [err.message]));
@@ -89,7 +101,7 @@ async function handleSeries(symbol, startISO) {
   const alt = FALLBACK_SYMBOL[symbol];
   if (alt) {
     try {
-      const points = await fetchAcrossHosts(alt, window);
+      const { points } = await fetchAcrossHosts(alt, window);
       return {
         symbol,
         resolvedSymbol: alt,
@@ -108,16 +120,31 @@ async function handleSeries(symbol, startISO) {
   throw error;
 }
 
-async function handleQuotes(symbols) {
+// Latest price *and* split history per symbol.
+//
+// Splits have to come from here rather than the broker file: a split that
+// happens after the export's end date is invisible to the file, and it
+// silently multiplies the share count. A 6:1 makes a position look like it
+// lost 83% of its value. Monthly candles keep the payload tiny (~100 points
+// per symbol) while still carrying every split event in the range.
+async function handleQuotes(symbols, sinceISO) {
+  const sinceMs = Date.parse(`${sinceISO}T00:00:00Z`);
+  const period1 = Math.floor((Number.isFinite(sinceMs) ? sinceMs : Date.UTC(2015, 0, 1)) / 1000);
   const period2 = Math.floor(Date.now() / 1000);
-  const period1 = period2 - 21 * 24 * 60 * 60; // 3 weeks covers any holiday run
-  const window = { period1, period2 };
+  const window = { period1, period2, interval: '1mo', events: 'split' };
 
   const entries = await Promise.all(symbols.map(async (symbol) => {
     try {
-      const points = await fetchAcrossHosts(symbol, window);
-      const [t, price] = points[points.length - 1];
-      return [symbol, { price, asOf: new Date(t * 1000).toISOString().slice(0, 10) }];
+      const { points, splits, marketPrice } = await fetchAcrossHosts(symbol, window);
+      const [t, lastClose] = points[points.length - 1];
+      // The last monthly candle is the current partial month, so its close is
+      // today's price; regularMarketPrice is preferred when present.
+      const price = Number.isFinite(marketPrice) && marketPrice > 0 ? marketPrice : lastClose;
+      return [symbol, {
+        price: Number(price.toFixed(4)),
+        asOf: new Date(t * 1000).toISOString().slice(0, 10),
+        splits,
+      }];
     } catch (err) {
       // One bad ticker (a delisting, an options contract) shouldn't sink the
       // whole import — the page marks those positions as unpriced.
@@ -134,7 +161,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { series, quotes, start } = req.query || {};
+  const { series, quotes, start, since } = req.query || {};
 
   try {
     if (series) {
@@ -150,7 +177,7 @@ export default async function handler(req, res) {
         String(quotes).split(',').map(s => s.trim().toUpperCase()).filter(Boolean),
       )].slice(0, 60); // guard against a pathological import
       if (!symbols.length) return res.status(400).json({ error: 'No symbols supplied' });
-      const payload = await handleQuotes(symbols);
+      const payload = await handleQuotes(symbols, String(since || '2015-01-01'));
       res.setHeader('Cache-Control', 'public, s-maxage=900, stale-while-revalidate=3600');
       return res.status(200).json({ quotes: payload });
     }

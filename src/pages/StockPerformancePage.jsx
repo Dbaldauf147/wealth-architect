@@ -5,8 +5,11 @@ import {
   makeSeries, cagr, returnBetween, calendarYearReturns, rollingReturns,
   growthPath, maxDrawdown, toISODate, MS_DAY,
 } from '../lib/benchmark';
-import { parseTradesCsv, buildLots } from '../lib/robinhood';
-import { benchmarkLots, openSymbols } from '../lib/tradeBenchmark';
+import {
+  readTable, guessMapping, missingFields, parseRows, sortTrades,
+  mergeTrades, mergeCorporateActions, buildLots, tradedSymbols, FIELDS,
+} from '../lib/robinhood';
+import { benchmarkLots } from '../lib/tradeBenchmark';
 import styles from './StockPerformancePage.module.css';
 
 // The S&P 500 *total return* index — dividends reinvested. Using the price
@@ -415,57 +418,307 @@ function BenchmarkTab({ series, meta }) {
   );
 }
 
-// ── Import panel ────────────────────────────────────────────────────────
-function ImportPanel({ onImport, error, compact }) {
+// ── Import wizard ───────────────────────────────────────────────────────
+// Two steps on purpose. Committing straight from a paste means a reordered
+// Excel column or a re-exported overlapping date range silently corrupts the
+// history, and neither is visible after the fact — so the mapping and the
+// duplicate count are shown before anything is written.
+function ImportWizard({ existingTrades, existingActions, onCommit, onCancel, compact }) {
   const fileRef = useRef(null);
+  const [staged, setStaged] = useState(null); // { header, rows, source }
+  const [mapping, setMapping] = useState(null);
   const [paste, setPaste] = useState('');
   const [dragging, setDragging] = useState(false);
+  const [error, setError] = useState(null);
+  const [mode, setMode] = useState('append');
+  const [keepDuplicates, setKeepDuplicates] = useState(false);
+
+  const hasHistory = (existingTrades?.length || 0) > 0;
+
+  const stage = useCallback((text, source) => {
+    const { header, rows } = readTable(text);
+    if (!rows.length) {
+      setError('No data rows were found below the header line.');
+      return;
+    }
+    setError(null);
+    setStaged({ header, rows, source });
+    setMapping(guessMapping(header));
+  }, []);
 
   const handleFiles = useCallback(async (files) => {
     const file = files?.[0];
     if (!file) return;
-    onImport(await file.text(), file.name);
-  }, [onImport]);
+    stage(await file.text(), file.name);
+  }, [stage]);
+
+  const missing = mapping ? missingFields(mapping) : [];
+
+  const parsed = useMemo(
+    () => (staged && mapping && !missing.length ? parseRows(staged.rows, mapping) : null),
+    [staged, mapping, missing.length],
+  );
+
+  const merge = useMemo(
+    () => (parsed ? mergeTrades(existingTrades || [], parsed.trades) : null),
+    [parsed, existingTrades],
+  );
+
+  const commit = () => {
+    if (!parsed) return;
+    const incoming = keepDuplicates ? parsed.trades : merge.added;
+    const trades = mode === 'replace'
+      ? sortTrades([...parsed.trades])
+      : sortTrades([...(existingTrades || []), ...incoming]);
+
+    // Firestore caps a document at 1MB and this shares one with every other
+    // setting, so keep the payload lean.
+    const MAX_TRADES = 4000;
+    const kept = trades.slice(-MAX_TRADES).map(t => ({
+      date: t.date, symbol: t.symbol, side: t.side,
+      quantity: t.quantity, price: t.price, amount: t.amount,
+    }));
+
+    onCommit({
+      trades: kept,
+      corporateActions: mode === 'replace'
+        ? parsed.corporateActions
+        : mergeCorporateActions(existingActions || [], parsed.corporateActions),
+      importedAt: new Date().toISOString(),
+      source: staged.source || '',
+      skipped: parsed.skipped,
+      truncated: trades.length > MAX_TRADES ? trades.length - MAX_TRADES : 0,
+      lastImport: {
+        rows: staged.rows.length,
+        added: mode === 'replace' ? parsed.trades.length : incoming.length,
+        duplicates: keepDuplicates ? 0 : merge.duplicates.length,
+        mode,
+      },
+    });
+  };
+
+  // ── Step 1: choose a source ───────────────────────────────────────────
+  if (!staged) {
+    return (
+      <div className={`${styles.card} ${compact ? styles.compact : ''}`}>
+        <div className={styles.cardHeaderRow}>
+          <div className={styles.cardTitle}>
+            {hasHistory ? 'Add more trades' : 'Import your Robinhood trades'}
+          </div>
+          {onCancel && (
+            <button type="button" className={styles.ghostBtn} onClick={onCancel}>Cancel</button>
+          )}
+        </div>
+        <div className={styles.cardSub}>
+          In Robinhood: <strong>Account → Settings → Reports and statements → Reports →
+          Generate an Activity report</strong>, pick a date range, then download the CSV.
+          You can also copy the rows straight out of Excel — columns get mapped in the next
+          step, and anything already in your history is detected and skipped. Nothing leaves
+          your browser except the ticker symbols needed to price open positions.
+        </div>
+
+        <div
+          className={`${styles.dropZone} ${dragging ? styles.dropZoneActive : ''}`}
+          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={e => { e.preventDefault(); setDragging(false); handleFiles(e.dataTransfer.files); }}
+          onClick={() => fileRef.current?.click()}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 30 }}>upload_file</span>
+          <div>Drop the CSV here, or click to choose a file</div>
+          <input ref={fileRef} type="file" accept=".csv,.tsv,.txt,text/csv" hidden
+            onChange={e => { handleFiles(e.target.files); e.target.value = ''; }} />
+        </div>
+
+        <details className={styles.details} open={hasHistory}>
+          <summary>…or paste rows from Excel</summary>
+          <textarea
+            className={styles.textarea}
+            rows={6}
+            value={paste}
+            placeholder={'Activity Date\tProcess Date\tSettle Date\tInstrument\tDescription\tTrans Code\tQuantity\tPrice\tAmount\n…'}
+            onChange={e => setPaste(e.target.value)}
+          />
+          <button type="button" className={styles.primaryBtn}
+            disabled={!paste.trim()}
+            onClick={() => { stage(paste, 'pasted rows'); setPaste(''); }}>
+            Continue
+          </button>
+        </details>
+
+        {error && <div className={styles.error}>{error}</div>}
+      </div>
+    );
+  }
+
+  // ── Step 2: map columns, review, commit ───────────────────────────────
+  const columnLabel = (i) => {
+    const raw = String(staged.header[i] ?? '').trim();
+    return raw || `Column ${i + 1}`;
+  };
+  const preview = parsed ? parsed.trades.slice(0, 8) : [];
+  const netNew = parsed ? (mode === 'replace' ? parsed.trades.length : (keepDuplicates ? parsed.trades.length : merge.added.length)) : 0;
 
   return (
     <div className={`${styles.card} ${compact ? styles.compact : ''}`}>
-      <div className={styles.cardTitle}>Import your Robinhood trades</div>
-      <div className={styles.cardSub}>
-        In Robinhood: <strong>Account → Settings → Reports and statements → Reports → Generate
-        an Activity report</strong>, pick a date range, then download the CSV. Drop it below.
-        Nothing leaves your browser except the ticker symbols needed to price open positions.
-      </div>
-
-      <div
-        className={`${styles.dropZone} ${dragging ? styles.dropZoneActive : ''}`}
-        onDragOver={e => { e.preventDefault(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={e => { e.preventDefault(); setDragging(false); handleFiles(e.dataTransfer.files); }}
-        onClick={() => fileRef.current?.click()}
-      >
-        <span className="material-symbols-outlined" style={{ fontSize: 30 }}>upload_file</span>
-        <div>Drop the CSV here, or click to choose a file</div>
-        <input ref={fileRef} type="file" accept=".csv,.txt,text/csv" hidden
-          onChange={e => { handleFiles(e.target.files); e.target.value = ''; }} />
-      </div>
-
-      <details className={styles.details}>
-        <summary>…or paste the rows instead</summary>
-        <textarea
-          className={styles.textarea}
-          rows={6}
-          value={paste}
-          placeholder={'Activity Date,Process Date,Settle Date,Instrument,Description,Trans Code,Quantity,Price,Amount\n…'}
-          onChange={e => setPaste(e.target.value)}
-        />
-        <button type="button" className={styles.primaryBtn}
-          disabled={!paste.trim()}
-          onClick={() => { onImport(paste, 'pasted rows'); setPaste(''); }}>
-          Parse pasted rows
+      <div className={styles.cardHeaderRow}>
+        <div>
+          <div className={styles.cardTitle}>Check the columns before importing</div>
+          <div className={styles.cardSub}>
+            {staged.rows.length.toLocaleString('en-US')} rows read from {staged.source || 'your paste'}.
+          </div>
+        </div>
+        <button type="button" className={styles.ghostBtn}
+          onClick={() => { setStaged(null); setMapping(null); setError(null); }}>
+          Start over
         </button>
-      </details>
+      </div>
 
-      {error && <div className={styles.error}>{error}</div>}
+      <div className={styles.mapGrid}>
+        {FIELDS.map(f => (
+          <label key={f.key} className={styles.mapField}>
+            <span className={styles.mapLabel}>
+              {f.label}
+              {f.required && <em className={styles.req}>required</em>}
+            </span>
+            <select
+              className={styles.select}
+              value={mapping[f.key] ?? ''}
+              onChange={e => setMapping(m => ({
+                ...m,
+                [f.key]: e.target.value === '' ? null : Number(e.target.value),
+              }))}
+            >
+              <option value="">— not in this file —</option>
+              {staged.header.map((_, i) => (
+                <option key={i} value={i}>{columnLabel(i)}</option>
+              ))}
+            </select>
+            <span className={styles.mapHint}>{f.hint}</span>
+          </label>
+        ))}
+      </div>
+
+      {missing.length > 0 && (
+        <div className={styles.error}>
+          Map {missing.join(', ')} to continue — those columns are needed to build a position.
+        </div>
+      )}
+
+      {parsed && (
+        <>
+          <div className={styles.chips}>
+            <span className={`${styles.chip} ${styles.chipGood}`}>
+              {parsed.trades.length} buy/sell rows
+            </span>
+            {parsed.corporateActions.length > 0 && (
+              <span className={styles.chip}>{parsed.corporateActions.length} corporate actions</span>
+            )}
+            {parsed.skipped.nonTrade > 0 && (
+              <span className={styles.chip}>{parsed.skipped.nonTrade} non-trade rows</span>
+            )}
+            {parsed.skipped.options > 0 && (
+              <span className={styles.chip}>{parsed.skipped.options} options rows</span>
+            )}
+            {parsed.skipped.unparseable > 0 && (
+              <span className={`${styles.chip} ${styles.chipWarn}`}>
+                {parsed.skipped.unparseable} unreadable rows
+              </span>
+            )}
+          </div>
+
+          {parsed.trades.length === 0 ? (
+            <div className={styles.error}>
+              No buy or sell rows came through with this mapping. Check that
+              <strong> Action</strong> points at the column holding Buy/Sell.
+            </div>
+          ) : (
+            <>
+              <div className={styles.tableWrap}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Date</th><th>Ticker</th><th>Action</th>
+                      <th className={styles.num}>Quantity</th>
+                      <th className={styles.num}>Price</th>
+                      <th className={styles.num}>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.map((t, i) => (
+                      <tr key={i}>
+                        <td>{t.date}</td>
+                        <td><strong>{t.symbol}</strong></td>
+                        <td>{t.side}</td>
+                        <td className={styles.num}>{t.quantity.toLocaleString('en-US', { maximumFractionDigits: 6 })}</td>
+                        <td className={styles.num}>{fmt(t.price, 2)}</td>
+                        <td className={styles.num}>{fmt(t.amount, 2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {parsed.trades.length > preview.length && (
+                <div className={styles.cardSub}>
+                  Showing the {preview.length} oldest of {parsed.trades.length}.
+                </div>
+              )}
+            </>
+          )}
+
+          {hasHistory && (
+            <div className={styles.mergeBox}>
+              <div className={styles.modeRow}>
+                {[
+                  { id: 'append', label: 'Add to history', hint: 'Keeps what you already have' },
+                  { id: 'replace', label: 'Replace history', hint: 'Discards existing trades' },
+                ].map(o => (
+                  <button key={o.id} type="button"
+                    className={`${styles.pill} ${mode === o.id ? styles.pillActive : ''}`}
+                    onClick={() => setMode(o.id)} title={o.hint}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+
+              {mode === 'append' ? (
+                <>
+                  <div className={styles.mergeSummary}>
+                    <strong>{merge.duplicates.length}</strong> of these rows are already in your
+                    history and will be skipped; <strong>{merge.added.length}</strong> are new.
+                  </div>
+                  <label className={styles.checkbox}>
+                    <input type="checkbox" checked={keepDuplicates}
+                      onChange={e => setKeepDuplicates(e.target.checked)} />
+                    <span>
+                      Import the duplicates anyway — only if you really did trade the same
+                      ticker, side, size and amount twice on the same day beyond what's stored.
+                    </span>
+                  </label>
+                </>
+              ) : (
+                <div className={styles.mergeSummary}>
+                  Your {existingTrades.length} stored trades will be discarded and replaced
+                  with the {parsed.trades.length} rows above.
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className={styles.footerActions} style={{ marginTop: 16 }}>
+            <button type="button" className={styles.primaryBtn} style={{ marginTop: 0 }}
+              disabled={!parsed.trades.length || (mode === 'append' && netNew === 0)}
+              onClick={commit}>
+              {mode === 'replace'
+                ? `Replace with ${parsed.trades.length} trades`
+                : netNew === 0 ? 'Nothing new to import' : `Import ${netNew} new trades`}
+            </button>
+            {onCancel && (
+              <button type="button" className={styles.ghostBtn} onClick={onCancel}>Cancel</button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -474,64 +727,75 @@ function ImportPanel({ onImport, error, compact }) {
 function TradesTab({ series, meta }) {
   const { robinhoodTrades } = useData();
   const { setRobinhoodTrades } = useDataActions();
-  const [importError, setImportError] = useState(null);
   const [quoteResult, setQuoteResult] = useState(null);
   const [showLots, setShowLots] = useState(false);
   const [reimporting, setReimporting] = useState(false);
 
   const trades = useMemo(() => robinhoodTrades?.trades || [], [robinhoodTrades]);
-  const lots = useMemo(() => (trades.length ? buildLots(trades) : null), [trades]);
+  const corporateActions = useMemo(() => robinhoodTrades?.corporateActions || [], [robinhoodTrades]);
 
-  // Open positions need a live price to be worth anything. Closed lots don't,
-  // so an all-closed import renders without a single network call. Keyed as a
-  // string so the effect doesn't re-run on an identical list.
-  const quoteKey = useMemo(() => (lots ? openSymbols(lots).sort().join(',') : ''), [lots]);
+  // Quotes are fetched for *every* traded ticker, not just the ones still
+  // held, because the same request carries split history — and a closed lot
+  // that straddled a split needs it to match buy shares against sell shares.
+  // Keyed as a string so the effect doesn't re-run on an identical list.
+  const quoteKey = useMemo(() => tradedSymbols(trades).join(','), [trades]);
+  const earliestTrade = useMemo(
+    () => (trades.length ? trades.reduce((a, t) => (t.date < a ? t.date : a), trades[0].date) : null),
+    [trades],
+  );
 
   useEffect(() => {
     if (!quoteKey) return undefined;
     let cancelled = false;
-    fetchQuotes(quoteKey.split(','))
+    fetchQuotes(quoteKey.split(','), earliestTrade)
       // Per-symbol failures come back inside the result, so a rejection here
       // means the whole request died — record an empty set and let the
       // caveats panel report the unpriced lots.
       .catch(() => ({}))
       .then(q => { if (!cancelled) setQuoteResult({ key: quoteKey, quotes: q }); });
     return () => { cancelled = true; };
-  }, [quoteKey]);
+  }, [quoteKey, earliestTrade]);
 
   // Only trust quotes fetched for the current symbol list — otherwise a fresh
   // import would briefly be priced with the previous import's quotes.
   const quotes = quoteResult?.key === quoteKey ? quoteResult.quotes : null;
   const awaitingQuotes = quoteKey !== '' && quotes === null;
 
-  const result = useMemo(() => {
-    if (!lots || awaitingQuotes) return null;
-    return benchmarkLots(lots, series, quotes || {}, series.lastT);
-  }, [lots, series, quotes, awaitingQuotes]);
+  // Split history keyed by symbol, in the shape buildLots expects. A symbol
+  // present with an empty array means "the feed knows this ticker and it has
+  // no splits" — distinct from absent, which falls back to the file's rows.
+  const apiSplits = useMemo(() => {
+    if (!quotes) return null;
+    const out = {};
+    for (const [symbol, q] of Object.entries(quotes)) {
+      if (q && !q.error) out[symbol] = Array.isArray(q.splits) ? q.splits : [];
+    }
+    return out;
+  }, [quotes]);
 
-  const handleImport = useCallback((text, sourceName) => {
-    const parsed = parseTradesCsv(text);
-    if (parsed.errors.length) { setImportError(parsed.errors.join(' ')); return; }
-    // Firestore caps a document at 1MB and this shares one with every other
-    // setting, so keep the payload lean.
-    const MAX_TRADES = 4000;
-    const kept = parsed.trades.slice(-MAX_TRADES).map(t => ({
-      date: t.date, symbol: t.symbol, side: t.side,
-      quantity: t.quantity, price: t.price, amount: t.amount,
-    }));
-    setImportError(null);
-    setRobinhoodTrades({
-      trades: kept,
-      importedAt: new Date().toISOString(),
-      source: sourceName || '',
-      skipped: parsed.skipped,
-      truncated: parsed.trades.length > MAX_TRADES ? parsed.trades.length - MAX_TRADES : 0,
-    });
+  const lots = useMemo(
+    () => (trades.length && !awaitingQuotes ? buildLots(trades, corporateActions, apiSplits) : null),
+    [trades, corporateActions, apiSplits, awaitingQuotes],
+  );
+
+  const result = useMemo(() => {
+    if (!lots) return null;
+    return benchmarkLots(lots, series, quotes || {}, series.lastT);
+  }, [lots, series, quotes]);
+
+  const handleCommit = useCallback((payload) => {
+    setRobinhoodTrades(payload);
     setReimporting(false);
   }, [setRobinhoodTrades]);
 
   if (!trades.length) {
-    return <ImportPanel onImport={handleImport} error={importError} />;
+    return (
+      <ImportWizard
+        existingTrades={trades}
+        existingActions={corporateActions}
+        onCommit={handleCommit}
+      />
+    );
   }
 
   const skipped = robinhoodTrades?.skipped || {};
@@ -744,11 +1008,14 @@ function TradesTab({ series, meta }) {
         <span className={styles.muted}>
           {trades.length} trade rows
           {robinhoodTrades?.source ? ` from ${robinhoodTrades.source}` : ''}
-          {robinhoodTrades?.importedAt ? ` · imported ${fmtDay(Date.parse(robinhoodTrades.importedAt))}` : ''}
+          {robinhoodTrades?.importedAt ? ` · last import ${fmtDay(Date.parse(robinhoodTrades.importedAt))}` : ''}
+          {robinhoodTrades?.lastImport?.duplicates
+            ? ` (${robinhoodTrades.lastImport.added} added, ${robinhoodTrades.lastImport.duplicates} already held)`
+            : ''}
         </span>
         <span className={styles.footerActions}>
           <button type="button" className={styles.ghostBtn} onClick={() => setReimporting(v => !v)}>
-            {reimporting ? 'Cancel' : 'Import another file'}
+            {reimporting ? 'Cancel' : 'Add more trades'}
           </button>
           <button type="button" className={styles.dangerBtn}
             onClick={() => { if (confirm('Remove the imported trades?')) setRobinhoodTrades(null); }}>
@@ -757,7 +1024,15 @@ function TradesTab({ series, meta }) {
         </span>
       </div>
 
-      {reimporting && <ImportPanel onImport={handleImport} error={importError} compact />}
+      {reimporting && (
+        <ImportWizard
+          existingTrades={trades}
+          existingActions={corporateActions}
+          onCommit={handleCommit}
+          onCancel={() => setReimporting(false)}
+          compact
+        />
+      )}
     </>
   );
 }
@@ -769,6 +1044,10 @@ function Caveats({ result, lots, skipped, truncated, quotes, meta, seriesFirstT 
 
   if (!meta.totalReturn) {
     notes.push(meta.warning || 'The benchmark is a price index, so it excludes dividends and understates the S&P by roughly 1.8%/yr.');
+  }
+  if (lots?.excludedSymbols?.length) {
+    const list = lots.excludedSymbols.map(e => `${e.symbol} (${e.codes.join(', ')})`).join(', ');
+    notes.push(`Excluded entirely: ${list}. A share exchange, spin-off or merger moved cost basis between tickers using fair-market values the export doesn't contain, so no honest return can be computed for them. Every other ticker is unaffected.`);
   }
   if (skipped.options) {
     notes.push(`${skipped.options} options row${skipped.options === 1 ? '' : 's'} excluded — contracts can't share a cost-basis queue with shares of the same underlying.`);
@@ -799,19 +1078,54 @@ function Caveats({ result, lots, skipped, truncated, quotes, meta, seriesFirstT 
     notes.push(`${skipped.nonTrade} non-trade row${skipped.nonTrade === 1 ? '' : 's'} ignored${codes ? ` (${codes})` : ''} — dividends, transfers and fees aren't part of a trade's return.`);
   }
 
-  if (!notes.length) return null;
+  const splits = lots?.appliedSplits || [];
+
+  if (!notes.length && !splits.length) return null;
 
   return (
-    <div className={styles.noteCard}>
-      <div className={styles.noteTitle}>
-        <span className="material-symbols-outlined" style={{ fontSize: 17 }}>info</span>
-        What this comparison leaves out
-      </div>
-      <ul className={styles.noteList}>
-        {notes.map((n, i) => <li key={i}>{n}</li>)}
-      </ul>
-    </div>
+    <>
+      {splits.length > 0 && (
+        <div className={styles.infoCard}>
+          <div className={styles.noteTitle}>
+            <span className="material-symbols-outlined" style={{ fontSize: 17 }}>call_split</span>
+            Stock splits applied
+          </div>
+          <ul className={styles.noteList}>
+            {splits.map((s, i) => (
+              <li key={i}>
+                <strong>{s.symbol}</strong> {formatRatio(s.factor)} on {s.date} —{' '}
+                {s.sharesBefore.toLocaleString('en-US', { maximumFractionDigits: 4 })} shares became{' '}
+                {s.sharesAfter.toLocaleString('en-US', { maximumFractionDigits: 4 })}.
+                {s.source === 'feed' && ' Taken from live market data, so it counts even if it happened after your export ends.'}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {notes.length > 0 && (
+        <div className={styles.noteCard}>
+          <div className={styles.noteTitle}>
+            <span className="material-symbols-outlined" style={{ fontSize: 17 }}>info</span>
+            What this comparison leaves out
+          </div>
+          <ul className={styles.noteList}>
+            {notes.map((n, i) => <li key={i}>{n}</li>)}
+          </ul>
+        </div>
+      )}
+    </>
   );
+}
+
+// 6 → "6:1", 1.5 → "3:2". Falls back to a plain multiplier when the ratio
+// isn't a tidy fraction.
+function formatRatio(factor) {
+  for (const denom of [1, 2, 3, 4, 5, 10]) {
+    const num = factor * denom;
+    if (Math.abs(num - Math.round(num)) < 1e-6) return `${Math.round(num)}:${denom}`;
+  }
+  return `${factor.toFixed(4)}×`;
 }
 
 // ── Page ────────────────────────────────────────────────────────────────

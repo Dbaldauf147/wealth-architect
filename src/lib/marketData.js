@@ -60,13 +60,18 @@ export async function fetchSeries(symbol, start, { onFresh } = {}) {
 }
 
 /**
- * Latest close for each symbol. Returns a map of symbol → { price, asOf } or
- * { error }. Cached per symbol so a re-import only fetches what's new.
+ * Latest price and split history for each symbol. Returns a map of
+ * symbol → { price, asOf, splits } or { error }. Cached per symbol so a
+ * re-import only fetches what's new.
+ *
+ * `since` should be the earliest trade date — splits before the first
+ * purchase are already baked into what was paid and don't need fetching.
  */
-export async function fetchQuotes(symbols) {
+export async function fetchQuotes(symbols, since) {
   const wanted = [...new Set((symbols || []).map(s => String(s).trim().toUpperCase()).filter(Boolean))];
   if (!wanted.length) return {};
 
+  const sinceParam = /^\d{4}-\d{2}-\d{2}$/.test(since || '') ? since : '2015-01-01';
   const cache = readCache(QUOTE_CACHE_KEY) || {};
   const now = Date.now();
   const out = {};
@@ -75,8 +80,10 @@ export async function fetchQuotes(symbols) {
   for (const symbol of wanted) {
     const hit = cache[symbol];
     // Don't let a cached failure stick around — a delisting lookup can
-    // succeed on the next try.
-    if (hit && hit.fetchedAt && now - hit.fetchedAt < QUOTE_TTL_MS && !hit.quote?.error) {
+    // succeed on the next try. A cache entry fetched over a shorter window
+    // than we now need could be missing splits, so refetch those too.
+    const fresh = hit && hit.fetchedAt && now - hit.fetchedAt < QUOTE_TTL_MS;
+    if (fresh && !hit.quote?.error && hit.since && hit.since <= sinceParam) {
       out[symbol] = hit.quote;
     } else {
       missing.push(symbol);
@@ -89,12 +96,15 @@ export async function fetchQuotes(symbols) {
     for (let i = 0; i < missing.length; i += 50) {
       const chunk = missing.slice(i, i + 50);
       try {
-        const res = await fetch(`/api/market-data?quotes=${encodeURIComponent(chunk.join(','))}`);
+        const res = await fetch(
+          `/api/market-data?quotes=${encodeURIComponent(chunk.join(','))}`
+          + `&since=${encodeURIComponent(sinceParam)}`,
+        );
         const json = await res.json().catch(() => null);
         if (!res.ok) throw new Error(json?.error || `Quote request failed (${res.status})`);
         for (const [symbol, quote] of Object.entries(json.quotes || {})) {
           out[symbol] = quote;
-          cache[symbol] = { fetchedAt: now, quote };
+          cache[symbol] = { fetchedAt: now, since: sinceParam, quote };
         }
       } catch (err) {
         for (const symbol of chunk) out[symbol] = { error: err.message };
