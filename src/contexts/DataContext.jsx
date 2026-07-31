@@ -154,6 +154,13 @@ const saveRangeExcludedCategories = (v) => saveJSON('rangeExcludedCategories', v
 // Synced via Firestore so the loan + its payment log follow the user.
 const loadShortTermLoan = () => loadJSON('shortTermLoan', null);
 const saveShortTermLoan = (v) => saveJSON('shortTermLoan', v);
+// Trades imported from a Robinhood activity export, used by the Stock
+// Performance page to benchmark against the S&P 500. Stored as one object
+// { trades: [{date, symbol, side, quantity, price, amount}], importedAt,
+// source, skipped, truncated }, or null when nothing is imported. Synced so
+// the import follows the user across devices.
+const loadRobinhoodTrades = () => loadJSON('robinhoodTrades', null);
+const saveRobinhoodTrades = (v) => saveJSON('robinhoodTrades', v);
 // Transactions-page category triage buckets. A category sits in exactly one
 // bucket: 'income', 'organized', or (default) 'needs review' = in neither set.
 // Synced so the Needs-Review/Organized/Income split matches across devices.
@@ -332,6 +339,10 @@ function mergedDiffersFromRemote(merged, remote) {
   if (JSON.stringify(merged.shortTermLoan ?? null) !== JSON.stringify(remote.shortTermLoan ?? null)) {
     return true;
   }
+  // Imported Robinhood trades — single object, compare serialized.
+  if (JSON.stringify(merged.robinhoodTrades ?? null) !== JSON.stringify(remote.robinhoodTrades ?? null)) {
+    return true;
+  }
   // Visible columns — single array (or null), compare serialized.
   if (JSON.stringify(merged.visibleColumns ?? null) !== JSON.stringify(remote.visibleColumns ?? null)) {
     return true;
@@ -353,7 +364,7 @@ const EMPTY_LOCALS = {
   dateOverrides: {}, transactionNotes: {}, accountNicknames: {}, accountGroups: {},
   assetClasses: {}, customAssets: [], customLiabilities: [], customAssetClasses: [],
   hiddenCards: [], paymentReminderPrefs: {}, calendarSyncPrefs: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
-  hiddenCategories: new Set(), rangeExcludedCategories: [], shortTermLoan: null,
+  hiddenCategories: new Set(), rangeExcludedCategories: [], shortTermLoan: null, robinhoodTrades: null,
   organizedCategories: new Set(), incomeCategories: new Set(), savedTxnViews: {},
   chartHiddenCats: new Set(), chartHiddenSubs: new Set(), txnColumnWidths: {},
   categoryColors: {}, visibleColumns: null, activeTxnView: '', showAccounts: null,
@@ -385,6 +396,7 @@ function readLocalConfig() {
     hiddenCategories: loadHiddenCategories(),
     rangeExcludedCategories: loadRangeExcludedCategories(),
     shortTermLoan: loadShortTermLoan(),
+    robinhoodTrades: loadRobinhoodTrades(),
     organizedCategories: loadOrganizedCategories(),
     incomeCategories: loadIncomeCategories(),
     savedTxnViews: loadSavedTxnViews(),
@@ -426,6 +438,7 @@ function mergeConfig(remote, locals) {
     hiddenCategories: unionSet(locals.hiddenCategories, remote.hiddenCategories),
     rangeExcludedCategories: unionStringArray(locals.rangeExcludedCategories, remote.rangeExcludedCategories),
     shortTermLoan: locals.shortTermLoan || remote.shortTermLoan || null,
+    robinhoodTrades: locals.robinhoodTrades || remote.robinhoodTrades || null,
     organizedCategories: unionSet(locals.organizedCategories, remote.organizedCategories),
     incomeCategories: unionSet(locals.incomeCategories, remote.incomeCategories),
     savedTxnViews: unionMap(locals.savedTxnViews, remote.savedTxnViews),
@@ -465,6 +478,7 @@ function buildSyncPayload(v) {
     hiddenCategories: [...v.hiddenCategories],
     rangeExcludedCategories: v.rangeExcludedCategories,
     shortTermLoan: v.shortTermLoan || null,
+    robinhoodTrades: v.robinhoodTrades || null,
     organizedCategories: [...v.organizedCategories],
     incomeCategories: [...v.incomeCategories],
     savedTxnViews: v.savedTxnViews,
@@ -512,6 +526,7 @@ export function DataProvider({ children }) {
   const [hiddenCategories, setHiddenCategories] = useState(loadHiddenCategories);
   const [rangeExcludedCategories, setRangeExcludedCategories] = useState(loadRangeExcludedCategories);
   const [shortTermLoan, setShortTermLoan] = useState(loadShortTermLoan);
+  const [robinhoodTrades, setRobinhoodTradesState] = useState(loadRobinhoodTrades);
   const [organizedCategories, setOrganizedCategories] = useState(loadOrganizedCategories);
   const [incomeCategories, setIncomeCategories] = useState(loadIncomeCategories);
   const [savedTxnViews, setSavedTxnViews] = useState(loadSavedTxnViews);
@@ -586,6 +601,7 @@ export function DataProvider({ children }) {
     setHiddenCategories(m.hiddenCategories); saveHiddenCategories(m.hiddenCategories);
     setRangeExcludedCategories(m.rangeExcludedCategories); saveRangeExcludedCategories(m.rangeExcludedCategories);
     setShortTermLoan(m.shortTermLoan); saveShortTermLoan(m.shortTermLoan);
+    setRobinhoodTradesState(m.robinhoodTrades); saveRobinhoodTrades(m.robinhoodTrades);
     setOrganizedCategories(m.organizedCategories); saveOrganizedCategories(m.organizedCategories);
     setIncomeCategories(m.incomeCategories); saveIncomeCategories(m.incomeCategories);
     setSavedTxnViews(m.savedTxnViews); saveSavedTxnViews(m.savedTxnViews);
@@ -652,7 +668,7 @@ export function DataProvider({ children }) {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
       transactionNotes, accountNicknames, accountGroups, assetClasses, customAssets,
       customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay,
-      customCategories, hiddenCategories, rangeExcludedCategories, shortTermLoan, organizedCategories,
+      customCategories, hiddenCategories, rangeExcludedCategories, shortTermLoan, robinhoodTrades, organizedCategories,
       incomeCategories, savedTxnViews, chartHiddenCats, chartHiddenSubs, txnColumnWidths: columnWidths,
       categoryColors, visibleColumns, activeTxnView, showAccounts, pareto8020View,
       hiddenTransactionIds: hiddenIds,
@@ -687,6 +703,7 @@ export function DataProvider({ children }) {
     hiddenCategories,
     rangeExcludedCategories,
     shortTermLoan,
+    robinhoodTrades,
     organizedCategories,
     incomeCategories,
     savedTxnViews,
@@ -1096,6 +1113,14 @@ export function DataProvider({ children }) {
       saveShortTermLoan(next);
       return next;
     });
+  }, []);
+
+  // Replace (or clear, with null) the imported Robinhood trade set. The page
+  // owns parsing and normalization; this just persists whatever it produced.
+  const setRobinhoodTrades = useCallback((payload) => {
+    const next = payload && Array.isArray(payload.trades) && payload.trades.length ? payload : null;
+    setRobinhoodTradesState(next);
+    saveRobinhoodTrades(next);
   }, []);
 
   // ── Transactions-page triage + saved views actions ────────────────────
@@ -1547,6 +1572,7 @@ export function DataProvider({ children }) {
     clearLoan,
     addLoanPayment,
     removeLoanPayment,
+    setRobinhoodTrades,
     setCategoryBucket,
     saveTxnView,
     deleteTxnView,
@@ -1602,6 +1628,7 @@ export function DataProvider({ children }) {
     clearLoan,
     addLoanPayment,
     removeLoanPayment,
+    setRobinhoodTrades,
     setCategoryBucket,
     saveTxnView,
     deleteTxnView,
@@ -1642,6 +1669,7 @@ export function DataProvider({ children }) {
     hiddenCategories,
     rangeExcludedCategories,
     shortTermLoan,
+    robinhoodTrades,
     organizedCategories,
     incomeCategories,
     savedTxnViews,
@@ -1683,6 +1711,7 @@ export function DataProvider({ children }) {
     hiddenCategories,
     rangeExcludedCategories,
     shortTermLoan,
+    robinhoodTrades,
     organizedCategories,
     incomeCategories,
     savedTxnViews,

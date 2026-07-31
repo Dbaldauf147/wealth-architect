@@ -73,6 +73,7 @@ const CardPromosPage = lazy(() => import('./pages/CardPromosPage').then(m => ({ 
 const TrendsPage = lazy(() => import('./pages/TrendsPage').then(m => ({ default: m.TrendsPage })));
 const NetWorthPage = lazy(() => import('./pages/NetWorthPage').then(m => ({ default: m.NetWorthPage })));
 const ShortTermLoanPage = lazy(() => import('./pages/ShortTermLoanPage').then(m => ({ default: m.ShortTermLoanPage })));
+const StockPerformancePage = lazy(() => import('./pages/StockPerformancePage').then(m => ({ default: m.StockPerformancePage })));
 
 // Stale tabs after a deploy can throw ChunkLoadError when trying to fetch
 // a page chunk that no longer exists at the cached hash. Reload once to
@@ -117,6 +118,7 @@ const NAV_ITEMS = [
   { id: 'transactions', label: 'Transactions', icon: 'receipt_long' },
   { id: 'cashflow', label: 'Cash Flow', icon: 'payments' },
   { id: 'networth', label: 'Net Worth', icon: 'show_chart' },
+  { id: 'stocks', label: 'Stock Performance', icon: 'candlestick_chart' },
   { id: 'trends', label: 'Spending Trends', icon: 'trending_up' },
   { id: 'budgets', label: 'Budgets', icon: 'savings' },
   { id: 'recurring', label: 'Recurring', icon: 'autorenew' },
@@ -164,6 +166,7 @@ export function App() {
       case 'transactions': return <TransactionsPage />;
       case 'cashflow': return <CashFlowPage />;
       case 'networth': return <NetWorthPage />;
+      case 'stocks': return <StockPerformancePage />;
       case 'trends': return <TrendsPage />;
       case 'budgets': return <BudgetsPage />;
       case 'recurring': return <RecurringPage />;
