@@ -531,7 +531,7 @@ function LotScatter({ rows }) {
 }
 
 /** Dollars gained or lost against the benchmark, per ticker. */
-function AlphaBars({ symbols }) {
+function AlphaBars({ symbols, onSelect, selected }) {
   const rows = (symbols || []).filter(s => Number.isFinite(s.alpha));
   const W = 880;
   const rowH = 26;
@@ -563,9 +563,14 @@ function AlphaBars({ symbols }) {
         const w = Math.abs(s.alpha) * scale;
         const ahead = s.alpha >= 0;
         return (
-          <g key={s.symbol}>
+          <g key={s.symbol} onClick={() => onSelect?.(s.symbol)}
+            style={{ cursor: onSelect ? 'pointer' : 'default' }}>
+            <rect x={0} y={cy - rowH / 2} width={W} height={rowH}
+              fill={selected === s.symbol ? 'var(--color-secondary)' : 'transparent'}
+              fillOpacity={selected === s.symbol ? 0.07 : 0} />
             <text x={pad.left - 10} y={cy + 4} textAnchor="end" fontSize={11.5} fontWeight={700}
-              fill="var(--color-text-primary)" fontFamily="var(--font-headline)">
+              fill={selected === s.symbol ? 'var(--color-secondary)' : 'var(--color-text-primary)'}
+              fontFamily="var(--font-headline)">
               {s.symbol}
             </text>
             <rect x={ahead ? zeroX : zeroX - w} y={cy - 8} width={Math.max(w, 1)} height={16} rx={2}
@@ -651,7 +656,219 @@ function LotTimeline({ rows, nowT }) {
   );
 }
 
-function TradeCharts({ result, nowT }) {
+/**
+ * One ticker's money against the same money in the index, through time.
+ *
+ * Both lines track the *dollars you actually committed*: each lot enters on
+ * its purchase date at cost, compounds at its side's return, and freezes at
+ * its realised value once sold. So the gap between the lines at any point is
+ * the dollars that choice was ahead or behind right then — not an abstract
+ * price ratio, which would ignore that most of this money arrived late.
+ */
+function TickerDetail({ symbol, rows, summary, series, onClose }) {
+  const [loaded, setLoaded] = useState(null);
+
+  const firstBuyT = useMemo(() => Math.min(...rows.map(r => r.buyT)), [rows]);
+  // Trades are anchored at UTC noon but the feed stamps each candle at market
+  // open (13:30Z), so a series starting exactly on the first purchase has no
+  // close at or before it — that lot would price as null and vanish from the
+  // chart. Reach back a month so every lot has a quote behind it.
+  const startISO = useMemo(() => toISODate(firstBuyT - 30 * MS_DAY), [firstBuyT]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchSeries(symbol, startISO, {
+      onFresh: (fresh) => { if (!cancelled) setLoaded({ symbol, payload: fresh }); },
+    })
+      .then(({ payload }) => { if (!cancelled) setLoaded({ symbol, payload }); })
+      .catch(err => { if (!cancelled) setLoaded({ symbol, error: err.message }); });
+    return () => { cancelled = true; };
+  }, [symbol, startISO]);
+
+  // Only trust a payload fetched for the ticker currently on screen.
+  const ready = loaded?.symbol === symbol ? loaded : null;
+  const tickerSeries = useMemo(
+    () => (ready?.payload ? makeSeries(ready.payload.points) : null),
+    [ready],
+  );
+
+  const path = useMemo(() => {
+    if (!tickerSeries || !tickerSeries.length) return null;
+    const endT = series.lastT;
+
+    // ~180 evenly spaced trading days keeps the line smooth without shipping
+    // every close into the DOM.
+    const stamps = [];
+    for (let i = 0; i < tickerSeries.length; i++) {
+      const t = tickerSeries.times[i];
+      if (t >= firstBuyT && t <= endT) stamps.push(t);
+    }
+    if (stamps.length < 2) return null;
+    const maxPoints = 180;
+    const step = Math.max(1, Math.floor(stamps.length / maxPoints));
+    const sampled = stamps.filter((_, i) => i % step === 0);
+    if (sampled[sampled.length - 1] !== stamps[stamps.length - 1]) {
+      sampled.push(stamps[stamps.length - 1]);
+    }
+
+    // A lot with no quote behind its purchase date can't be charted. Rather
+    // than dropping it from the line and quietly understating the position,
+    // count it so the panel can say so.
+    const unpriceable = rows.filter(r => !tickerSeries.closeAt(r.buyT));
+
+    const out = [];
+    for (const t of sampled) {
+      let you = 0;
+      let sp = 0;
+      for (const r of rows) {
+        if (r.buyT > t) continue;
+        if (!r.open && t >= r.exitT) {
+          // Sold: the money stops compounding at what it actually realised.
+          you += r.value;
+          sp += r.benchValue;
+          continue;
+        }
+        const buyPx = tickerSeries.closeAt(r.buyT);
+        const nowPx = tickerSeries.closeAt(t);
+        const spBuy = series.closeAt(r.buyT);
+        const spNow = series.closeAt(t);
+        if (!buyPx || !nowPx || !spBuy || !spNow) continue;
+        you += r.costBasis * (nowPx / buyPx);
+        sp += r.costBasis * (spNow / spBuy);
+      }
+      out.push({ t, you, sp });
+    }
+    return out.length >= 2 ? { points: out, unpriceable } : null;
+  }, [tickerSeries, rows, series, firstBuyT]);
+
+  const W = 880, H = 300;
+  const pad = { top: 16, right: 16, bottom: 32, left: 68 };
+  const innerW = W - pad.left - pad.right;
+  const innerH = H - pad.top - pad.bottom;
+
+  const chart = useMemo(() => {
+    if (!path) return null;
+    const pts = path.points;
+    const values = pts.flatMap(p => [p.you, p.sp]);
+    const hi = Math.max(...values) * 1.06;
+    const lo = Math.min(Math.min(...values) * 0.94, 0);
+    const tMin = pts[0].t;
+    const tSpan = Math.max(pts[pts.length - 1].t - tMin, 1);
+    const x = (t) => pad.left + ((t - tMin) / tSpan) * innerW;
+    const y = (v) => pad.top + (1 - (v - lo) / (hi - lo)) * innerH;
+    const line = (key) => pts.map(p => `${x(p.t)} ${y(p[key])}`).join(' L ');
+    return {
+      x, y, tMin, ticks: ticksFor(lo, hi, 5),
+      youPath: `M ${line('you')}`,
+      spPath: `M ${line('sp')}`,
+      years: (() => {
+        const out = [];
+        const from = new Date(tMin).getUTCFullYear();
+        const to = new Date(pts[pts.length - 1].t).getUTCFullYear();
+        for (let yr = from; yr <= to; yr++) {
+          const t = Date.UTC(yr, 0, 1, 12);
+          if (t >= tMin && t <= pts[pts.length - 1].t) out.push({ yr, t });
+        }
+        return out;
+      })(),
+    };
+  }, [path, innerH, innerW, pad.left, pad.top]);
+
+  const last = path ? path.points[path.points.length - 1] : null;
+
+  return (
+    <div className={styles.card}>
+      <div className={styles.cardHeaderRow}>
+        <div>
+          <div className={styles.cardTitle}>{symbol} against the S&amp;P 500</div>
+          <div className={styles.cardSub}>
+            Your money in {symbol} over time, against the same dollars put into the index on the
+            same dates. Each purchase joins the line on the day you made it; a sale freezes that
+            money at what it realised. Both sides reinvest dividends, so this is total return —
+            the position line can sit slightly above the market value in the table for payers.
+          </div>
+        </div>
+        <button type="button" className={styles.ghostBtn} onClick={onClose}>Close</button>
+      </div>
+
+      {summary && (
+        <div className={styles.miniStats}>
+          <span><b>{fmt(summary.invested)}</b> invested</span>
+          <span><b>{fmt(summary.returned)}</b> now worth</span>
+          {summary.income > 0 && <span><b>{fmt(summary.income)}</b> dividends</span>}
+          <span className={summary.ret >= 0 ? styles.up : styles.down}><b>{fmtPct(summary.ret)}</b> you</span>
+          <span><b>{fmtPct(summary.benchRet)}</b> S&amp;P</span>
+          <span className={summary.alpha >= 0 ? styles.up : styles.down}>
+            <b>{fmtSigned(summary.alpha)}</b> difference
+          </span>
+          <span className={styles.muted}>{summary.lots} lot{summary.lots === 1 ? '' : 's'}</span>
+        </div>
+      )}
+
+      {ready?.error && (
+        <div className={styles.error}>Couldn&apos;t load price history for {symbol}: {ready.error}</div>
+      )}
+      {!ready && <div className={styles.emptyState}>Loading {symbol} price history…</div>}
+      {ready && !ready.error && !chart && (
+        <div className={styles.emptyState}>Not enough overlapping history to chart {symbol}.</div>
+      )}
+
+      {path?.unpriceable?.length > 0 && (
+        <div className={styles.error}>
+          {path.unpriceable.length} lot{path.unpriceable.length === 1 ? '' : 's'} bought before
+          this price history begins {path.unpriceable.length === 1 ? 'is' : 'are'} missing from the
+          line, so it understates the position by about {fmt(path.unpriceable.reduce((a, r) => a + r.costBasis, 0))} of cost.
+        </div>
+      )}
+
+      {chart && (
+        <>
+          <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
+            {chart.ticks.map((v, i) => (
+              <g key={i}>
+                <line x1={pad.left} y1={chart.y(v)} x2={W - pad.right} y2={chart.y(v)}
+                  stroke="var(--color-text-tertiary)" strokeOpacity={0.15} strokeWidth={1} />
+                <text x={pad.left - 8} y={chart.y(v) + 4} textAnchor="end" fontSize={10.5}
+                  fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">
+                  {fmtAxis(v)}
+                </text>
+              </g>
+            ))}
+
+            {chart.years.map(({ yr, t }) => (
+              <text key={yr} x={chart.x(t)} y={H - 10} textAnchor="middle" fontSize={10.5}
+                fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">{yr}</text>
+            ))}
+
+            {/* Purchase dates — where new money entered both lines at once. */}
+            {rows.map((r, i) => (
+              <line key={`b${i}`} x1={chart.x(r.buyT)} y1={pad.top} x2={chart.x(r.buyT)} y2={H - pad.bottom}
+                stroke="var(--color-secondary)" strokeOpacity={0.13} strokeWidth={1} />
+            ))}
+
+            <path d={chart.spPath} fill="none" stroke="var(--color-text-secondary)"
+              strokeWidth={1.75} strokeDasharray="5 4" strokeOpacity={0.75} />
+            <path d={chart.youPath} fill="none"
+              stroke={last && last.you >= last.sp ? WIN : LOSE}
+              strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+
+          <div className={styles.legend} style={{ justifyContent: 'center', marginTop: 4 }}>
+            <span>
+              <span className={styles.legendDot}
+                style={{ background: last && last.you >= last.sp ? WIN : LOSE }} />
+              {symbol} — {last ? fmt(last.you) : '—'}
+            </span>
+            <span><span className={styles.legendDash} /> Same money in the S&amp;P — {last ? fmt(last.sp) : '—'}</span>
+            <span className={styles.muted}>Vertical lines mark your purchases</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function TradeCharts({ result, nowT, onSelect, selected }) {
   if (!result || !result.rows.length) {
     return <div className={styles.emptyState}>Import trades to see them charted.</div>;
   }
@@ -683,9 +900,9 @@ function TradeCharts({ result, nowT }) {
         <div className={styles.cardTitle}>Dollars ahead or behind, by ticker</div>
         <div className={styles.cardSub}>
           What each position gained or gave up versus putting the same money into the S&amp;P
-          on the same dates.
+          on the same dates. Click any ticker to chart it.
         </div>
-        <AlphaBars symbols={result.symbols} />
+        <AlphaBars symbols={result.symbols} onSelect={onSelect} selected={selected} />
       </div>
 
       <div className={styles.chartCard}>
@@ -1032,6 +1249,7 @@ function TradesTab({ series, meta }) {
   const [showLots, setShowLots] = useState(false);
   const [reimporting, setReimporting] = useState(false);
   const [view, setView] = useState('summary');
+  const [selected, setSelected] = useState(null);
 
   // Stored trades come back without their derived `t` timestamp — restore it
   // before anything sorts or prices on it.
@@ -1319,7 +1537,12 @@ function TradesTab({ series, meta }) {
       )}
 
       {view === 'charts' && result && (
-        <TradeCharts result={result} nowT={series.lastT} />
+        <TradeCharts
+          result={result}
+          nowT={series.lastT}
+          selected={selected}
+          onSelect={(sym) => setSelected(selected === sym ? null : sym)}
+        />
       )}
 
       {view === 'summary' && result && result.symbols.length > 0 && (
@@ -1327,7 +1550,8 @@ function TradesTab({ series, meta }) {
           <div className={styles.cardTitle}>By ticker</div>
           <div className={styles.cardSub}>
             Sorted by dollars gained or lost against the benchmark. "S&amp;P" is what the same
-            money would have done over the exact same holding periods.
+            money would have done over the exact same holding periods. Click a row to chart it
+            against the index.
           </div>
           <div className={styles.tableWrap}>
             <table className={styles.table}>
@@ -1345,8 +1569,15 @@ function TradesTab({ series, meta }) {
               </thead>
               <tbody>
                 {result.symbols.map(s => (
-                  <tr key={s.symbol}>
-                    <td><strong>{s.symbol}</strong></td>
+                  <tr key={s.symbol}
+                    className={`${styles.clickRow} ${selected === s.symbol ? styles.clickRowActive : ''}`}
+                    onClick={() => setSelected(selected === s.symbol ? null : s.symbol)}>
+                    <td>
+                      <strong>{s.symbol}</strong>
+                      <span className="material-symbols-outlined" style={{ fontSize: 13, verticalAlign: 'middle', marginLeft: 4, opacity: 0.45 }}>
+                        show_chart
+                      </span>
+                    </td>
                     <td className={styles.num}>{fmt(s.invested)}</td>
                     <td className={styles.num}>{fmt(s.returned)}</td>
                     <td className={`${styles.num} ${s.income > 0 ? styles.up : styles.muted}`}>
@@ -1389,6 +1620,16 @@ function TradesTab({ series, meta }) {
         </div>
       )}
 
+      {selected && result && (
+        <TickerDetail
+          symbol={selected}
+          rows={result.rows.filter(r => r.symbol === selected)}
+          summary={result.symbols.find(x => x.symbol === selected)}
+          series={series}
+          onClose={() => setSelected(null)}
+        />
+      )}
+
       {view === 'summary' && result && result.rows.length > 0 && (
         <div className={styles.card}>
           <div className={styles.cardHeaderRow}>
@@ -1422,7 +1663,8 @@ function TradesTab({ series, meta }) {
                 </thead>
                 <tbody>
                   {result.rows.map((r, i) => (
-                    <tr key={i}>
+                    <tr key={i} className={styles.clickRow}
+                      onClick={() => setSelected(r.symbol)}>
                       <td>
                         <strong>{r.symbol}</strong>
                         {r.open && <span className={styles.tag}>open</span>}

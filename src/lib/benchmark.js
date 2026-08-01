@@ -7,9 +7,18 @@
 
 export const MS_DAY = 24 * 60 * 60 * 1000;
 
-/** Parse 'YYYY-MM-DD' to a UTC-noon timestamp (noon dodges DST/rounding). */
+/**
+ * Parse 'YYYY-MM-DD' to a timestamp at the very end of that UTC day.
+ *
+ * End-of-day rather than noon because price feeds stamp each daily candle at
+ * the market *open* (13:30Z for US equities). Anchoring a trade at noon puts
+ * it before its own day's candle, so every lookup would silently return the
+ * previous session's close and price each purchase a day early. Anchoring at
+ * the end of the day makes "the close on the day I bought" resolve correctly,
+ * and still falls back to the last session before a weekend or holiday.
+ */
 export function utcDay(iso) {
-  const t = Date.parse(`${iso}T12:00:00Z`);
+  const t = Date.parse(`${iso}T23:59:00Z`);
   return Number.isFinite(t) ? t : NaN;
 }
 
