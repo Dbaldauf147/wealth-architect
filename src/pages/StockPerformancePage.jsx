@@ -3,7 +3,7 @@ import { useData, useDataActions } from '../contexts/DataContext';
 import { fetchSeries, fetchQuotes } from '../lib/marketData';
 import {
   makeSeries, cagr, returnBetween, calendarYearReturns, rollingReturns,
-  growthPath, maxDrawdown, toISODate, MS_DAY,
+  growthPath, maxDrawdown, toISODate, xirr, MS_DAY,
 } from '../lib/benchmark';
 import {
   readTable, guessMapping, missingFields, parseRows, sortTrades,
@@ -1044,12 +1044,29 @@ function LotTable({ rows, symbol }) {
   );
 }
 
-function TickerDetail({ symbol, rows, summary, series, onClose }) {
+function TickerDetail({ symbol, rows, summary, income, series, onClose }) {
   const [loaded, setLoaded] = useState(null);
   // A position that came through a reorganisation spans several tickers whose
   // price histories don't line up — the ticker was renamed mid-life — so there
   // is no single series to chart it against.
   const basket = rows.find(r => r.basket)?.basket || null;
+
+  // Annualized on this position's own cash flows: each purchase out, each
+  // sale and the current market value in, dividends on their pay dates. The
+  // index side runs the identical schedule, so the two are comparable even
+  // though the money arrived in instalments over several years.
+  const annual = useMemo(() => {
+    const yours = [];
+    const bench = [];
+    for (const r of rows) {
+      yours.push({ t: r.buyT, amount: -r.costBasis });
+      yours.push({ t: r.exitT, amount: r.value });
+      bench.push({ t: r.buyT, amount: -r.costBasis });
+      bench.push({ t: r.exitT, amount: r.benchValue });
+    }
+    for (const d of income || []) yours.push({ t: d.t, amount: d.amount });
+    return { you: xirr(yours), bench: xirr(bench) };
+  }, [rows, income]);
 
   const firstBuyT = useMemo(() => Math.min(...rows.map(r => r.buyT)), [rows]);
   // Trades are anchored at UTC noon but the feed stamps each candle at market
@@ -1180,10 +1197,16 @@ function TickerDetail({ symbol, rows, summary, series, onClose }) {
           <span><b>{fmt(summary.invested)}</b> invested</span>
           <span><b>{fmt(summary.returned)}</b> now worth</span>
           {summary.income > 0 && <span><b>{fmt(summary.income)}</b> dividends</span>}
-          <span className={summary.ret >= 0 ? styles.up : styles.down}><b>{fmtPct(summary.ret)}</b> you</span>
-          <span><b>{fmtPct(summary.benchRet)}</b> S&amp;P</span>
+          <span className={summary.gain >= 0 ? styles.up : styles.down}>
+            <b>{fmtSigned(summary.gain)}</b> made
+          </span>
+          <span className={summary.ret >= 0 ? styles.up : styles.down}><b>{fmtPct(summary.ret)}</b> total</span>
+          <span className={annual.you >= (annual.bench ?? 0) ? styles.up : styles.down}>
+            <b>{fmtPct(annual.you, 1)}</b> a year
+          </span>
+          <span><b>{fmtPct(annual.bench, 1)}</b> a year in the S&amp;P</span>
           <span className={summary.alpha >= 0 ? styles.up : styles.down}>
-            <b>{fmtSigned(summary.alpha)}</b> difference
+            <b>{fmtSigned(summary.alpha)}</b> vs index
           </span>
           <span className={styles.muted}>{summary.lots} lot{summary.lots === 1 ? '' : 's'}</span>
         </div>
@@ -2057,6 +2080,7 @@ function TradesTab({ series, meta }) {
           symbol={selected}
           rows={result.rows.filter(r => r.symbol === selected)}
           summary={result.symbols.find(x => x.symbol === selected)}
+          income={income.filter(d => selected.split(' + ').includes(d.symbol))}
           series={series}
           onClose={() => setSelected(null)}
         />
