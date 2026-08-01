@@ -36,6 +36,16 @@
   box-shadow: var(--shadow-xs);
 }
 
+.subTabBar {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-lg);
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
 /* ── Hero ── */
 .hero {
   background: var(--color-primary);

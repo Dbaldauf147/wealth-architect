@@ -375,6 +375,26 @@ export function tradedSymbols(trades) {
 }
 
 /**
+ * Restore the derived `t` timestamp on trades read back from storage.
+ *
+ * `t` is deliberately not persisted — it's recoverable from `date` and would
+ * only bloat the synced document. Everything downstream sorts and prices on
+ * it, so stored trades must pass through here before use.
+ */
+export function hydrateTrades(trades) {
+  return (trades || []).map(t => (
+    Number.isFinite(t?.t) ? t : { ...t, t: utcDay(t?.date) }
+  ));
+}
+
+/** Same, for corporate actions read back from storage. */
+export function hydrateActions(actions) {
+  return (actions || []).map(a => (
+    Number.isFinite(a?.t) ? a : { ...a, t: utcDay(a?.date) }
+  ));
+}
+
+/**
  * FIFO-match buys against sells, per symbol, applying splits along the way.
  *
  * `apiSplits` maps symbol → [{ date, ratio }] from the price feed and is the
@@ -393,8 +413,11 @@ export function tradedSymbols(trades) {
  * entirely: those move cost basis between tickers using fair-market values
  * the export doesn't contain, so any number we produced would be fiction.
  */
-export function buildLots(trades, corporateActions, apiSplits) {
-  const actions = corporateActions || [];
+export function buildLots(rawTrades, corporateActions, apiSplits) {
+  // Defensive: stored trades arrive without the derived timestamp, and a
+  // missing one poisons both the event ordering and every price lookup.
+  const trades = hydrateTrades(rawTrades).filter(t => Number.isFinite(t.t));
+  const actions = hydrateActions(corporateActions);
   const feed = apiSplits || {};
 
   // Any symbol involved in a reorg is untrustworthy — both the ticker that

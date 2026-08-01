@@ -40,8 +40,14 @@ export function makeSeries(points) {
   }
 
   // Largest index whose time is <= t, or -1 when t precedes the series.
+  //
+  // The non-finite guard is load-bearing: without it a NaN or undefined
+  // timestamp fails every `<=` in the search, collapses to index 0, and
+  // returns the *first* close in the series as though the position had been
+  // held since inception. That reads as a plausible number, so it can't be
+  // caught by eye — it has to be refused here.
   function indexAt(t) {
-    if (!times.length || t < times[0]) return -1;
+    if (!times.length || !Number.isFinite(t) || t < times[0]) return -1;
     let lo = 0, hi = times.length - 1;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;

@@ -7,7 +7,8 @@ import {
 } from '../lib/benchmark';
 import {
   readTable, guessMapping, missingFields, parseRows, sortTrades,
-  mergeTrades, mergeCorporateActions, buildLots, tradedSymbols, FIELDS,
+  mergeTrades, mergeCorporateActions, buildLots, tradedSymbols,
+  hydrateTrades, hydrateActions, FIELDS,
 } from '../lib/robinhood';
 import { benchmarkLots } from '../lib/tradeBenchmark';
 import styles from './StockPerformancePage.module.css';
@@ -418,6 +419,287 @@ function BenchmarkTab({ series, meta }) {
   );
 }
 
+// ── Trade charts ────────────────────────────────────────────────────────
+
+const WIN = '#059669';
+const LOSE = '#dc2626';
+
+// Nice round tick step for a span, so axis labels land on 5%/10%/25%…
+function tickStep(span, target = 6) {
+  const rough = span / target;
+  const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+  for (const mult of [1, 2, 2.5, 5, 10]) {
+    if (mag * mult >= rough) return mag * mult;
+  }
+  return mag * 10;
+}
+
+function ticksFor(min, max, target = 6) {
+  const step = tickStep(max - min || 1, target);
+  const out = [];
+  for (let v = Math.ceil(min / step) * step; v <= max + 1e-9; v += step) out.push(v);
+  return out;
+}
+
+/**
+ * Every lot as a dot: your return against what the S&P did over that lot's
+ * exact holding period. The diagonal is parity — above it you won, below it
+ * the index did. Dot area is proportional to dollars invested, so a big miss
+ * on a large position is visually louder than a rounding error on a small one.
+ */
+function LotScatter({ rows }) {
+  const W = 880, H = 420;
+  const pad = { top: 16, right: 20, bottom: 46, left: 62 };
+  const innerW = W - pad.left - pad.right;
+  const innerH = H - pad.top - pad.bottom;
+
+  const chart = useMemo(() => {
+    const pts = (rows || []).filter(r => Number.isFinite(r.ret) && Number.isFinite(r.benchRet));
+    if (!pts.length) return null;
+
+    const values = pts.flatMap(r => [r.ret, r.benchRet]);
+    let lo = Math.min(...values, 0);
+    let hi = Math.max(...values, 0);
+    const padding = Math.max((hi - lo) * 0.08, 0.02);
+    lo -= padding; hi += padding;
+
+    const x = (v) => pad.left + ((v - lo) / (hi - lo)) * innerW;
+    const y = (v) => pad.top + (1 - (v - lo) / (hi - lo)) * innerH;
+
+    const maxBasis = Math.max(...pts.map(r => r.costBasis), 1);
+    const radius = (b) => 3 + 11 * Math.sqrt(Math.max(b, 0) / maxBasis);
+
+    // Draw the largest first so small dots stay clickable on top.
+    const ordered = [...pts].sort((a, b) => b.costBasis - a.costBasis);
+    return { pts: ordered, lo, hi, x, y, radius, ticks: ticksFor(lo, hi) };
+  }, [rows, innerH, innerW, pad.left, pad.top]);
+
+  if (!chart) return <div className={styles.emptyState}>No priced lots to plot.</div>;
+
+  const { lo, hi, x, y } = chart;
+
+  return (
+    <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
+      {chart.ticks.map((t, i) => (
+        <g key={`g${i}`}>
+          <line x1={x(t)} y1={pad.top} x2={x(t)} y2={H - pad.bottom}
+            stroke="var(--color-text-tertiary)" strokeOpacity={Math.abs(t) < 1e-9 ? 0.4 : 0.13} strokeWidth={1} />
+          <line x1={pad.left} y1={y(t)} x2={W - pad.right} y2={y(t)}
+            stroke="var(--color-text-tertiary)" strokeOpacity={Math.abs(t) < 1e-9 ? 0.4 : 0.13} strokeWidth={1} />
+          <text x={x(t)} y={H - pad.bottom + 16} textAnchor="middle" fontSize={10.5}
+            fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">
+            {(t * 100).toFixed(0)}%
+          </text>
+          <text x={pad.left - 8} y={y(t) + 4} textAnchor="end" fontSize={10.5}
+            fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">
+            {(t * 100).toFixed(0)}%
+          </text>
+        </g>
+      ))}
+
+      {/* Parity: your return equals the index's over the same window. */}
+      <line x1={x(lo)} y1={y(lo)} x2={x(hi)} y2={y(hi)}
+        stroke="var(--color-text-secondary)" strokeWidth={1.5} strokeDasharray="5 4" strokeOpacity={0.6} />
+      <text x={x(hi) - 6} y={y(hi) + 16} textAnchor="end" fontSize={10.5}
+        fill="var(--color-text-secondary)" fontFamily="var(--font-headline)" opacity={0.75}>
+        matched the S&amp;P
+      </text>
+
+      {chart.pts.map((r, i) => (
+        <circle key={i} cx={x(r.benchRet)} cy={y(r.ret)} r={chart.radius(r.costBasis)}
+          fill={r.alpha >= 0 ? WIN : LOSE} fillOpacity={0.42}
+          stroke={r.alpha >= 0 ? WIN : LOSE} strokeWidth={1.25}>
+          <title>
+            {`${r.symbol} — ${fmt(r.costBasis)} bought ${fmtDay(r.buyT)}`}
+            {`\nYou ${fmtPct(r.ret)} · S&P ${fmtPct(r.benchRet)} · ${fmtSigned(r.alpha)}`}
+            {`\n${r.open ? 'Still holding' : `Sold ${fmtDay(r.exitT)}`} · held ${r.heldDays >= 365 ? `${(r.heldDays / 365.25).toFixed(1)}y` : `${r.heldDays}d`}`}
+          </title>
+        </circle>
+      ))}
+
+      <text x={pad.left + innerW / 2} y={H - 6} textAnchor="middle" fontSize={11}
+        fill="var(--color-text-secondary)" fontFamily="var(--font-headline)" fontWeight={600}>
+        What the S&amp;P returned over the same dates →
+      </text>
+      <text x={14} y={pad.top + innerH / 2} textAnchor="middle" fontSize={11}
+        fill="var(--color-text-secondary)" fontFamily="var(--font-headline)" fontWeight={600}
+        transform={`rotate(-90 14 ${pad.top + innerH / 2})`}>
+        ← Your return
+      </text>
+    </svg>
+  );
+}
+
+/** Dollars gained or lost against the benchmark, per ticker. */
+function AlphaBars({ symbols }) {
+  const rows = (symbols || []).filter(s => Number.isFinite(s.alpha));
+  const W = 880;
+  const rowH = 26;
+  const pad = { top: 12, right: 90, bottom: 30, left: 62 };
+  const H = pad.top + pad.bottom + rows.length * rowH;
+  const innerW = W - pad.left - pad.right;
+
+  if (!rows.length) return <div className={styles.emptyState}>Nothing to compare yet.</div>;
+
+  const maxAbs = Math.max(...rows.map(s => Math.abs(s.alpha)), 1);
+  const zeroX = pad.left + innerW / 2;
+  const scale = (innerW / 2) / maxAbs;
+
+  return (
+    <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
+      {ticksFor(-maxAbs, maxAbs, 5).map((t, i) => (
+        <g key={i}>
+          <line x1={zeroX + t * scale} y1={pad.top} x2={zeroX + t * scale} y2={H - pad.bottom}
+            stroke="var(--color-text-tertiary)" strokeOpacity={Math.abs(t) < 1e-9 ? 0.45 : 0.12} strokeWidth={1} />
+          <text x={zeroX + t * scale} y={H - pad.bottom + 16} textAnchor="middle" fontSize={10}
+            fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">
+            {fmtAxis(t)}
+          </text>
+        </g>
+      ))}
+
+      {rows.map((s, i) => {
+        const cy = pad.top + i * rowH + rowH / 2;
+        const w = Math.abs(s.alpha) * scale;
+        const ahead = s.alpha >= 0;
+        return (
+          <g key={s.symbol}>
+            <text x={pad.left - 10} y={cy + 4} textAnchor="end" fontSize={11.5} fontWeight={700}
+              fill="var(--color-text-primary)" fontFamily="var(--font-headline)">
+              {s.symbol}
+            </text>
+            <rect x={ahead ? zeroX : zeroX - w} y={cy - 8} width={Math.max(w, 1)} height={16} rx={2}
+              fill={ahead ? WIN : LOSE} fillOpacity={0.82}>
+              <title>{`${s.symbol}: ${fmt(s.invested)} invested · you ${fmtPct(s.ret)} vs S&P ${fmtPct(s.benchRet)} · ${fmtSigned(s.alpha)}`}</title>
+            </rect>
+            <text x={ahead ? zeroX + w + 8 : zeroX - w - 8} y={cy + 4}
+              textAnchor={ahead ? 'start' : 'end'} fontSize={11}
+              fill={ahead ? WIN : LOSE} fontFamily="var(--font-headline)" fontWeight={600}>
+              {fmtSigned(s.alpha)}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+/**
+ * One bar per lot on a real time axis, spanning the dates it was held.
+ * Answers "when did the good and bad decisions happen", which the scatter
+ * deliberately throws away.
+ */
+function LotTimeline({ rows, nowT }) {
+  const W = 880;
+  const pad = { top: 14, right: 16, bottom: 30, left: 62 };
+
+  const chart = useMemo(() => {
+    const pts = (rows || []).filter(r => Number.isFinite(r.buyT) && Number.isFinite(r.alpha));
+    if (!pts.length) return null;
+    const ordered = [...pts].sort((a, b) => a.buyT - b.buyT);
+    const tMin = ordered[0].buyT;
+    const tMax = Math.max(nowT, ...ordered.map(r => r.exitT));
+    const rowH = Math.max(3, Math.min(9, 460 / ordered.length));
+    const maxAbs = Math.max(...ordered.map(r => Math.abs(r.alpha)), 1);
+    return { ordered, tMin, tMax: tMax + (tMax - tMin) * 0.01, rowH, maxAbs };
+  }, [rows, nowT]);
+
+  if (!chart) return <div className={styles.emptyState}>Nothing to plot.</div>;
+
+  const { ordered, tMin, tMax, rowH, maxAbs } = chart;
+  const H = pad.top + pad.bottom + ordered.length * rowH;
+  const innerW = W - pad.left - pad.right;
+  const x = (t) => pad.left + ((t - tMin) / (tMax - tMin)) * innerW;
+
+  // One tick per year boundary inside the range.
+  const years = [];
+  for (let y = new Date(tMin).getUTCFullYear(); y <= new Date(tMax).getUTCFullYear(); y++) {
+    const t = Date.UTC(y, 0, 1, 12);
+    if (t >= tMin && t <= tMax) years.push({ y, t });
+  }
+
+  return (
+    <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
+      {years.map(({ y, t }) => (
+        <g key={y}>
+          <line x1={x(t)} y1={pad.top} x2={x(t)} y2={H - pad.bottom}
+            stroke="var(--color-text-tertiary)" strokeOpacity={0.16} strokeWidth={1} />
+          <text x={x(t)} y={H - pad.bottom + 16} textAnchor="middle" fontSize={10.5}
+            fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">{y}</text>
+        </g>
+      ))}
+
+      {ordered.map((r, i) => {
+        const yTop = pad.top + i * rowH;
+        const x1 = x(r.buyT);
+        const x2 = Math.max(x(r.exitT), x1 + 2);
+        const ahead = r.alpha >= 0;
+        // Faintest bars would vanish, so floor the opacity rather than scale
+        // straight from zero.
+        const strength = 0.32 + 0.68 * Math.sqrt(Math.abs(r.alpha) / maxAbs);
+        return (
+          <rect key={i} x={x1} y={yTop + rowH * 0.15} width={x2 - x1} height={rowH * 0.7} rx={1}
+            fill={ahead ? WIN : LOSE} fillOpacity={strength}>
+            <title>
+              {`${r.symbol} — ${fmt(r.costBasis)} · ${fmtDay(r.buyT)} → ${r.open ? 'still held' : fmtDay(r.exitT)}`}
+              {`\nYou ${fmtPct(r.ret)} · S&P ${fmtPct(r.benchRet)} · ${fmtSigned(r.alpha)}`}
+            </title>
+          </rect>
+        );
+      })}
+    </svg>
+  );
+}
+
+function TradeCharts({ result, nowT }) {
+  if (!result || !result.rows.length) {
+    return <div className={styles.emptyState}>Import trades to see them charted.</div>;
+  }
+
+  const ahead = result.rows.filter(r => r.alpha >= 0);
+  const behind = result.rows.filter(r => r.alpha < 0);
+
+  return (
+    <>
+      <div className={styles.chartCard}>
+        <div className={styles.chartHeader}>
+          <div>
+            <div className={styles.cardTitle}>Every lot against the S&amp;P</div>
+            <div className={styles.cardSub}>
+              Each dot is one lot, sized by how much you put in. The dashed line is parity —
+              dots above it beat the index over that lot&apos;s exact holding period, dots below
+              trailed it. {ahead.length} of {result.rows.length} lots are ahead.
+            </div>
+          </div>
+          <div className={styles.legend}>
+            <span><span className={styles.legendDot} style={{ background: WIN }} /> Beat the S&amp;P ({ahead.length})</span>
+            <span><span className={styles.legendDot} style={{ background: LOSE }} /> Trailed it ({behind.length})</span>
+          </div>
+        </div>
+        <LotScatter rows={result.rows} />
+      </div>
+
+      <div className={styles.chartCard}>
+        <div className={styles.cardTitle}>Dollars ahead or behind, by ticker</div>
+        <div className={styles.cardSub}>
+          What each position gained or gave up versus putting the same money into the S&amp;P
+          on the same dates.
+        </div>
+        <AlphaBars symbols={result.symbols} />
+      </div>
+
+      <div className={styles.chartCard}>
+        <div className={styles.cardTitle}>When each lot was held</div>
+        <div className={styles.cardSub}>
+          One bar per lot, spanning purchase to sale — bars running to the right edge are still
+          open. Colour shows whether it beat the index; stronger colour means a bigger dollar gap.
+        </div>
+        <LotTimeline rows={result.rows} nowT={nowT} />
+      </div>
+    </>
+  );
+}
+
 // ── Import wizard ───────────────────────────────────────────────────────
 // Two steps on purpose. Committing straight from a paste means a reordered
 // Excel column or a re-exported overlapping date range silently corrupts the
@@ -730,9 +1012,12 @@ function TradesTab({ series, meta }) {
   const [quoteResult, setQuoteResult] = useState(null);
   const [showLots, setShowLots] = useState(false);
   const [reimporting, setReimporting] = useState(false);
+  const [view, setView] = useState('summary');
 
-  const trades = useMemo(() => robinhoodTrades?.trades || [], [robinhoodTrades]);
-  const corporateActions = useMemo(() => robinhoodTrades?.corporateActions || [], [robinhoodTrades]);
+  // Stored trades come back without their derived `t` timestamp — restore it
+  // before anything sorts or prices on it.
+  const trades = useMemo(() => hydrateTrades(robinhoodTrades?.trades), [robinhoodTrades]);
+  const corporateActions = useMemo(() => hydrateActions(robinhoodTrades?.corporateActions), [robinhoodTrades]);
 
   // Quotes are fetched for *every* traded ticker, not just the ones still
   // held, because the same request carries split history — and a closed lot
@@ -888,7 +1173,26 @@ function TradesTab({ series, meta }) {
         seriesFirstT={series.firstT}
       />
 
-      {result && result.symbols.length > 0 && (
+      {result && result.rows.length > 0 && (
+        <div className={styles.subTabBar}>
+          {[
+            { id: 'summary', label: 'Summary' },
+            { id: 'charts', label: 'Charts' },
+          ].map(t => (
+            <button key={t.id} type="button"
+              className={`${styles.tab} ${view === t.id ? styles.tabActive : ''}`}
+              onClick={() => setView(t.id)}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {view === 'charts' && result && (
+        <TradeCharts result={result} nowT={series.lastT} />
+      )}
+
+      {view === 'summary' && result && result.symbols.length > 0 && (
         <div className={styles.card}>
           <div className={styles.cardTitle}>By ticker</div>
           <div className={styles.cardSub}>
@@ -947,7 +1251,7 @@ function TradesTab({ series, meta }) {
         </div>
       )}
 
-      {result && result.rows.length > 0 && (
+      {view === 'summary' && result && result.rows.length > 0 && (
         <div className={styles.card}>
           <div className={styles.cardHeaderRow}>
             <div>
