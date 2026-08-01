@@ -340,7 +340,15 @@ export function parseRows(rows, mapping) {
     income,
     transfers,
     otherCash,
-    skipped: { ...skipped, nonTradeCodes: [...nonTradeCodes.entries()].sort((a, b) => b[1] - a[1]) },
+    // Objects, not [code, count] pairs: this is persisted to Firestore, which
+    // rejects an array whose elements are arrays — and rejects the *whole*
+    // document, so one nested array here silently kills every synced setting.
+    skipped: {
+      ...skipped,
+      nonTradeCodes: [...nonTradeCodes.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([code, count]) => ({ code, count })),
+    },
   };
 }
 

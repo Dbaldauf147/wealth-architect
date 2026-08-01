@@ -2265,7 +2265,10 @@ function Caveats({ result, lots, skipped, truncated, quotes, meta, seriesFirstT 
     notes.push(`${skipped.accountLevelIncome} cash row${skipped.accountLevelIncome === 1 ? '' : 's'} with no ticker (interest and similar) aren't credited to any position.`);
   }
   if (skipped.nonTrade) {
-    const codes = (skipped.nonTradeCodes || []).slice(0, 5).map(([c, n]) => `${c} ×${n}`).join(', ');
+    // Older imports stored these as [code, count] pairs.
+    const codes = (skipped.nonTradeCodes || []).slice(0, 5)
+      .map(r => (Array.isArray(r) ? `${r[0]} ×${r[1]}` : `${r.code} ×${r.count}`))
+      .join(', ');
     notes.push(`${skipped.nonTrade} non-trade row${skipped.nonTrade === 1 ? '' : 's'} ignored${codes ? ` (${codes})` : ''} — deposits, withdrawals and subscription fees are cash movements, not investment return.`);
   }
 

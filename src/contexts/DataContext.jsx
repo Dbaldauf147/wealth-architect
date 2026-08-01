@@ -159,7 +159,25 @@ const saveShortTermLoan = (v) => saveJSON('shortTermLoan', v);
 // { trades: [{date, symbol, side, quantity, price, amount}], importedAt,
 // source, skipped, truncated }, or null when nothing is imported. Synced so
 // the import follows the user across devices.
-const loadRobinhoodTrades = () => loadJSON('robinhoodTrades', null);
+const loadRobinhoodTrades = () => {
+  const stored = loadJSON('robinhoodTrades', null);
+  if (!stored) return null;
+  // Imports written before this shape change stored nonTradeCodes as
+  // [code, count] pairs — an array of arrays, which Firestore refuses. That
+  // rejection failed the entire config document, so nothing synced at all.
+  // Normalize on read so existing data heals itself on the next write.
+  const pairs = stored.skipped?.nonTradeCodes;
+  if (Array.isArray(pairs) && pairs.some(Array.isArray)) {
+    return {
+      ...stored,
+      skipped: {
+        ...stored.skipped,
+        nonTradeCodes: pairs.map(r => (Array.isArray(r) ? { code: r[0], count: r[1] } : r)),
+      },
+    };
+  }
+  return stored;
+};
 const saveRobinhoodTrades = (v) => saveJSON('robinhoodTrades', v);
 // Transactions-page category triage buckets. A category sits in exactly one
 // bucket: 'income', 'organized', or (default) 'needs review' = in neither set.
@@ -494,6 +512,24 @@ function buildSyncPayload(v) {
   };
 }
 
+// Firestore rejects any array whose elements are arrays, and rejects the
+// whole document when it finds one — so a single bad field silently disables
+// sync for every setting. Report the offending path instead of letting the
+// write fail with a message that names no field.
+function findNestedArrays(value, path = '', found = []) {
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => {
+      if (Array.isArray(item)) found.push(`${path}[${i}]`);
+      else findNestedArrays(item, `${path}[${i}]`, found);
+    });
+  } else if (value && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) {
+      findNestedArrays(item, path ? `${path}.${key}` : key, found);
+    }
+  }
+  return found;
+}
+
 // Stable serialization used to detect "did anything actually change" and to
 // suppress write/read echoes between this device and Firestore.
 function serializeConfig(v) {
@@ -676,9 +712,20 @@ export function DataProvider({ children }) {
     const serialized = serializeConfig(currentConfig);
     if (serialized === lastSyncedRef.current) return; // nothing actually changed
     const handle = setTimeout(() => {
+      const payload = buildSyncPayload(currentConfig);
+      const illegal = findNestedArrays(payload);
+      if (illegal.length) {
+        // Writing would fail wholesale and take every other setting with it.
+        console.error(
+          'Firestore config sync blocked: nested arrays are not supported. '
+          + `Offending field(s): ${illegal.slice(0, 5).join(', ')}. `
+          + 'No settings will sync across devices until this is fixed.',
+        );
+        return;
+      }
       lastSyncedRef.current = serialized;
-      setDoc(doc(db, ...CONFIG_DOC_PATH), { ...buildSyncPayload(currentConfig), updatedAt: new Date().toISOString() })
-        .catch(err => console.warn('Firestore config sync (write) failed:', err));
+      setDoc(doc(db, ...CONFIG_DOC_PATH), { ...payload, updatedAt: new Date().toISOString() })
+        .catch(err => console.error('Firestore config sync (write) failed — settings will not reach other devices or the server jobs:', err));
     }, 500);
     return () => clearTimeout(handle);
   }, [
