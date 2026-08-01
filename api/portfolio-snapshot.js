@@ -54,10 +54,28 @@ export default async function handler(req, res) {
     if (!db) return res.status(500).json({ error: 'Missing FIREBASE_SERVICE_ACCOUNT_JSON' });
 
     const configSnap = await db.collection('config').doc('default').get();
-    const stored = configSnap.exists ? (configSnap.data()?.robinhoodTrades || null) : null;
+    const config = configSnap.exists ? (configSnap.data() || {}) : null;
+    const stored = config?.robinhoodTrades || null;
     const trades = hydrateTrades(stored?.trades);
     if (!trades.length) {
-      return res.status(200).json({ skipped: 'no imported trades to snapshot' });
+      // Say which link in the chain is missing. The trades live in the
+      // browser and reach here only via the Firestore sync, so "nothing to
+      // snapshot" can mean the doc is absent, the sync hasn't run, or the
+      // service account is pointed at a different project — and those need
+      // very different fixes.
+      return res.status(200).json({
+        skipped: 'no imported trades to snapshot',
+        diagnostics: {
+          configDocExists: !!config,
+          configKeys: config ? Object.keys(config).length : 0,
+          hasRobinhoodTrades: !!stored,
+          tradeRows: stored?.trades?.length ?? 0,
+          syncedAt: config?.updatedAt ?? null,
+          projectId: process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+            ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON).project_id
+            : null,
+        },
+      });
     }
 
     const corporateActions = hydrateActions(stored?.corporateActions);
