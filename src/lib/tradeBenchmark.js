@@ -183,6 +183,72 @@ export function benchmarkLots(lots, series, quotes, asOfT, income) {
   };
 }
 
+/**
+ * The portfolio-level answer: your own money in and out, against the same
+ * money put into the index on the same dates.
+ *
+ * This exists because the per-lot comparison can't be made airtight when
+ * dividends are recycled. A dividend that later funds a purchase gets counted
+ * twice there — once as income on the lot that paid it, once as fresh cost
+ * basis on the lot that bought with it. Measuring only cash that crossed the
+ * account boundary sidesteps the problem entirely: dividends never appear as
+ * a flow, they simply show up inside the ending value, exactly as the index's
+ * own dividends show up inside ^SP500TR.
+ *
+ * Ending value = what the holdings are worth + the cash sitting in the
+ * account, reconciled from the full activity ledger.
+ */
+export function externalCashComparison({
+  transfers, otherCash, trades, income, lotRows, series, asOfT,
+}) {
+  const sum = (arr) => (arr || []).reduce((s, r) => s + (Number(r.amount) || 0), 0);
+
+  const netTransfers = sum(transfers);
+  const deposits = (transfers || []).filter(r => r.amount > 0).reduce((s, r) => s + r.amount, 0);
+  const withdrawals = -(transfers || []).filter(r => r.amount < 0).reduce((s, r) => s + r.amount, 0);
+
+  const buys = (trades || []).filter(t => t.side === 'buy').reduce((s, t) => s + t.amount, 0);
+  const sells = (trades || []).filter(t => t.side === 'sell').reduce((s, t) => s + t.amount, 0);
+
+  // Every dollar the account has seen, netted: what came in, less what was
+  // spent on stock, plus what sales and dividends returned, less fees.
+  const cash = netTransfers + sells + sum(income) + sum(otherCash) - buys;
+  const holdings = (lotRows || []).filter(r => r.open).reduce((s, r) => s + r.value, 0);
+  const ending = holdings + cash;
+
+  // The same transfers, into the index instead. Units can only be bought or
+  // sold at the level on the day the cash actually moved.
+  let units = 0;
+  const flows = [];
+  let unpriced = 0;
+  for (const row of transfers || []) {
+    if (!Number.isFinite(row.t) || !Number.isFinite(row.amount) || row.amount === 0) continue;
+    const level = series.closeAt(row.t);
+    if (!level) { unpriced += row.amount; continue; }
+    units += row.amount / level;
+    // Investor's perspective: money into the account is money out of pocket.
+    flows.push({ t: row.t, amount: -row.amount });
+  }
+  const benchEnding = units * series.lastClose;
+
+  return {
+    deposits,
+    withdrawals,
+    netTransfers,
+    cash,
+    holdings,
+    ending,
+    benchEnding,
+    alpha: ending - benchEnding,
+    ret: netTransfers > 0 ? ending / netTransfers - 1 : null,
+    benchRet: netTransfers > 0 ? benchEnding / netTransfers - 1 : null,
+    yourIrr: xirr([...flows, { t: asOfT, amount: ending }]),
+    benchIrr: xirr([...flows, { t: asOfT, amount: benchEnding }]),
+    transferCount: (transfers || []).length,
+    unpricedTransfers: unpriced,
+  };
+}
+
 /** Symbols with open lots — the only ones needing a live quote. */
 export function openSymbols(lots) {
   return [...new Set((lots.open || []).map(l => l.symbol))];

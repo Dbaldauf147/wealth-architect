@@ -7,10 +7,10 @@ import {
 } from '../lib/benchmark';
 import {
   readTable, guessMapping, missingFields, parseRows, sortTrades,
-  mergeTrades, mergeCorporateActions, mergeIncome, buildLots, tradedSymbols,
-  hydrateTrades, hydrateActions, hydrateIncome, FIELDS,
+  mergeTrades, mergeCorporateActions, mergeIncome, mergeCashRows, buildLots,
+  tradedSymbols, hydrateTrades, hydrateActions, hydrateIncome, hydrateCashRows, FIELDS,
 } from '../lib/robinhood';
-import { benchmarkLots } from '../lib/tradeBenchmark';
+import { benchmarkLots, externalCashComparison } from '../lib/tradeBenchmark';
 import styles from './StockPerformancePage.module.css';
 
 // The S&P 500 *total return* index — dividends reinvested. Using the price
@@ -705,7 +705,7 @@ function TradeCharts({ result, nowT }) {
 // Excel column or a re-exported overlapping date range silently corrupts the
 // history, and neither is visible after the fact — so the mapping and the
 // duplicate count are shown before anything is written.
-function ImportWizard({ existingTrades, existingActions, existingIncome, onCommit, onCancel, compact }) {
+function ImportWizard({ existingTrades, existingActions, existingIncome, existingCash, onCommit, onCancel, compact }) {
   const fileRef = useRef(null);
   const [staged, setStaged] = useState(null); // { header, rows, source }
   const [mapping, setMapping] = useState(null);
@@ -769,6 +769,12 @@ function ImportWizard({ existingTrades, existingActions, existingIncome, onCommi
       income: mode === 'replace'
         ? parsed.income
         : mergeIncome(existingIncome || [], parsed.income),
+      transfers: mode === 'replace'
+        ? parsed.transfers
+        : mergeCashRows(existingCash?.transfers || [], parsed.transfers),
+      otherCash: mode === 'replace'
+        ? parsed.otherCash
+        : mergeCashRows(existingCash?.otherCash || [], parsed.otherCash),
       importedAt: new Date().toISOString(),
       source: staged.source || '',
       skipped: parsed.skipped,
@@ -904,6 +910,11 @@ function ImportWizard({ existingTrades, existingActions, existingIncome, onCommi
                 {parsed.income.length} dividend rows
               </span>
             )}
+            {parsed.transfers.length > 0 && (
+              <span className={`${styles.chip} ${styles.chipGood}`}>
+                {parsed.transfers.length} deposits/withdrawals
+              </span>
+            )}
             {parsed.skipped.nonTrade > 0 && (
               <span className={styles.chip}>{parsed.skipped.nonTrade} non-trade rows</span>
             )}
@@ -1027,6 +1038,10 @@ function TradesTab({ series, meta }) {
   const trades = useMemo(() => hydrateTrades(robinhoodTrades?.trades), [robinhoodTrades]);
   const corporateActions = useMemo(() => hydrateActions(robinhoodTrades?.corporateActions), [robinhoodTrades]);
   const income = useMemo(() => hydrateIncome(robinhoodTrades?.income), [robinhoodTrades]);
+  const cashRows = useMemo(() => ({
+    transfers: hydrateCashRows(robinhoodTrades?.transfers),
+    otherCash: hydrateCashRows(robinhoodTrades?.otherCash),
+  }), [robinhoodTrades]);
 
   // Quotes are fetched for *every* traded ticker, not just the ones still
   // held, because the same request carries split history — and a closed lot
@@ -1077,6 +1092,22 @@ function TradesTab({ series, meta }) {
     return benchmarkLots(lots, series, quotes || {}, series.lastT, income);
   }, [lots, series, quotes, income]);
 
+  // The headline. Per-lot attribution can't be made airtight once dividends
+  // are recycled into later buys, so the top-line number is measured on cash
+  // that actually crossed the account boundary.
+  const external = useMemo(() => {
+    if (!result || !cashRows.transfers.length) return null;
+    return externalCashComparison({
+      transfers: cashRows.transfers,
+      otherCash: cashRows.otherCash,
+      trades,
+      income,
+      lotRows: result.rows,
+      series,
+      asOfT: series.lastT,
+    });
+  }, [result, cashRows, trades, income, series]);
+
   const handleCommit = useCallback((payload) => {
     setRobinhoodTrades(payload);
     setReimporting(false);
@@ -1088,18 +1119,27 @@ function TradesTab({ series, meta }) {
         existingTrades={trades}
         existingActions={corporateActions}
         existingIncome={income}
+        existingCash={cashRows}
         onCommit={handleCommit}
       />
     );
   }
 
   const skipped = robinhoodTrades?.skipped || {};
-  const beat = result && result.totals.alpha >= 0;
+  // Prefer the external-cash figure: it's the only one that can't double-count
+  // a dividend which later funded a purchase.
+  const headline = external || (result ? {
+    alpha: result.totals.alpha, ret: result.totals.ret, benchRet: result.totals.benchRet,
+    netTransfers: result.totals.invested,
+  } : null);
+  const beat = headline && headline.alpha >= 0;
 
   return (
     <>
       <div className={styles.hero}>
-        <div className={styles.heroLabel}>Your trades vs the S&amp;P 500</div>
+        <div className={styles.heroLabel}>
+          {external ? 'Your money vs the S&P 500' : 'Your trades vs the S&P 500'}
+        </div>
         {!result ? (
           <div className={styles.heroValue}>…</div>
         ) : result.totals.lots === 0 ? (
@@ -1112,20 +1152,88 @@ function TradesTab({ series, meta }) {
         ) : (
           <>
             <div className={styles.heroValue}>
-              {fmtSigned(result.totals.alpha)}
+              {fmtSigned(headline.alpha)}
               <span className={styles.heroUnit}>{beat ? ' ahead' : ' behind'}</span>
             </div>
             <div className={styles.heroChange}>
               <span className={beat ? styles.changeUp : styles.changeDown}>
-                You {fmtPct(result.totals.ret)} · S&amp;P {fmtPct(result.totals.benchRet)}
+                You {fmtPct(headline.ret)} · S&amp;P {fmtPct(headline.benchRet)}
               </span>
               <span className={styles.changeRange}>
-                · {fmt(result.totals.invested)} invested across {result.totals.lots} lots
+                {external
+                  ? `· ${fmt(external.netTransfers)} of your own money, across ${external.transferCount} transfers`
+                  : `· ${fmt(result.totals.invested)} invested across ${result.totals.lots} lots`}
               </span>
             </div>
           </>
         )}
       </div>
+
+      {external && (
+        <div className={styles.statGrid}>
+          <div className={styles.statCard}>
+            <div className={styles.statLabel}>You put in</div>
+            <div className={styles.statValue}>{fmt(external.netTransfers)}</div>
+            <div className={styles.statSub}>
+              {fmt(external.deposits)} deposited less {fmt(external.withdrawals)} taken out
+            </div>
+          </div>
+          <div className={styles.statCard}>
+            <div className={styles.statLabel}>It is now worth</div>
+            <div className={styles.statValue}>{fmt(external.ending)}</div>
+            <div className={styles.statSub}>
+              {fmt(external.holdings)} in stock
+              {Math.abs(external.cash) >= 1 && ` + ${fmt(external.cash)} cash`}
+            </div>
+          </div>
+          <div className={styles.statCard}>
+            <div className={styles.statLabel}>The S&amp;P would have</div>
+            <div className={styles.statValue}>{fmt(external.benchEnding)}</div>
+            <div className={styles.statSub}>same deposits, same dates</div>
+          </div>
+          <div className={styles.statCard}>
+            <div className={styles.statLabel}>Your annualized</div>
+            <div className={`${styles.statValue} ${external.yourIrr >= (external.benchIrr ?? 0) ? styles.up : styles.down}`}>
+              {fmtPct(external.yourIrr, 1)}
+            </div>
+            <div className={styles.statSub}>money-weighted on your own cash</div>
+          </div>
+          <div className={styles.statCard}>
+            <div className={styles.statLabel}>S&amp;P annualized</div>
+            <div className={styles.statValue}>{fmtPct(external.benchIrr, 1)}</div>
+            <div className={styles.statSub}>identical deposits</div>
+          </div>
+          <div className={styles.statCard}>
+            <div className={styles.statLabel}>Difference</div>
+            <div className={`${styles.statValue} ${beat ? styles.up : styles.down}`}>
+              {fmtSigned(external.alpha)}
+            </div>
+            <div className={styles.statSub}>dividends already inside both sides</div>
+          </div>
+        </div>
+      )}
+
+      {external && (
+        <div className={styles.card}>
+          <div className={styles.cardTitle}>Why this is the number to trust</div>
+          <div className={styles.cardSub}>
+            It counts only cash that crossed your account boundary — {external.transferCount} deposits
+            and withdrawals — against the ending value of everything you hold plus uninvested cash.
+            Dividends never appear as a flow; they are simply part of what the account is worth
+            today, exactly as the index&apos;s own dividends are already inside it. The per-ticker
+            breakdown below attributes performance to individual picks, but it credits a dividend
+            to the position that paid it <em>and</em> counts it again as cost basis if you later
+            reinvested that cash by hand, so its total reads better than reality.
+          </div>
+        </div>
+      )}
+
+      {result && result.totals.lots > 0 && (
+        <div className={styles.sectionHead}>
+          Attribution by position
+          <span> — which picks worked, credited per lot</span>
+        </div>
+      )}
 
       {result && result.totals.lots > 0 && (
         <div className={styles.statGrid}>
@@ -1367,6 +1475,7 @@ function TradesTab({ series, meta }) {
           existingTrades={trades}
           existingActions={corporateActions}
           existingIncome={income}
+          existingCash={cashRows}
           onCommit={handleCommit}
           onCancel={() => setReimporting(false)}
           compact

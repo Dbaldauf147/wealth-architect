@@ -39,6 +39,14 @@ const REORG_CODES = new Set(['sxch', 'soff', 'mrgs', 'mrgc', 'spr', 'spo', 'conv
 const INCOME_CODES = new Set(['cdiv', 'sdiv', 'mdiv', 'scap', 'lcap', 'cil']);
 const INCOME_COST_CODES = new Set(['dtax', 'dfee', 'afee']);
 
+// Money crossing the account boundary. These are the only flows that are
+// genuinely *yours* — everything else (dividends, sale proceeds, fees) is the
+// account moving its own money around. Benchmarking against external cash is
+// the one framing that can't double-count a dividend which later funded a
+// purchase. Robinhood spells cancellations as ordinary ACH rows with a
+// negative amount, so no special handling is needed: the signed sum is right.
+const TRANSFER_CODES = new Set(['ach', 'rtp', 'wire', 'dcf', 'iact']);
+
 /** RFC4180-ish parser: handles quoted fields, embedded commas and newlines. */
 export function parseDelimited(text, delimiter) {
   const rows = [];
@@ -208,6 +216,8 @@ export function parseRows(rows, mapping) {
   const trades = [];
   const corporateActions = [];
   const income = [];
+  const transfers = [];
+  const otherCash = [];
   const skipped = { options: 0, nonTrade: 0, unparseable: 0, zeroQuantity: 0, accountLevelIncome: 0 };
   const nonTradeCodes = new Map();
 
@@ -255,18 +265,34 @@ export function parseRows(rows, mapping) {
         });
         continue;
       }
-      // A reorg row with no ticker (e.g. the cash side of an account
-      // conversion) carries no position information — treat it as a
-      // non-trade so the totals still add up.
-      skipped.nonTrade++;
+      // A reorg row with no ticker is the cash side of an account conversion.
+      // It carries no position information but does move money, so it belongs
+      // in the ledger or the cash balance won't reconcile.
       const code = String(at('side') || '').trim();
+      const amount = parseMoney(at('amount'));
+      if (date && Number.isFinite(amount) && amount !== 0) {
+        otherCash.push({ date, t: utcDay(date), code: code.toUpperCase(), amount });
+        continue;
+      }
+      skipped.nonTrade++;
       if (code) nonTradeCodes.set(code, (nonTradeCodes.get(code) || 0) + 1);
       continue;
     }
 
     if (!kind) {
-      skipped.nonTrade++;
+      // Cash rows that aren't trades still matter: transfers define what you
+      // actually put in, and fees/promos are needed to reconcile the cash
+      // balance that forms part of the portfolio's ending value.
+      const date = parseDate(at('date'));
+      const amount = parseMoney(at('amount'));
       const code = String(at('side') || '').trim();
+      if (date && Number.isFinite(amount) && amount !== 0) {
+        const entry = { date, t: utcDay(date), code: code.toUpperCase(), amount };
+        if (TRANSFER_CODES.has(norm(code))) transfers.push(entry);
+        else otherCash.push(entry);
+        continue;
+      }
+      skipped.nonTrade++;
       if (code) nonTradeCodes.set(code, (nonTradeCodes.get(code) || 0) + 1);
       continue;
     }
@@ -301,11 +327,15 @@ export function parseRows(rows, mapping) {
   sortTrades(trades);
   corporateActions.sort((a, b) => a.t - b.t);
   income.sort((a, b) => a.t - b.t);
+  transfers.sort((a, b) => a.t - b.t);
+  otherCash.sort((a, b) => a.t - b.t);
 
   return {
     trades,
     corporateActions,
     income,
+    transfers,
+    otherCash,
     skipped: { ...skipped, nonTradeCodes: [...nonTradeCodes.entries()].sort((a, b) => b[1] - a[1]) },
   };
 }
@@ -419,6 +449,34 @@ export function mergeIncome(existing, incoming) {
     added.push(r);
   }
   return [...(existing || []), ...added].sort((a, b) => a.t - b.t);
+}
+
+/**
+ * Merge dated cash rows (transfers, fees) by multiset — two identical $5 Gold
+ * fees in one month are two real charges, not a duplicate.
+ */
+export function mergeCashRows(existing, incoming) {
+  const key = (r) => `${r.date}|${r.code}|${Number(r.amount).toFixed(2)}`;
+  const counts = new Map();
+  for (const r of existing || []) {
+    const k = key(r);
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  const added = [];
+  for (const r of incoming || []) {
+    const k = key(r);
+    const remaining = counts.get(k) || 0;
+    if (remaining > 0) { counts.set(k, remaining - 1); continue; }
+    added.push(r);
+  }
+  return [...(existing || []), ...added].sort((a, b) => a.t - b.t);
+}
+
+/** Restore the derived `t` on dated cash rows read back from storage. */
+export function hydrateCashRows(rows) {
+  return (rows || []).map(r => (
+    Number.isFinite(r?.t) ? r : { ...r, t: utcDay(r?.date) }
+  ));
 }
 
 /** Restore the derived `t` on income rows read back from storage. */
