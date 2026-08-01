@@ -11,7 +11,11 @@ import {
   tradedSymbols, hydrateTrades, hydrateActions, hydrateIncome, hydrateCashRows, FIELDS,
 } from '../lib/robinhood';
 import { benchmarkLots, externalCashComparison } from '../lib/tradeBenchmark';
-import { priceSeries, buildPortfolioHistory, contributionEvents } from '../lib/portfolioHistory';
+import {
+  priceSeries, buildPortfolioHistory, contributionEvents, mergeLoggedHistory,
+} from '../lib/portfolioHistory';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 import styles from './StockPerformancePage.module.css';
 
 // The S&P 500 *total return* index — dividends reinvested. Using the price
@@ -314,9 +318,30 @@ function PortfolioHistoryChart({ history, events, benchLabel = 'Same deposits in
   );
 }
 
+/**
+ * The daily snapshots written by the portfolio-snapshot cron. Read once; a
+ * failure is not worth surfacing, since the page reconstructs history anyway
+ * and simply loses the recorded precision.
+ */
+function useLoggedHistory() {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    getDoc(doc(db, 'portfolioHistory', 'daily'))
+      .then(snap => {
+        if (cancelled) return;
+        setRows(snap.exists() ? (snap.data()?.rows || []) : []);
+      })
+      .catch(() => { if (!cancelled) setRows([]); });
+    return () => { cancelled = true; };
+  }, []);
+  return rows;
+}
+
 /** The whole-account summary shown on the benchmark tab. */
 function MyMoneySection({ series }) {
   const { trades, income, cashRows, quotes, lots, result, external } = usePortfolio(series);
+  const loggedRows = useLoggedHistory();
 
   // Split-adjusted price series per ticker, rebuilt from the monthly closes
   // that ride along with the quotes request.
@@ -342,6 +367,12 @@ function MyMoneySection({ series }) {
   }, [lots, tickerSeries, trades, income, cashRows, series]);
 
   const events = useMemo(() => contributionEvents(cashRows.transfers), [cashRows]);
+
+  // Recorded days win over reconstruction wherever they exist.
+  const merged = useMemo(
+    () => (history ? mergeLoggedHistory(history.points, loggedRows) : null),
+    [history, loggedRows],
+  );
 
   if (!trades.length) {
     return (
@@ -397,7 +428,8 @@ function MyMoneySection({ series }) {
     );
   }
 
-  const last = history.points[history.points.length - 1];
+  const shown = merged?.points?.length ? merged.points : history.points;
+  const last = shown[shown.length - 1];
   const gain = last.value - last.contributed;
   const vsBench = Number.isFinite(last.bench) ? last.value - last.bench : null;
 
@@ -466,7 +498,7 @@ function MyMoneySection({ series }) {
         </div>
       </div>
 
-      <PortfolioHistoryChart history={history.points} events={events} />
+      <PortfolioHistoryChart history={shown} events={events} />
 
       <div className={styles.legend} style={{ justifyContent: 'center', marginTop: 6 }}>
         <span><span className={styles.legendDot} style={{ background: 'var(--color-secondary)' }} /> Your account</span>
@@ -484,6 +516,12 @@ function MyMoneySection({ series }) {
           early months. Today&apos;s value is unaffected.
         </div>
       )}
+
+      <div className={styles.cardSub} style={{ marginTop: 10 }}>
+        {merged?.loggedCount
+          ? `${merged.loggedCount} day${merged.loggedCount === 1 ? '' : 's'} from ${fmtDay(merged.loggedFrom)} onwards are recorded daily and shown as they stood; earlier months are reconstructed from your trades and today's price history.`
+          : 'History is reconstructed from your trades and today’s price history. A daily snapshot job records each day from now on, so this will firm up over time.'}
+      </div>
 
       {result && (
         <div className={styles.cardSub} style={{ marginTop: 6 }}>

@@ -27,6 +27,13 @@ service cloud.firestore {
     match /budgets/{doc=**} {
       allow read, write: if true;
     }
+    // Daily portfolio snapshots. Written only by the server cron through the
+    // Admin SDK, which bypasses these rules, so the browser needs read alone —
+    // a stray client write can't corrupt the history.
+    match /portfolioHistory/{doc} {
+      allow read: if true;
+      allow write: if false;
+    }
     match /{document=**} {
       allow read, write: if false;
     }

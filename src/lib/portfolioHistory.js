@@ -5,7 +5,7 @@
 // market plus the cash balance — so the last point on the chart is the number
 // in the hero, not a parallel calculation that might drift from it.
 
-import { makeSeries, MS_DAY } from './benchmark.js';
+import { makeSeries, utcDay, toISODate, MS_DAY } from './benchmark.js';
 
 /**
  * Wrap a ticker's quoted closes for lookup.
@@ -150,6 +150,44 @@ export function buildPortfolioHistory({ lots, tickerSeries, ledger, benchSeries,
     pricedCost,
     unpricedCost,
     pricedFraction: pricedCost + unpricedCost > 0 ? pricedCost / (pricedCost + unpricedCost) : 0,
+  };
+}
+
+/**
+ * Splice recorded daily snapshots over the reconstructed monthly history.
+ *
+ * Reconstruction shows the past as the price feed describes it *today*, so a
+ * vendor revision or a ticker reassignment quietly rewrites months that have
+ * already happened. A recorded row is what that day actually looked like, so
+ * where one exists it wins; reconstruction only fills in the stretch before
+ * logging began.
+ */
+export function mergeLoggedHistory(reconstructed, logged) {
+  const rows = (logged || [])
+    .map(r => ({
+      t: utcDay(r.d),
+      value: Number(r.v),
+      contributed: Number(r.c),
+      bench: Number(r.b),
+      holdings: Number(r.h),
+      cash: Number(r.k),
+      logged: true,
+    }))
+    .filter(r => Number.isFinite(r.t) && Number.isFinite(r.value))
+    .sort((a, b) => a.t - b.t);
+
+  if (!rows.length) return { points: reconstructed || [], loggedFrom: null, loggedCount: 0 };
+
+  // Compare on the calendar date, not the timestamp: a reconstructed sample
+  // and a recorded row for the same day sit hours apart and would otherwise
+  // both be plotted, putting two points on one date.
+  const fromDate = toISODate(rows[0].t);
+  const from = rows[0].t;
+  const before = (reconstructed || []).filter(p => toISODate(p.t) < fromDate);
+  return {
+    points: [...before, ...rows],
+    loggedFrom: from,
+    loggedCount: rows.length,
   };
 }
 

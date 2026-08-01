@@ -11,13 +11,20 @@
     {
       "path": "/api/calendar-sync",
       "schedule": "30 14 * * *"
+    },
+    {
+      "path": "/api/portfolio-snapshot",
+      "schedule": "0 22 * * 1-5"
     }
   ],
   "headers": [
     {
       "source": "/version.json",
       "headers": [
-        { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate, max-age=0" }
+        {
+          "key": "Cache-Control",
+          "value": "no-store, no-cache, must-revalidate, max-age=0"
+        }
       ]
     }
   ]
