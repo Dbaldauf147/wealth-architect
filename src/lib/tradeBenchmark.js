@@ -7,9 +7,10 @@
 // exactly the same cash-flow schedule you did.
 
 import { returnBetween, xirr } from './benchmark.js';
+import { allocateIncome } from './robinhood.js';
 
 function emptyTotals() {
-  return { invested: 0, returned: 0, benchReturned: 0, lots: 0 };
+  return { invested: 0, returned: 0, income: 0, benchReturned: 0, lots: 0 };
 }
 
 /**
@@ -18,9 +19,13 @@ function emptyTotals() {
  * @param {Record<string, {price?: number, error?: string}>} quotes
  * @param {number} asOfT                        timestamp to mark open lots at
  */
-export function benchmarkLots(lots, series, quotes, asOfT) {
+export function benchmarkLots(lots, series, quotes, asOfT, income) {
   const rows = [];
   const excluded = { beforeSeries: 0, unpriced: 0, unpricedSymbols: new Set() };
+
+  // Dividends are part of the return on the money invested, and the benchmark
+  // reinvests its own, so leaving them out would penalise every payer.
+  const dividends = allocateIncome(lots, income);
 
   const evaluate = (lot, { exitT, exitDate, proceeds, open }) => {
     const growth = (() => {
@@ -41,6 +46,11 @@ export function benchmarkLots(lots, series, quotes, asOfT) {
     }
 
     const benchValue = lot.costBasis * growth;
+    const lotIncome = dividends.byLot.get(lot) || 0;
+    // Total return: what the position is worth plus the cash it paid out.
+    // This is the like-for-like figure against a total-return index.
+    const totalValue = proceeds + lotIncome;
+
     rows.push({
       symbol: lot.symbol,
       open,
@@ -51,12 +61,16 @@ export function benchmarkLots(lots, series, quotes, asOfT) {
       exitDate,
       costBasis: lot.costBasis,
       value: proceeds,
-      gain: proceeds - lot.costBasis,
-      ret: lot.costBasis > 0 ? proceeds / lot.costBasis - 1 : null,
+      income: lotIncome,
+      totalValue,
+      gain: totalValue - lot.costBasis,
+      ret: lot.costBasis > 0 ? totalValue / lot.costBasis - 1 : null,
+      // Price-only return, kept so the UI can show what dividends contributed.
+      priceRet: lot.costBasis > 0 ? proceeds / lot.costBasis - 1 : null,
       benchValue,
       benchGain: benchValue - lot.costBasis,
       benchRet: growth - 1,
-      alpha: proceeds - benchValue,
+      alpha: totalValue - benchValue,
       heldDays: Math.max(0, Math.round((exitT - lot.buyT) / 86400000)),
     });
   };
@@ -92,6 +106,7 @@ export function benchmarkLots(lots, series, quotes, asOfT) {
     for (const b of buckets) {
       b.invested += row.costBasis;
       b.returned += row.value;
+      b.income += row.income;
       b.benchReturned += row.benchValue;
       b.lots++;
     }
@@ -109,6 +124,7 @@ export function benchmarkLots(lots, series, quotes, asOfT) {
     const s = bySymbol.get(row.symbol);
     s.invested += row.costBasis;
     s.returned += row.value;
+    s.income += row.income;
     s.benchReturned += row.benchValue;
     s.lots++;
     if (row.open) s.openLots++; else s.closedLots++;
@@ -118,11 +134,13 @@ export function benchmarkLots(lots, series, quotes, asOfT) {
 
   const finish = (t) => ({
     ...t,
-    gain: t.returned - t.invested,
-    ret: t.invested > 0 ? t.returned / t.invested - 1 : null,
+    totalValue: t.returned + t.income,
+    gain: t.returned + t.income - t.invested,
+    ret: t.invested > 0 ? (t.returned + t.income) / t.invested - 1 : null,
+    priceRet: t.invested > 0 ? t.returned / t.invested - 1 : null,
     benchGain: t.benchReturned - t.invested,
     benchRet: t.invested > 0 ? t.benchReturned / t.invested - 1 : null,
-    alpha: t.returned - t.benchReturned,
+    alpha: t.returned + t.income - t.benchReturned,
   });
 
   const symbols = [...bySymbol.values()]
@@ -139,6 +157,10 @@ export function benchmarkLots(lots, series, quotes, asOfT) {
     benchFlows.push({ t: row.buyT, amount: -row.costBasis });
     benchFlows.push({ t: row.exitT, amount: row.benchValue });
   }
+  // Dividends enter on their own pay dates — cash received in 2021 compounds
+  // differently from the same dollars received today. The benchmark needs no
+  // equivalent because ^SP500TR already reinvests its own.
+  for (const flow of dividends.flows) yourFlows.push(flow);
 
   return {
     rows: rows.sort((a, b) => b.alpha - a.alpha),
@@ -148,6 +170,11 @@ export function benchmarkLots(lots, series, quotes, asOfT) {
     openTotals: finish(openTotals),
     yourIrr: xirr(yourFlows),
     benchIrr: xirr(benchFlows),
+    dividends: {
+      allocated: dividends.allocated,
+      unallocated: dividends.unallocated,
+      unallocatedSymbols: dividends.unallocatedSymbols,
+    },
     excluded: {
       beforeSeries: excluded.beforeSeries,
       unpriced: excluded.unpriced,

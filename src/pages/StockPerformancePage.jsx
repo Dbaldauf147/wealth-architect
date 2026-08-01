@@ -7,8 +7,8 @@ import {
 } from '../lib/benchmark';
 import {
   readTable, guessMapping, missingFields, parseRows, sortTrades,
-  mergeTrades, mergeCorporateActions, buildLots, tradedSymbols,
-  hydrateTrades, hydrateActions, FIELDS,
+  mergeTrades, mergeCorporateActions, mergeIncome, buildLots, tradedSymbols,
+  hydrateTrades, hydrateActions, hydrateIncome, FIELDS,
 } from '../lib/robinhood';
 import { benchmarkLots } from '../lib/tradeBenchmark';
 import styles from './StockPerformancePage.module.css';
@@ -705,7 +705,7 @@ function TradeCharts({ result, nowT }) {
 // Excel column or a re-exported overlapping date range silently corrupts the
 // history, and neither is visible after the fact — so the mapping and the
 // duplicate count are shown before anything is written.
-function ImportWizard({ existingTrades, existingActions, onCommit, onCancel, compact }) {
+function ImportWizard({ existingTrades, existingActions, existingIncome, onCommit, onCancel, compact }) {
   const fileRef = useRef(null);
   const [staged, setStaged] = useState(null); // { header, rows, source }
   const [mapping, setMapping] = useState(null);
@@ -766,6 +766,9 @@ function ImportWizard({ existingTrades, existingActions, onCommit, onCancel, com
       corporateActions: mode === 'replace'
         ? parsed.corporateActions
         : mergeCorporateActions(existingActions || [], parsed.corporateActions),
+      income: mode === 'replace'
+        ? parsed.income
+        : mergeIncome(existingIncome || [], parsed.income),
       importedAt: new Date().toISOString(),
       source: staged.source || '',
       skipped: parsed.skipped,
@@ -896,6 +899,11 @@ function ImportWizard({ existingTrades, existingActions, onCommit, onCancel, com
             {parsed.corporateActions.length > 0 && (
               <span className={styles.chip}>{parsed.corporateActions.length} corporate actions</span>
             )}
+            {parsed.income.length > 0 && (
+              <span className={`${styles.chip} ${styles.chipGood}`}>
+                {parsed.income.length} dividend rows
+              </span>
+            )}
             {parsed.skipped.nonTrade > 0 && (
               <span className={styles.chip}>{parsed.skipped.nonTrade} non-trade rows</span>
             )}
@@ -1018,6 +1026,7 @@ function TradesTab({ series, meta }) {
   // before anything sorts or prices on it.
   const trades = useMemo(() => hydrateTrades(robinhoodTrades?.trades), [robinhoodTrades]);
   const corporateActions = useMemo(() => hydrateActions(robinhoodTrades?.corporateActions), [robinhoodTrades]);
+  const income = useMemo(() => hydrateIncome(robinhoodTrades?.income), [robinhoodTrades]);
 
   // Quotes are fetched for *every* traded ticker, not just the ones still
   // held, because the same request carries split history — and a closed lot
@@ -1065,8 +1074,8 @@ function TradesTab({ series, meta }) {
 
   const result = useMemo(() => {
     if (!lots) return null;
-    return benchmarkLots(lots, series, quotes || {}, series.lastT);
-  }, [lots, series, quotes]);
+    return benchmarkLots(lots, series, quotes || {}, series.lastT, income);
+  }, [lots, series, quotes, income]);
 
   const handleCommit = useCallback((payload) => {
     setRobinhoodTrades(payload);
@@ -1078,6 +1087,7 @@ function TradesTab({ series, meta }) {
       <ImportWizard
         existingTrades={trades}
         existingActions={corporateActions}
+        existingIncome={income}
         onCommit={handleCommit}
       />
     );
@@ -1122,12 +1132,24 @@ function TradesTab({ series, meta }) {
           <div className={styles.statCard}>
             <div className={styles.statLabel}>You turned</div>
             <div className={styles.statValue}>{fmt(result.totals.invested)}</div>
-            <div className={styles.statSub}>into {fmt(result.totals.returned)}</div>
+            <div className={styles.statSub}>
+              into {fmt(result.totals.totalValue)}
+              {result.totals.income > 0 && ` (${fmt(result.totals.returned)} held + ${fmt(result.totals.income)} paid out)`}
+            </div>
           </div>
           <div className={styles.statCard}>
             <div className={styles.statLabel}>The S&amp;P would have</div>
             <div className={styles.statValue}>{fmt(result.totals.benchReturned)}</div>
             <div className={styles.statSub}>same dollars, same dates</div>
+          </div>
+          <div className={styles.statCard}>
+            <div className={styles.statLabel}>Dividends received</div>
+            <div className={`${styles.statValue} ${result.totals.income > 0 ? styles.up : ''}`}>
+              {fmt(result.totals.income)}
+            </div>
+            <div className={styles.statSub}>
+              worth {fmtPct(result.totals.ret - result.totals.priceRet)} of return
+            </div>
           </div>
           <div className={styles.statCard}>
             <div className={styles.statLabel}>Your annualized</div>
@@ -1206,6 +1228,7 @@ function TradesTab({ series, meta }) {
                   <th>Ticker</th>
                   <th className={styles.num}>Invested</th>
                   <th className={styles.num}>Now worth</th>
+                  <th className={styles.num}>Dividends</th>
                   <th className={styles.num}>You</th>
                   <th className={styles.num}>S&amp;P</th>
                   <th className={styles.num}>Difference</th>
@@ -1218,7 +1241,13 @@ function TradesTab({ series, meta }) {
                     <td><strong>{s.symbol}</strong></td>
                     <td className={styles.num}>{fmt(s.invested)}</td>
                     <td className={styles.num}>{fmt(s.returned)}</td>
-                    <td className={`${styles.num} ${s.ret >= 0 ? styles.up : styles.down}`}>{fmtPct(s.ret)}</td>
+                    <td className={`${styles.num} ${s.income > 0 ? styles.up : styles.muted}`}>
+                      {s.income > 0 ? fmt(s.income) : '—'}
+                    </td>
+                    <td className={`${styles.num} ${s.ret >= 0 ? styles.up : styles.down}`}
+                      title={s.income > 0 ? `${fmtPct(s.priceRet)} from price, ${fmtPct(s.ret - s.priceRet)} from dividends` : undefined}>
+                      {fmtPct(s.ret)}
+                    </td>
                     <td className={styles.num}>{fmtPct(s.benchRet)}</td>
                     <td className={`${styles.num} ${s.alpha >= 0 ? styles.up : styles.down}`}>
                       <strong>{fmtSigned(s.alpha)}</strong>
@@ -1236,6 +1265,7 @@ function TradesTab({ series, meta }) {
                   <td><strong>Total</strong></td>
                   <td className={styles.num}><strong>{fmt(result.totals.invested)}</strong></td>
                   <td className={styles.num}><strong>{fmt(result.totals.returned)}</strong></td>
+                  <td className={`${styles.num} ${styles.up}`}><strong>{fmt(result.totals.income)}</strong></td>
                   <td className={`${styles.num} ${result.totals.ret >= 0 ? styles.up : styles.down}`}>
                     <strong>{fmtPct(result.totals.ret)}</strong>
                   </td>
@@ -1276,6 +1306,7 @@ function TradesTab({ series, meta }) {
                     <th className={styles.num}>Held</th>
                     <th className={styles.num}>Cost</th>
                     <th className={styles.num}>Value</th>
+                    <th className={styles.num}>Divs</th>
                     <th className={styles.num}>You</th>
                     <th className={styles.num}>S&amp;P</th>
                     <th className={styles.num}>Difference</th>
@@ -1296,6 +1327,9 @@ function TradesTab({ series, meta }) {
                       </td>
                       <td className={styles.num}>{fmt(r.costBasis, 2)}</td>
                       <td className={styles.num}>{fmt(r.value, 2)}</td>
+                      <td className={`${styles.num} ${r.income > 0 ? styles.up : styles.muted}`}>
+                        {r.income > 0 ? fmt(r.income, 2) : '—'}
+                      </td>
                       <td className={`${styles.num} ${r.ret >= 0 ? styles.up : styles.down}`}>{fmtPct(r.ret)}</td>
                       <td className={styles.num}>{fmtPct(r.benchRet)}</td>
                       <td className={`${styles.num} ${r.alpha >= 0 ? styles.up : styles.down}`}>{fmtSigned(r.alpha)}</td>
@@ -1332,6 +1366,7 @@ function TradesTab({ series, meta }) {
         <ImportWizard
           existingTrades={trades}
           existingActions={corporateActions}
+          existingIncome={income}
           onCommit={handleCommit}
           onCancel={() => setReimporting(false)}
           compact
@@ -1377,9 +1412,16 @@ function Caveats({ result, lots, skipped, truncated, quotes, meta, seriesFirstT 
   if (failedQuotes.length && !result?.excluded.unpriced) {
     notes.push(`Couldn't price: ${failedQuotes.map(([s]) => s).join(', ')}.`);
   }
+  if (result?.dividends?.unallocated) {
+    const syms = result.dividends.unallocatedSymbols.join(', ');
+    notes.push(`${fmt(result.dividends.unallocated)} of dividends couldn't be matched to a holding (${syms}) — they were paid on shares bought before this file begins, so they're left out rather than credited to the wrong lot.`);
+  }
+  if (skipped.accountLevelIncome) {
+    notes.push(`${skipped.accountLevelIncome} cash row${skipped.accountLevelIncome === 1 ? '' : 's'} with no ticker (interest and similar) aren't credited to any position.`);
+  }
   if (skipped.nonTrade) {
     const codes = (skipped.nonTradeCodes || []).slice(0, 5).map(([c, n]) => `${c} ×${n}`).join(', ');
-    notes.push(`${skipped.nonTrade} non-trade row${skipped.nonTrade === 1 ? '' : 's'} ignored${codes ? ` (${codes})` : ''} — dividends, transfers and fees aren't part of a trade's return.`);
+    notes.push(`${skipped.nonTrade} non-trade row${skipped.nonTrade === 1 ? '' : 's'} ignored${codes ? ` (${codes})` : ''} — deposits, withdrawals and subscription fees are cash movements, not investment return.`);
   }
 
   const splits = lots?.appliedSplits || [];

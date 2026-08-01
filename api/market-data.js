@@ -62,7 +62,14 @@ async function yahooChart(host, symbol, { period1, period2, interval = '1d', eve
     .filter(s => Number.isFinite(s.ratio) && s.ratio > 0)
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  return { points, splits, marketPrice: result.meta?.regularMarketPrice ?? null };
+  return {
+    points,
+    splits,
+    marketPrice: result.meta?.regularMarketPrice ?? null,
+    // On monthly candles the last timestamp is the *start* of the current
+    // month, which would label a live price as weeks old.
+    marketTime: result.meta?.regularMarketTime ?? null,
+  };
 }
 
 // Try the symbol on every host before giving up on it.
@@ -135,14 +142,15 @@ async function handleQuotes(symbols, sinceISO) {
 
   const entries = await Promise.all(symbols.map(async (symbol) => {
     try {
-      const { points, splits, marketPrice } = await fetchAcrossHosts(symbol, window);
-      const [t, lastClose] = points[points.length - 1];
+      const { points, splits, marketPrice, marketTime } = await fetchAcrossHosts(symbol, window);
+      const [candleT, lastClose] = points[points.length - 1];
       // The last monthly candle is the current partial month, so its close is
       // today's price; regularMarketPrice is preferred when present.
       const price = Number.isFinite(marketPrice) && marketPrice > 0 ? marketPrice : lastClose;
+      const asOfT = Number.isFinite(marketTime) ? marketTime : candleT;
       return [symbol, {
         price: Number(price.toFixed(4)),
-        asOf: new Date(t * 1000).toISOString().slice(0, 10),
+        asOf: new Date(asOfT * 1000).toISOString().slice(0, 10),
         splits,
       }];
     } catch (err) {

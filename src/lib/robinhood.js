@@ -31,6 +31,14 @@ const SPLIT_CODES = new Set(['spl']);
 // touched by one is dropped from the comparison rather than guessed at.
 const REORG_CODES = new Set(['sxch', 'soff', 'mrgs', 'mrgc', 'spr', 'spo', 'conv', 'rsplit']);
 
+// Cash a position throws off, and the costs levied against it. Both are real
+// return on the money invested, so leaving them out while benchmarking
+// against a *total return* index quietly penalises every dividend payer.
+// Amounts keep the sign the export gives them: CDIV is positive, DTAX and the
+// ADR fees arrive parenthesised and so parse negative.
+const INCOME_CODES = new Set(['cdiv', 'sdiv', 'mdiv', 'scap', 'lcap', 'cil']);
+const INCOME_COST_CODES = new Set(['dtax', 'dfee', 'afee']);
+
 /** RFC4180-ish parser: handles quoted fields, embedded commas and newlines. */
 export function parseDelimited(text, delimiter) {
   const rows = [];
@@ -173,7 +181,7 @@ export function missingFields(mapping) {
     .map(f => f.label);
 }
 
-/** Normalize a Trans Code into 'buy' | 'sell' | 'option' | 'split' | 'reorg' | null. */
+/** Normalize a Trans Code into a row kind, or null for anything unrecognised. */
 function classify(raw) {
   const code = norm(raw);
   if (!code) return null;
@@ -182,6 +190,7 @@ function classify(raw) {
   if (OPTION_CODES.has(code)) return 'option';
   if (SPLIT_CODES.has(code)) return 'split';
   if (REORG_CODES.has(code)) return 'reorg';
+  if (INCOME_CODES.has(code) || INCOME_COST_CODES.has(code)) return 'income';
   // Other brokers spell it out.
   if (/^(buy|bought|purchase|buytoopen)/.test(code)) return 'buy';
   if (/^(sell|sold|selltoclose)/.test(code)) return 'sell';
@@ -198,7 +207,8 @@ function classify(raw) {
 export function parseRows(rows, mapping) {
   const trades = [];
   const corporateActions = [];
-  const skipped = { options: 0, nonTrade: 0, unparseable: 0, zeroQuantity: 0 };
+  const income = [];
+  const skipped = { options: 0, nonTrade: 0, unparseable: 0, zeroQuantity: 0, accountLevelIncome: 0 };
   const nonTradeCodes = new Map();
 
   for (const row of rows || []) {
@@ -210,6 +220,26 @@ export function parseRows(rows, mapping) {
     const kind = classify(at('side'));
 
     if (kind === 'option') { skipped.options++; continue; }
+
+    if (kind === 'income') {
+      const date = parseDate(at('date'));
+      const symbol = String(at('symbol') || '').trim().toUpperCase();
+      const amount = parseMoney(at('amount'));
+      if (date && symbol && Number.isFinite(amount) && amount !== 0) {
+        income.push({
+          date,
+          t: utcDay(date),
+          symbol,
+          code: String(at('side') || '').trim().toUpperCase(),
+          amount,
+        });
+        continue;
+      }
+      // Interest and the like with no ticker can't be attributed to a
+      // position, so they're counted but not credited to any return.
+      skipped.accountLevelIncome++;
+      continue;
+    }
 
     if (kind === 'split' || kind === 'reorg') {
       const date = parseDate(at('date'));
@@ -270,10 +300,12 @@ export function parseRows(rows, mapping) {
 
   sortTrades(trades);
   corporateActions.sort((a, b) => a.t - b.t);
+  income.sort((a, b) => a.t - b.t);
 
   return {
     trades,
     corporateActions,
+    income,
     skipped: { ...skipped, nonTradeCodes: [...nonTradeCodes.entries()].sort((a, b) => b[1] - a[1]) },
   };
 }
@@ -365,6 +397,98 @@ export function mergeCorporateActions(existing, incoming) {
     byKey.set(`${a.date}|${a.symbol}|${a.code}|${a.quantity}`, a);
   }
   return [...byKey.values()].sort((a, b) => a.t - b.t);
+}
+
+/**
+ * Merge dividend rows, by multiset like trades — a ticker really can pay two
+ * identical amounts on one date (Alibaba does exactly this, an ordinary and a
+ * special dividend of the same size), so a set would silently drop one.
+ */
+export function mergeIncome(existing, incoming) {
+  const key = (r) => `${r.date}|${r.symbol}|${r.code}|${Number(r.amount).toFixed(4)}`;
+  const counts = new Map();
+  for (const r of existing || []) {
+    const k = key(r);
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  const added = [];
+  for (const r of incoming || []) {
+    const k = key(r);
+    const remaining = counts.get(k) || 0;
+    if (remaining > 0) { counts.set(k, remaining - 1); continue; }
+    added.push(r);
+  }
+  return [...(existing || []), ...added].sort((a, b) => a.t - b.t);
+}
+
+/** Restore the derived `t` on income rows read back from storage. */
+export function hydrateIncome(rows) {
+  return (rows || []).map(r => (
+    Number.isFinite(r?.t) ? r : { ...r, t: utcDay(r?.date) }
+  ));
+}
+
+/**
+ * Attribute each dividend to the lots that were actually holding the stock
+ * when it paid, split pro-rata by cost basis.
+ *
+ * Exact per-share attribution would need the share count as of each pay date,
+ * which splits make fiddly; cost basis among the lots open on that date is a
+ * stable proxy and, more importantly, makes lot-level income sum exactly to
+ * the ticker and portfolio totals.
+ *
+ * Returns a Map keyed by lot object, plus what couldn't be placed — a
+ * dividend paid when the file shows no open lot (the position was bought
+ * before the export's start) is reported rather than folded in somewhere
+ * convenient.
+ */
+export function allocateIncome(lots, income) {
+  const byLot = new Map();
+  const bySymbol = new Map();
+
+  for (const lot of [...(lots?.closed || []), ...(lots?.open || [])]) {
+    byLot.set(lot, 0);
+    if (!bySymbol.has(lot.symbol)) bySymbol.set(lot.symbol, []);
+    bySymbol.get(lot.symbol).push(lot);
+  }
+
+  let allocated = 0;
+  let unallocated = 0;
+  const unallocatedSymbols = new Set();
+  // Dated cash flows for the money-weighted return — a dividend paid in 2021
+  // is worth more than the same dollars paid today.
+  const flows = [];
+
+  for (const row of hydrateIncome(income)) {
+    if (!Number.isFinite(row.t) || !Number.isFinite(row.amount) || row.amount === 0) continue;
+
+    // A lot holds the stock from its buy date until it is sold; open lots
+    // never stop holding.
+    const holders = (bySymbol.get(row.symbol) || []).filter(lot => (
+      lot.buyT <= row.t && (lot.sellT == null || row.t <= lot.sellT)
+    ));
+    const basis = holders.reduce((s, l) => s + l.costBasis, 0);
+
+    if (!holders.length || !(basis > 0)) {
+      unallocated += row.amount;
+      unallocatedSymbols.add(row.symbol);
+      continue;
+    }
+
+    for (const lot of holders) {
+      byLot.set(lot, byLot.get(lot) + row.amount * (lot.costBasis / basis));
+    }
+    allocated += row.amount;
+    flows.push({ t: row.t, amount: row.amount });
+  }
+
+  return {
+    byLot,
+    flows,
+    allocated,
+    unallocated,
+    unallocatedSymbols: [...unallocatedSymbols].sort(),
+  };
 }
 
 // ── FIFO lot matching ───────────────────────────────────────────────────
