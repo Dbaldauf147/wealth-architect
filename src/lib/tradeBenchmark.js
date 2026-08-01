@@ -56,6 +56,7 @@ export function benchmarkLots(lots, series, quotes, asOfT, income) {
       open,
       basket: lot.basket || null,
       quantity: lot.quantity,
+      splitFactor: lot.splitFactor || 1,
       buyT: lot.buyT,
       buyDate: lot.buyDate,
       exitT,

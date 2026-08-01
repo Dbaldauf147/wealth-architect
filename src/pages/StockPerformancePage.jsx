@@ -943,6 +943,107 @@ function LotTimeline({ rows, nowT }) {
  * the dollars that choice was ahead or behind right then — not an abstract
  * price ratio, which would ignore that most of this money arrived late.
  */
+/**
+ * Every purchase behind one ticker: when, how many shares, at what price.
+ *
+ * Where a split has since multiplied the shares, both readings are given —
+ * what the confirmation said on the day, and what those shares became — since
+ * the position's current value only reconciles against the second.
+ */
+function LotTable({ rows, symbol }) {
+  const lots = useMemo(() => [...(rows || [])].sort((a, b) => a.buyT - b.buyT), [rows]);
+  if (!lots.length) return null;
+
+  const anySplit = lots.some(r => (r.splitFactor || 1) !== 1);
+  const isBasket = lots.some(r => r.basket);
+  const totalCost = lots.reduce((s, r) => s + r.costBasis, 0);
+  const totalShares = lots.reduce((s, r) => s + (r.quantity || 0), 0);
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div className={styles.cardTitle}>Every purchase of {symbol}</div>
+      <div className={styles.cardSub} style={{ marginBottom: 10 }}>
+        Matched first-in-first-out, so a purchase that was partly sold appears twice — once for
+        the shares that went and once for those still held.
+        {anySplit && ' A split has since changed the share count; the as-bought figures are in brackets.'}
+      </div>
+      <div className={styles.tableWrap}>
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th>Bought</th>
+              <th className={styles.num}>Shares</th>
+              <th className={styles.num}>Price paid</th>
+              <th className={styles.num}>Cost</th>
+              <th>Status</th>
+              <th className={styles.num}>Value now</th>
+              <th className={styles.num}>Return</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lots.map((r, i) => {
+              const factor = r.splitFactor || 1;
+              const asBoughtShares = r.quantity != null ? r.quantity / factor : null;
+              const pricePaid = asBoughtShares ? r.costBasis / asBoughtShares : null;
+              const adjPrice = r.quantity ? r.costBasis / r.quantity : null;
+              return (
+                <tr key={i}>
+                  <td>{fmtDay(r.buyT)}</td>
+                  <td className={styles.num}>
+                    {r.quantity == null
+                      ? <span className={styles.muted}>basket</span>
+                      : r.quantity.toLocaleString('en-US', { maximumFractionDigits: 6 })}
+                    {factor !== 1 && (
+                      <span className={styles.muted}>
+                        {' '}({asBoughtShares.toLocaleString('en-US', { maximumFractionDigits: 6 })})
+                      </span>
+                    )}
+                  </td>
+                  <td className={styles.num}>
+                    {pricePaid == null ? '—' : fmt(pricePaid, 2)}
+                    {factor !== 1 && (
+                      <span className={styles.muted}> ({fmt(adjPrice, 2)} adj)</span>
+                    )}
+                  </td>
+                  <td className={styles.num}>{fmt(r.costBasis, 2)}</td>
+                  <td>
+                    {r.open
+                      ? <span className={styles.tag}>held</span>
+                      : `sold ${fmtDay(r.exitT)}`}
+                  </td>
+                  <td className={styles.num}>{fmt(r.value, 2)}</td>
+                  <td className={`${styles.num} ${r.ret >= 0 ? styles.up : styles.down}`}>
+                    {fmtPct(r.ret)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td><strong>{lots.length} lot{lots.length === 1 ? '' : 's'}</strong></td>
+              <td className={styles.num}>
+                <strong>
+                  {isBasket ? '—' : totalShares.toLocaleString('en-US', { maximumFractionDigits: 6 })}
+                </strong>
+              </td>
+              <td className={`${styles.num} ${styles.muted}`}>
+                {!isBasket && totalShares > 0 ? `${fmt(totalCost / totalShares, 2)} avg` : ''}
+              </td>
+              <td className={styles.num}><strong>{fmt(totalCost, 2)}</strong></td>
+              <td />
+              <td className={styles.num}>
+                <strong>{fmt(lots.reduce((s, r) => s + r.value, 0), 2)}</strong>
+              </td>
+              <td className={styles.num} />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function TickerDetail({ symbol, rows, summary, series, onClose }) {
   const [loaded, setLoaded] = useState(null);
   // A position that came through a reorganisation spans several tickers whose
@@ -1087,6 +1188,8 @@ function TickerDetail({ symbol, rows, summary, series, onClose }) {
           <span className={styles.muted}>{summary.lots} lot{summary.lots === 1 ? '' : 's'}</span>
         </div>
       )}
+
+      <LotTable rows={rows} symbol={symbol} />
 
       {basket && (
         <div className={styles.noteCard}>

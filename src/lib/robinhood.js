@@ -670,7 +670,18 @@ export function resolveReorgGroups(trades, actions, feedSplits) {
         if (!Number.isFinite(qty)) {
           return { ...base, resolvable: false, reason: `unreadable quantity on ${ev.action.code}` };
         }
-        const surrendered = /s\s*$/i.test(ev.action.quantityRaw || '');
+        // Direction lives only in the raw cell's trailing 'S'. Without it a
+        // surrender reads as a receipt and the position doubles instead of
+        // moving, so an import that predates this field must be refused
+        // rather than guessed at.
+        if (ev.action.quantityRaw == null || ev.action.quantityRaw === '') {
+          return {
+            ...base,
+            resolvable: false,
+            reason: 'this import predates share-exchange direction tracking — re-import to include it',
+          };
+        }
+        const surrendered = /s\s*$/i.test(ev.action.quantityRaw);
         shares[ev.action.symbol] = (shares[ev.action.symbol] || 0) + (surrendered ? -qty : qty);
       } else if (ev.split) {
         shares[ev.split.symbol] = (shares[ev.split.symbol] || 0) * ev.split.ratio;
@@ -804,6 +815,9 @@ export function buildLots(rawTrades, corporateActions, apiSplits) {
         lot.quantity *= factor;
         // Total basis is unchanged by a split — only basis per share moves.
         lot.unitCost /= factor;
+        // Kept so the lot table can show what was actually bought on the day
+        // alongside the split-adjusted figures.
+        lot.splitFactor = (lot.splitFactor || 1) * factor;
       }
       appliedSplits.push({
         symbol: action.symbol,
@@ -846,6 +860,7 @@ export function buildLots(rawTrades, corporateActions, apiSplits) {
         sellDate: trade.date,
         costBasis: matched * lot.unitCost,
         proceeds: matched * unitProceeds,
+        splitFactor: lot.splitFactor || 1,
       });
       lot.remaining -= matched;
       toSell -= matched;
@@ -878,6 +893,7 @@ export function buildLots(rawTrades, corporateActions, apiSplits) {
         buyT: lot.buyT,
         buyDate: lot.buyDate,
         costBasis: lot.remaining * lot.unitCost,
+        splitFactor: lot.splitFactor || 1,
       });
     }
   }
