@@ -364,6 +364,39 @@ function MyMoneySection({ series }) {
     );
   }
 
+  // Without deposit rows there is no "what you put in", and the value line
+  // would be the purchases alone — a large negative number. Say so instead.
+  if (!cashRows.transfers.length) {
+    return (
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Your own investing</div>
+        <div className={styles.cardSub}>
+          Your stored import has no deposit or withdrawal rows, so there is nothing to chart
+          contributions against — those rows were only added to the importer recently.
+          Re-import your activity export on the <strong>My Trades</strong> tab and choose
+          <strong> Replace history</strong>, and this fills in.
+        </div>
+      </div>
+    );
+  }
+
+  // A chart built from a fraction of the holdings isn't slightly low, it's
+  // wrong. Refuse it rather than drawing a plausible-looking line.
+  if (history.pricedFraction < 0.98) {
+    return (
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Your own investing</div>
+        <div className={styles.error}>
+          {history.unpricedCost > 0 && history.pricedCost === 0
+            ? 'No live prices came back, so the account cannot be valued right now.'
+            : `Only ${Math.round(history.pricedFraction * 100)}% of your holdings could be priced, so this chart would misstate the account.`}
+          {' '}Couldn&apos;t price {history.unpriced.join(', ')}. Reload the page to retry; if it
+          persists the market data feed is unreachable.
+        </div>
+      </div>
+    );
+  }
+
   const last = history.points[history.points.length - 1];
   const gain = last.value - last.contributed;
   const vsBench = Number.isFinite(last.bench) ? last.value - last.bench : null;
@@ -446,8 +479,9 @@ function MyMoneySection({ series }) {
 
       {history.unpriced.length > 0 && (
         <div className={styles.cardSub} style={{ marginTop: 10 }}>
-          Couldn&apos;t price {history.unpriced.join(', ')} for part of this period, so the line
-          understates the account slightly in those months.
+          {history.unpriced.join(', ')} had no quoted price for part of this period — a share
+          class that didn&apos;t exist yet, typically — so the line runs a little low in those
+          early months. Today&apos;s value is unaffected.
         </div>
       )}
 

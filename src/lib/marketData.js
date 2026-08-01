@@ -4,7 +4,11 @@
 // re-fetching it on every page visit would be the slowest thing on the tab.
 
 const SERIES_CACHE_PREFIX = 'marketSeries:v1:';
-const QUOTE_CACHE_KEY = 'marketQuotes:v1';
+// Bump when the cached shape changes. A cache entry written by an older build
+// can be missing fields the current one needs, and serving it silently
+// produces wrong answers rather than a miss — `points` was added for the
+// portfolio history and stale entries without it priced every holding at zero.
+const QUOTE_CACHE_KEY = 'marketQuotes:v2';
 const SERIES_TTL_MS = 12 * 60 * 60 * 1000; // closes settle once a day
 const QUOTE_TTL_MS = 30 * 60 * 1000;
 
@@ -83,7 +87,14 @@ export async function fetchQuotes(symbols, since) {
     // succeed on the next try. A cache entry fetched over a shorter window
     // than we now need could be missing splits, so refetch those too.
     const fresh = hit && hit.fetchedAt && now - hit.fetchedAt < QUOTE_TTL_MS;
-    if (fresh && !hit.quote?.error && hit.since && hit.since <= sinceParam) {
+    // Belt and braces alongside the key version: a cached quote is only usable
+    // if it actually carries everything the callers read off it.
+    const complete = hit?.quote
+      && !hit.quote.error
+      && Number.isFinite(hit.quote.price)
+      && Array.isArray(hit.quote.points)
+      && Array.isArray(hit.quote.splits);
+    if (fresh && complete && hit.since && hit.since <= sinceParam) {
       out[symbol] = hit.quote;
     } else {
       missing.push(symbol);

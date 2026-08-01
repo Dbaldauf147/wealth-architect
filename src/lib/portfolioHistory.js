@@ -131,7 +131,26 @@ export function buildPortfolioHistory({ lots, tickerSeries, ledger, benchSeries,
     });
   }
 
-  return { points, unpriced: [...unpriced].sort() };
+  // How much of the position could actually be valued at the end. A chart
+  // drawn from a fraction of the holdings is not a slightly-low chart, it is a
+  // wrong one, so the caller is given the numbers to refuse it.
+  let pricedCost = 0;
+  let unpricedCost = 0;
+  for (const lot of allLots) {
+    if (lot.sellT != null && toT >= lot.sellT) continue;
+    if (!(lot.buyT <= toT)) continue;
+    const v = lotValueAt(lot, toT);
+    if (v == null) unpricedCost += lot.costBasis;
+    else pricedCost += lot.costBasis;
+  }
+
+  return {
+    points,
+    unpriced: [...unpriced].sort(),
+    pricedCost,
+    unpricedCost,
+    pricedFraction: pricedCost + unpricedCost > 0 ? pricedCost / (pricedCost + unpricedCost) : 0,
+  };
 }
 
 /** Deposits and withdrawals as discrete events, for plotting alongside. */
