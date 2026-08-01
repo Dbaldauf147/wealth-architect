@@ -262,6 +262,10 @@ export function parseRows(rows, mapping) {
           t: utcDay(date),
           symbol,
           quantity: parseLooseQuantity(at('quantity')),
+          // The raw cell matters: a trailing 'S' ("46S") marks shares
+          // surrendered rather than received, which is the only thing
+          // distinguishing the two sides of a share exchange.
+          quantityRaw: String(at('quantity') || '').trim(),
         });
         continue;
       }
@@ -506,8 +510,16 @@ export function allocateIncome(lots, income) {
 
   for (const lot of [...(lots?.closed || []), ...(lots?.open || [])]) {
     byLot.set(lot, 0);
-    if (!bySymbol.has(lot.symbol)) bySymbol.set(lot.symbol, []);
-    bySymbol.get(lot.symbol).push(lot);
+    // A basket lot answers to every ticker in the group — both the ones it
+    // still holds and the one it was originally bought as, since dividends
+    // were paid under each name at different times.
+    const keys = lot.basket
+      ? new Set([...Object.keys(lot.basket), ...(lot.basketMembers || [])])
+      : new Set([lot.symbol]);
+    for (const key of keys) {
+      if (!bySymbol.has(key)) bySymbol.set(key, []);
+      bySymbol.get(key).push(lot);
+    }
   }
 
   let allocated = 0;
@@ -577,6 +589,119 @@ export function hydrateActions(actions) {
 }
 
 /**
+ * Reconstruct positions that survived a share exchange, spin-off or merger.
+ *
+ * A reorg moves cost basis between tickers using fair-market values the export
+ * doesn't carry, so the basis can't be *split* across the resulting tickers.
+ * But it doesn't need to be: what went in is known from the purchase rows, and
+ * what came out is the whole basket of resulting shares. Held together as one
+ * position, the comparison is exact — only the per-ticker breakdown is lost.
+ *
+ * Share counts follow the export's own convention: a quantity ending in 'S'
+ * ("46S") is shares surrendered, anything else is shares received.
+ *
+ * Returns one entry per group of tickers linked by a reorg date.
+ */
+export function resolveReorgGroups(trades, actions, feedSplits) {
+  const reorgs = (actions || []).filter(a => a.kind === 'reorg');
+  if (!reorgs.length) return [];
+
+  // Tickers touched by reorg events on the same date belong together.
+  const byDate = new Map();
+  for (const a of reorgs) {
+    if (!byDate.has(a.date)) byDate.set(a.date, new Set());
+    byDate.get(a.date).add(a.symbol);
+  }
+  // A ticker appearing on two reorg dates merges those groups.
+  const groupOf = new Map();
+  const groups = [];
+  for (const symbols of byDate.values()) {
+    const existing = [...symbols].map(s => groupOf.get(s)).find(g => g != null);
+    const target = existing ?? groups.push(new Set()) - 1;
+    for (const s of symbols) {
+      groups[target].add(s);
+      groupOf.set(s, target);
+    }
+  }
+
+  return groups.map((memberSet) => {
+    const members = [...memberSet].sort();
+    const memberTrades = (trades || []).filter(t => memberSet.has(t.symbol));
+    const buys = memberTrades.filter(t => t.side === 'buy');
+    const sells = memberTrades.filter(t => t.side === 'sell');
+
+    const base = { members, shares: {}, lots: [], totalCost: 0 };
+
+    if (!buys.length) {
+      return { ...base, resolvable: false, reason: 'no purchase in this file to price it from' };
+    }
+    if (sells.length) {
+      // Matching a sale to a basis that has itself been reallocated across
+      // tickers is exactly the ambiguity this avoids.
+      return { ...base, resolvable: false, reason: 'sold after the reorganisation, so the basis split matters' };
+    }
+
+    // Replay every event in order and carry the share counts through.
+    const events = [];
+    for (const t of memberTrades) events.push({ t: t.t, order: 0, trade: t });
+    for (const a of reorgs) {
+      if (memberSet.has(a.symbol)) events.push({ t: a.t, order: 1, action: a });
+    }
+    // Price feeds model a spin-off as a split-like price adjustment on the
+    // reorganisation date (Yahoo reports Brookfield's 2022 exchange as
+    // 1237:1000). The export's own SXCH/SOFF rows already move those shares,
+    // so honouring both would count the reorganisation twice.
+    const reorgDates = new Set(reorgs.filter(a => memberSet.has(a.symbol)).map(a => a.date));
+    for (const symbol of members) {
+      for (const s of (feedSplits?.[symbol] || [])) {
+        if (reorgDates.has(s.date)) continue;
+        const t = utcDay(s.date);
+        if (Number.isFinite(t) && s.ratio > 0) events.push({ t, order: 2, split: { symbol, ratio: s.ratio } });
+      }
+    }
+    events.sort((a, b) => a.t - b.t || a.order - b.order);
+
+    const shares = {};
+    for (const ev of events) {
+      if (ev.trade) {
+        shares[ev.trade.symbol] = (shares[ev.trade.symbol] || 0) + ev.trade.quantity;
+      } else if (ev.action) {
+        const qty = ev.action.quantity;
+        if (!Number.isFinite(qty)) {
+          return { ...base, resolvable: false, reason: `unreadable quantity on ${ev.action.code}` };
+        }
+        const surrendered = /s\s*$/i.test(ev.action.quantityRaw || '');
+        shares[ev.action.symbol] = (shares[ev.action.symbol] || 0) + (surrendered ? -qty : qty);
+      } else if (ev.split) {
+        shares[ev.split.symbol] = (shares[ev.split.symbol] || 0) * ev.split.ratio;
+      }
+    }
+
+    // Tiny negatives are float noise; a real negative means the replay is wrong.
+    for (const [symbol, qty] of Object.entries(shares)) {
+      if (qty < -1e-6) {
+        return { ...base, resolvable: false, reason: `share count for ${symbol} went negative` };
+      }
+      if (Math.abs(qty) < 1e-9) delete shares[symbol];
+    }
+    if (!Object.keys(shares).length) {
+      return { ...base, resolvable: false, reason: 'nothing left after the reorganisation' };
+    }
+
+    const totalCost = buys.reduce((s, t) => s + t.amount, 0);
+    return {
+      members,
+      resolvable: true,
+      reason: null,
+      shares,
+      label: Object.keys(shares).sort().join(' + '),
+      lots: buys.map(t => ({ buyT: t.t, buyDate: t.date, costBasis: t.amount })),
+      totalCost,
+    };
+  });
+}
+
+/**
  * FIFO-match buys against sells, per symbol, applying splits along the way.
  *
  * `apiSplits` maps symbol → [{ date, ratio }] from the price feed and is the
@@ -602,20 +727,28 @@ export function buildLots(rawTrades, corporateActions, apiSplits) {
   const actions = hydrateActions(corporateActions);
   const feed = apiSplits || {};
 
-  // Any symbol involved in a reorg is untrustworthy — both the ticker that
-  // went away and the one that appeared.
+  // Reorg tickers can't be measured individually, but a group whose purchases
+  // are all in the file can be measured as a single combined position.
+  const reorgGroups = resolveReorgGroups(trades, actions, feed);
   const excluded = new Map();
   for (const a of actions) {
     if (a.kind !== 'reorg') continue;
+    const group = reorgGroups.find(g => g.members.includes(a.symbol));
+    if (group?.resolvable) continue; // handled as a basket below
     if (!excluded.has(a.symbol)) excluded.set(a.symbol, new Set());
     excluded.get(a.symbol).add(a.code);
   }
+  // A resolvable group's own trades are represented by its basket lots, so
+  // they must not also flow through the per-symbol FIFO engine.
+  const basketSymbols = new Set(
+    reorgGroups.filter(g => g.resolvable).flatMap(g => g.members),
+  );
 
   // Feed splits win; fall back to the file's SPL rows only where the feed
   // returned nothing for that symbol, so the two can never double-count.
   const splitsBySymbol = new Map();
   for (const symbol of tradedSymbols(trades)) {
-    if (excluded.has(symbol)) continue;
+    if (excluded.has(symbol) || basketSymbols.has(symbol)) continue;
     const fromFeed = feed[symbol];
     if (Array.isArray(fromFeed) && fromFeed.length) {
       splitsBySymbol.set(symbol, fromFeed
@@ -637,7 +770,7 @@ export function buildLots(rawTrades, corporateActions, apiSplits) {
   // the lots that were actually open when it happened.
   const events = [];
   for (const t of trades || []) {
-    if (excluded.has(t.symbol)) continue;
+    if (excluded.has(t.symbol) || basketSymbols.has(t.symbol)) continue;
     events.push({ t: t.t, order: t.side === 'buy' ? 0 : 1, kind: 'trade', trade: t });
   }
   for (const list of splitsBySymbol.values()) {
@@ -749,6 +882,25 @@ export function buildLots(rawTrades, corporateActions, apiSplits) {
     }
   }
 
+  // A resolvable reorg group becomes one open position per original purchase.
+  // Each carries the whole resulting share basket plus its share of the cost,
+  // so the group's value can be priced without splitting basis between tickers.
+  for (const group of reorgGroups) {
+    if (!group.resolvable || !(group.totalCost > 0)) continue;
+    for (const lot of group.lots) {
+      open.push({
+        symbol: group.label,
+        quantity: null,
+        buyT: lot.buyT,
+        buyDate: lot.buyDate,
+        costBasis: lot.costBasis,
+        basket: group.shares,
+        basketWeight: lot.costBasis / group.totalCost,
+        basketMembers: group.members,
+      });
+    }
+  }
+
   closed.sort((a, b) => a.sellT - b.sellT);
   open.sort((a, b) => a.buyT - b.buyT);
 
@@ -757,6 +909,7 @@ export function buildLots(rawTrades, corporateActions, apiSplits) {
     open,
     unmatchedSells,
     appliedSplits,
+    reorgGroups,
     excludedSymbols: [...excluded.entries()].map(([symbol, codes]) => ({
       symbol,
       codes: [...codes].sort(),

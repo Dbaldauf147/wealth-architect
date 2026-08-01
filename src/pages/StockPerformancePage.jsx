@@ -667,6 +667,10 @@ function LotTimeline({ rows, nowT }) {
  */
 function TickerDetail({ symbol, rows, summary, series, onClose }) {
   const [loaded, setLoaded] = useState(null);
+  // A position that came through a reorganisation spans several tickers whose
+  // price histories don't line up — the ticker was renamed mid-life — so there
+  // is no single series to chart it against.
+  const basket = rows.find(r => r.basket)?.basket || null;
 
   const firstBuyT = useMemo(() => Math.min(...rows.map(r => r.buyT)), [rows]);
   // Trades are anchored at UTC noon but the feed stamps each candle at market
@@ -676,6 +680,7 @@ function TickerDetail({ symbol, rows, summary, series, onClose }) {
   const startISO = useMemo(() => toISODate(firstBuyT - 30 * MS_DAY), [firstBuyT]);
 
   useEffect(() => {
+    if (basket) return undefined;
     let cancelled = false;
     fetchSeries(symbol, startISO, {
       onFresh: (fresh) => { if (!cancelled) setLoaded({ symbol, payload: fresh }); },
@@ -683,7 +688,7 @@ function TickerDetail({ symbol, rows, summary, series, onClose }) {
       .then(({ payload }) => { if (!cancelled) setLoaded({ symbol, payload }); })
       .catch(err => { if (!cancelled) setLoaded({ symbol, error: err.message }); });
     return () => { cancelled = true; };
-  }, [symbol, startISO]);
+  }, [symbol, startISO, basket]);
 
   // Only trust a payload fetched for the ticker currently on screen.
   const ready = loaded?.symbol === symbol ? loaded : null;
@@ -805,11 +810,31 @@ function TickerDetail({ symbol, rows, summary, series, onClose }) {
         </div>
       )}
 
-      {ready?.error && (
+      {basket && (
+        <div className={styles.noteCard}>
+          <div className={styles.noteTitle}>
+            <span className="material-symbols-outlined" style={{ fontSize: 17 }}>merge</span>
+            One position, several tickers
+          </div>
+          <div className={styles.cardSub} style={{ marginTop: 2 }}>
+            This holding passed through a share exchange, so it is now{' '}
+            {Object.entries(basket).map(([sym, qty], i, arr) => (
+              <span key={sym}>
+                <strong>{qty.toLocaleString('en-US', { maximumFractionDigits: 4 })} {sym}</strong>
+                {i < arr.length - 2 ? ', ' : i === arr.length - 2 ? ' and ' : ''}
+              </span>
+            ))}. The totals above are exact — what you paid and what it is worth
+            are both known. A single line chart isn&apos;t, because the ticker was renamed
+            partway through and the two price histories don&apos;t join up.
+          </div>
+        </div>
+      )}
+
+      {!basket && ready?.error && (
         <div className={styles.error}>Couldn&apos;t load price history for {symbol}: {ready.error}</div>
       )}
-      {!ready && <div className={styles.emptyState}>Loading {symbol} price history…</div>}
-      {ready && !ready.error && !chart && (
+      {!basket && !ready && <div className={styles.emptyState}>Loading {symbol} price history…</div>}
+      {!basket && ready && !ready.error && !chart && (
         <div className={styles.emptyState}>Not enough overlapping history to chart {symbol}.</div>
       )}
 
@@ -1265,7 +1290,13 @@ function TradesTab({ series, meta }) {
   // held, because the same request carries split history — and a closed lot
   // that straddled a split needs it to match buy shares against sell shares.
   // Keyed as a string so the effect doesn't re-run on an identical list.
-  const quoteKey = useMemo(() => tradedSymbols(trades).join(','), [trades]);
+  const quoteKey = useMemo(() => {
+    // Reorg survivors (BN after a Brookfield-style exchange) never appear in a
+    // trade row but still need a price to value the basket.
+    const all = new Set(tradedSymbols(trades));
+    for (const a of corporateActions) if (a.symbol) all.add(a.symbol);
+    return [...all].sort().join(',');
+  }, [trades, corporateActions]);
   const earliestTrade = useMemo(
     () => (trades.length ? trades.reduce((a, t) => (t.date < a ? t.date : a), trades[0].date) : null),
     [trades],

@@ -41,7 +41,7 @@ export function benchmarkLots(lots, series, quotes, asOfT, income) {
     }
     if (proceeds == null) {
       excluded.unpriced++;
-      excluded.unpricedSymbols.add(lot.symbol);
+      for (const sym of lot.basketMembers || [lot.symbol]) excluded.unpricedSymbols.add(sym);
       return;
     }
 
@@ -54,6 +54,7 @@ export function benchmarkLots(lots, series, quotes, asOfT, income) {
     rows.push({
       symbol: lot.symbol,
       open,
+      basket: lot.basket || null,
       quantity: lot.quantity,
       buyT: lot.buyT,
       buyDate: lot.buyDate,
@@ -85,6 +86,27 @@ export function benchmarkLots(lots, series, quotes, asOfT, income) {
   }
 
   for (const lot of lots.open || []) {
+    // A basket lot survived a reorg: its value is the whole resulting share
+    // basket, of which this purchase owns a cost-weighted share.
+    if (lot.basket) {
+      let basketValue = 0;
+      let asOf = null;
+      let priced = true;
+      for (const [sym, qty] of Object.entries(lot.basket)) {
+        const px = quotes?.[sym]?.price;
+        if (!Number.isFinite(px)) { priced = false; break; }
+        basketValue += qty * px;
+        asOf = quotes[sym].asOf || asOf;
+      }
+      evaluate(lot, {
+        exitT: asOfT,
+        exitDate: asOf,
+        proceeds: priced ? basketValue * lot.basketWeight : null,
+        open: true,
+      });
+      continue;
+    }
+
     const quote = quotes?.[lot.symbol];
     const price = Number.isFinite(quote?.price) ? quote.price : null;
     evaluate(lot, {
@@ -251,5 +273,10 @@ export function externalCashComparison({
 
 /** Symbols with open lots — the only ones needing a live quote. */
 export function openSymbols(lots) {
-  return [...new Set((lots.open || []).map(l => l.symbol))];
+  const out = new Set();
+  for (const lot of lots.open || []) {
+    if (lot.basket) for (const sym of Object.keys(lot.basket)) out.add(sym);
+    else out.add(lot.symbol);
+  }
+  return [...out];
 }
