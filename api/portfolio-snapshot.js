@@ -65,6 +65,18 @@ export default async function handler(req, res) {
     const transfers = hydrateCashRows(stored?.transfers);
     const otherCash = hydrateCashRows(stored?.otherCash);
 
+    // Without deposit rows there is nothing to call "money you put in", and
+    // the cash balance is every purchase with nothing funding it — the value
+    // would come out hundreds of thousands low. An import predating transfer
+    // parsing looks complete but isn't, so refuse rather than write a row
+    // that is wrong in a way nothing downstream could detect.
+    if (!transfers.length) {
+      return res.status(200).json({
+        skipped: 'stored import has no deposit or withdrawal rows — re-import before snapshots can be recorded',
+        trades: trades.length,
+      });
+    }
+
     const symbols = new Set(tradedSymbols(trades));
     for (const a of corporateActions) if (a.symbol) symbols.add(a.symbol);
     const earliest = trades.reduce((a, t) => (t.date < a ? t.date : a), trades[0].date);
