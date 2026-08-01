@@ -11,6 +11,7 @@ import {
   tradedSymbols, hydrateTrades, hydrateActions, hydrateIncome, hydrateCashRows, FIELDS,
 } from '../lib/robinhood';
 import { benchmarkLots, externalCashComparison } from '../lib/tradeBenchmark';
+import { priceSeries, buildPortfolioHistory, contributionEvents } from '../lib/portfolioHistory';
 import styles from './StockPerformancePage.module.css';
 
 // The S&P 500 *total return* index — dividends reinvested. Using the price
@@ -211,11 +212,263 @@ function YearBars({ years }) {
   );
 }
 
+/**
+ * The account's whole history: what went in and when, what it grew to, and
+ * what the same deposits would have become in the index.
+ *
+ * The stepped line is money crossing the account boundary, so it moves only
+ * when a deposit or withdrawal lands — the vertical distance between it and
+ * the portfolio line is the gain at that moment. The last point equals the
+ * headline figure exactly; it is the same calculation carried through time.
+ */
+function PortfolioHistoryChart({ history, events, benchLabel = 'Same deposits in the S&P' }) {
+  const W = 880, H = 330;
+  const pad = { top: 18, right: 16, bottom: 34, left: 70 };
+  const innerW = W - pad.left - pad.right;
+  const innerH = H - pad.top - pad.bottom;
+
+  const chart = useMemo(() => {
+    const pts = history || [];
+    if (pts.length < 2) return null;
+    const values = pts.flatMap(p => [p.value, p.contributed, p.bench].filter(Number.isFinite));
+    if (!values.length) return null;
+    const hi = Math.max(...values) * 1.06;
+    const lo = Math.min(0, Math.min(...values));
+    const tMin = pts[0].t;
+    const tSpan = Math.max(pts[pts.length - 1].t - tMin, 1);
+    const x = (t) => pad.left + ((t - tMin) / tSpan) * innerW;
+    const y = (v) => pad.top + (1 - (v - lo) / (hi - lo)) * innerH;
+    const lineOf = (key) => {
+      const usable = pts.filter(p => Number.isFinite(p[key]));
+      if (usable.length < 2) return '';
+      return `M ${usable.map(p => `${x(p.t)} ${y(p[key])}`).join(' L ')}`;
+    };
+    const valueLine = lineOf('value');
+    const area = valueLine
+      ? `${valueLine} L ${x(pts[pts.length - 1].t)} ${y(lo)} L ${x(pts[0].t)} ${y(lo)} Z`
+      : '';
+    const years = [];
+    const from = new Date(tMin).getUTCFullYear();
+    const to = new Date(pts[pts.length - 1].t).getUTCFullYear();
+    for (let yr = from; yr <= to; yr++) {
+      const t = Date.UTC(yr, 0, 1, 23, 59);
+      if (t >= tMin && t <= pts[pts.length - 1].t) years.push({ yr, t });
+    }
+    return {
+      x, y, ticks: ticksFor(lo, hi, 5), years, area,
+      valueLine, contributedLine: lineOf('contributed'), benchLine: lineOf('bench'),
+    };
+  }, [history, innerH, innerW, pad.left, pad.top]);
+
+  if (!chart) return <div className={styles.emptyState}>Not enough history to chart yet.</div>;
+
+  const maxDeposit = Math.max(...(events || []).map(e => Math.abs(e.amount)), 1);
+
+  return (
+    <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
+      <defs>
+        <linearGradient id="pf-area" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--color-secondary)" stopOpacity={0.22} />
+          <stop offset="100%" stopColor="var(--color-secondary)" stopOpacity={0} />
+        </linearGradient>
+      </defs>
+
+      {chart.ticks.map((v, i) => (
+        <g key={i}>
+          <line x1={pad.left} y1={chart.y(v)} x2={W - pad.right} y2={chart.y(v)}
+            stroke="var(--color-text-tertiary)" strokeOpacity={0.15} strokeWidth={1} />
+          <text x={pad.left - 8} y={chart.y(v) + 4} textAnchor="end" fontSize={10.5}
+            fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">{fmtAxis(v)}</text>
+        </g>
+      ))}
+
+      {chart.years.map(({ yr, t }) => (
+        <text key={yr} x={chart.x(t)} y={H - 10} textAnchor="middle" fontSize={10.5}
+          fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">{yr}</text>
+      ))}
+
+      {/* Each deposit as a tick from the baseline, height by size. */}
+      {(events || []).map((e, i) => {
+        const h = 6 + 16 * Math.sqrt(Math.abs(e.amount) / maxDeposit);
+        const up = e.amount > 0;
+        return (
+          <line key={i} x1={chart.x(e.t)} y1={H - pad.bottom} x2={chart.x(e.t)} y2={H - pad.bottom - h}
+            stroke={up ? 'var(--color-secondary)' : LOSE} strokeOpacity={0.5} strokeWidth={2}>
+            <title>{`${fmtDay(e.t)} — ${up ? 'deposited' : 'withdrew'} ${fmt(Math.abs(e.amount))}`}</title>
+          </line>
+        );
+      })}
+
+      <path d={chart.area} fill="url(#pf-area)" />
+      {chart.benchLine && (
+        <path d={chart.benchLine} fill="none" stroke="var(--color-text-secondary)"
+          strokeWidth={1.75} strokeDasharray="5 4" strokeOpacity={0.8} />
+      )}
+      <path d={chart.contributedLine} fill="none" stroke="var(--color-text-tertiary)"
+        strokeWidth={1.5} strokeOpacity={0.9} />
+      <path d={chart.valueLine} fill="none" stroke="var(--color-secondary)"
+        strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" />
+
+      <title>{benchLabel}</title>
+    </svg>
+  );
+}
+
+/** The whole-account summary shown on the benchmark tab. */
+function MyMoneySection({ series }) {
+  const { trades, income, cashRows, quotes, lots, result, external } = usePortfolio(series);
+
+  // Split-adjusted price series per ticker, rebuilt from the monthly closes
+  // that ride along with the quotes request.
+  const tickerSeries = useMemo(() => {
+    if (!quotes) return null;
+    const out = {};
+    for (const [symbol, q] of Object.entries(quotes)) {
+      if (!q || q.error || !Array.isArray(q.points) || !q.points.length) continue;
+      out[symbol] = priceSeries(q.points);
+    }
+    return out;
+  }, [quotes]);
+
+  const history = useMemo(() => {
+    if (!lots || !tickerSeries) return null;
+    return buildPortfolioHistory({
+      lots,
+      tickerSeries,
+      ledger: { trades, income, transfers: cashRows.transfers, otherCash: cashRows.otherCash },
+      benchSeries: series,
+      toT: series.lastT,
+    });
+  }, [lots, tickerSeries, trades, income, cashRows, series]);
+
+  const events = useMemo(() => contributionEvents(cashRows.transfers), [cashRows]);
+
+  if (!trades.length) {
+    return (
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Your own investing</div>
+        <div className={styles.cardSub}>
+          Import your trades on the <strong>My Trades</strong> tab and your real contributions
+          and gains will be charted here against the index.
+        </div>
+      </div>
+    );
+  }
+
+  if (!history || !history.points.length) {
+    return (
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Your own investing</div>
+        <div className={styles.emptyState}>Rebuilding your account history…</div>
+      </div>
+    );
+  }
+
+  const last = history.points[history.points.length - 1];
+  const gain = last.value - last.contributed;
+  const vsBench = Number.isFinite(last.bench) ? last.value - last.bench : null;
+
+  return (
+    <div className={styles.chartCard}>
+      <div className={styles.chartHeader}>
+        <div>
+          <div className={styles.cardTitle}>
+            What you put in, and what it became
+          </div>
+          <div className={styles.cardSub}>
+            Every deposit and withdrawal you made, the account&apos;s value through time, and
+            the same deposits put into the index instead. The gap between the solid line and
+            the flat one is your gain; the gap to the dashed line is how you did against the
+            S&amp;P. Ticks along the bottom mark each transfer, sized by amount.
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.statGrid} style={{ marginBottom: 18 }}>
+        <div className={styles.statCard}>
+          <div className={styles.statLabel}>You put in</div>
+          <div className={styles.statValue}>{fmt(last.contributed)}</div>
+          <div className={styles.statSub}>
+            {external
+              ? `${fmt(external.deposits)} deposited less ${fmt(external.withdrawals)} taken out`
+              : `${events.length} transfers`}
+          </div>
+        </div>
+        <div className={styles.statCard}>
+          <div className={styles.statLabel}>Worth today</div>
+          <div className={styles.statValue}>{fmt(last.value)}</div>
+          <div className={styles.statSub}>
+            {fmtDay(last.t)}
+          </div>
+        </div>
+        <div className={styles.statCard}>
+          <div className={styles.statLabel}>Total gain</div>
+          <div className={`${styles.statValue} ${gain >= 0 ? styles.up : styles.down}`}>
+            {fmtSigned(gain)}
+          </div>
+          <div className={styles.statSub}>
+            {last.contributed > 0 ? fmtPct(last.value / last.contributed - 1) : '—'} on what you put in
+          </div>
+        </div>
+        <div className={styles.statCard}>
+          <div className={styles.statLabel}>Same money in the S&amp;P</div>
+          <div className={styles.statValue}>{Number.isFinite(last.bench) ? fmt(last.bench) : '—'}</div>
+          <div className={styles.statSub}>identical deposits and dates</div>
+        </div>
+        <div className={styles.statCard}>
+          <div className={styles.statLabel}>Against the index</div>
+          <div className={`${styles.statValue} ${vsBench >= 0 ? styles.up : styles.down}`}>
+            {vsBench == null ? '—' : fmtSigned(vsBench)}
+          </div>
+          <div className={styles.statSub}>{vsBench >= 0 ? 'ahead' : 'behind'}</div>
+        </div>
+        <div className={styles.statCard}>
+          <div className={styles.statLabel}>Annualized</div>
+          <div className={`${styles.statValue} ${external && external.yourIrr >= (external.benchIrr ?? 0) ? styles.up : styles.down}`}>
+            {external ? fmtPct(external.yourIrr, 1) : '—'}
+          </div>
+          <div className={styles.statSub}>
+            {external ? `S&P ${fmtPct(external.benchIrr, 1)} on the same cash` : 'money-weighted'}
+          </div>
+        </div>
+      </div>
+
+      <PortfolioHistoryChart history={history.points} events={events} />
+
+      <div className={styles.legend} style={{ justifyContent: 'center', marginTop: 6 }}>
+        <span><span className={styles.legendDot} style={{ background: 'var(--color-secondary)' }} /> Your account</span>
+        <span><span className={styles.legendDash} /> Same deposits in the S&amp;P</span>
+        <span>
+          <span className={styles.legendDot} style={{ background: 'var(--color-text-tertiary)' }} />
+          Money you put in
+        </span>
+      </div>
+
+      {history.unpriced.length > 0 && (
+        <div className={styles.cardSub} style={{ marginTop: 10 }}>
+          Couldn&apos;t price {history.unpriced.join(', ')} for part of this period, so the line
+          understates the account slightly in those months.
+        </div>
+      )}
+
+      {result && (
+        <div className={styles.cardSub} style={{ marginTop: 6 }}>
+          Dividends are counted as the cash they were paid out as
+          ({fmt(result.dividends.allocated)} to date), which is what happened — they were not
+          reinvested. The index line reinvests its own, as the index does.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Benchmark tab ───────────────────────────────────────────────────────
 function BenchmarkTab({ series, meta }) {
   const [rangeId, setRangeId] = useState('20y');
-  const [initial, setInitial] = useState('10000');
-  const [monthly, setMonthly] = useState('0');
+  // A fixed reference amount. The interactive upfront/monthly inputs are gone:
+  // the question they answered ("what would I have?") is answered better by the
+  // real contribution history charted below.
+  const REFERENCE_AMOUNT = 10000;
 
   const range = RANGE_OPTIONS.find(o => o.id === rangeId) || RANGE_OPTIONS[2];
   const endT = series.lastT;
@@ -223,12 +476,9 @@ function BenchmarkTab({ series, meta }) {
     ? Math.max(series.firstT, endT - range.years * 365.25 * MS_DAY)
     : series.firstT;
 
-  const initialAmount = Math.max(0, Number(initial) || 0);
-  const monthlyAmount = Math.max(0, Number(monthly) || 0);
-
   const path = useMemo(
-    () => growthPath(series, { initial: initialAmount, monthly: monthlyAmount, fromT: startT, toT: endT }),
-    [series, initialAmount, monthlyAmount, startT, endT],
+    () => growthPath(series, { initial: REFERENCE_AMOUNT, monthly: 0, fromT: startT, toT: endT }),
+    [series, startT, endT],
   );
 
   const stats = useMemo(() => {
@@ -292,26 +542,20 @@ function BenchmarkTab({ series, meta }) {
             </button>
           ))}
         </div>
-        <div className={styles.inputRow}>
-          <label className={styles.inputField}>
-            <span>Invested upfront</span>
-            <input type="number" min="0" step="1000" value={initial}
-              onChange={e => setInitial(e.target.value)} />
-          </label>
-          <label className={styles.inputField}>
-            <span>Added monthly</span>
-            <input type="number" min="0" step="100" value={monthly}
-              onChange={e => setMonthly(e.target.value)} />
-          </label>
-        </div>
+      </div>
+
+      <MyMoneySection series={series} />
+
+      <div className={styles.sectionHead}>
+        For reference
+        <span> — what the index alone did with a fixed amount</span>
       </div>
 
       <div className={styles.chartCard}>
         <div className={styles.chartHeader}>
           <div>
             <div className={styles.cardTitle}>
-              {fmt(initialAmount)}
-              {monthlyAmount > 0 && ` + ${fmt(monthlyAmount)}/mo`}
+              {fmt(REFERENCE_AMOUNT)}
               {' → '}
               <span className={styles.emphasis}>{last ? fmt(last.value) : '—'}</span>
             </div>
@@ -1267,14 +1511,17 @@ function ImportWizard({ existingTrades, existingActions, existingIncome, existin
 }
 
 // ── Trades tab ──────────────────────────────────────────────────────────
-function TradesTab({ series, meta }) {
+/**
+ * Everything derived from the imported activity: hydrated ledgers, live
+ * quotes, matched lots, the per-lot comparison and the external-cash headline.
+ *
+ * Lives in a hook so both tabs can read it without prop-drilling. Only one tab
+ * mounts at a time and the quote fetch is cached, so there is no duplicated
+ * work in practice.
+ */
+function usePortfolio(series) {
   const { robinhoodTrades } = useData();
-  const { setRobinhoodTrades } = useDataActions();
   const [quoteResult, setQuoteResult] = useState(null);
-  const [showLots, setShowLots] = useState(false);
-  const [reimporting, setReimporting] = useState(false);
-  const [view, setView] = useState('summary');
-  const [selected, setSelected] = useState(null);
 
   // Stored trades come back without their derived `t` timestamp — restore it
   // before anything sorts or prices on it.
@@ -1356,6 +1603,23 @@ function TradesTab({ series, meta }) {
       asOfT: series.lastT,
     });
   }, [result, cashRows, trades, income, series]);
+
+  return {
+    robinhoodTrades, trades, corporateActions, income, cashRows,
+    quotes, awaitingQuotes, apiSplits, lots, result, external,
+  };
+}
+
+function TradesTab({ series, meta }) {
+  const { setRobinhoodTrades } = useDataActions();
+  const [showLots, setShowLots] = useState(false);
+  const [reimporting, setReimporting] = useState(false);
+  const [view, setView] = useState('summary');
+  const [selected, setSelected] = useState(null);
+
+  const {
+    robinhoodTrades, trades, corporateActions, income, cashRows, quotes, lots, result, external,
+  } = usePortfolio(series);
 
   const handleCommit = useCallback((payload) => {
     setRobinhoodTrades(payload);

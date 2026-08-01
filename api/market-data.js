@@ -38,17 +38,23 @@ async function yahooChart(host, symbol, { period1, period2, interval = '1d', eve
     throw new Error(msg);
   }
   const stamps = result.timestamp || [];
-  // Prefer adjusted close so dividends and splits are already baked in.
+  // Adjusted close has dividends and splits baked in; raw close does not.
+  // Both are needed: benchmark growth wants total return, while rebuilding a
+  // position's market value wants the price actually quoted, with dividends
+  // accounted for separately as the cash they were paid out as.
   const adj = result.indicators?.adjclose?.[0]?.adjclose;
   const raw = result.indicators?.quote?.[0]?.close;
   const closes = Array.isArray(adj) && adj.some(v => v != null) ? adj : raw;
   if (!Array.isArray(closes)) throw new Error('no closes in response');
 
   const points = [];
+  const rawPoints = [];
   for (let i = 0; i < stamps.length; i++) {
     const c = closes[i];
     if (c == null || !Number.isFinite(c)) continue; // holidays / partial rows
     points.push([stamps[i], Number(c.toFixed(4))]);
+    const r = Array.isArray(raw) ? raw[i] : null;
+    if (r != null && Number.isFinite(r)) rawPoints.push([stamps[i], Number(r.toFixed(4))]);
   }
   if (!points.length) throw new Error('no usable closes');
 
@@ -64,6 +70,7 @@ async function yahooChart(host, symbol, { period1, period2, interval = '1d', eve
 
   return {
     points,
+    rawPoints,
     splits,
     marketPrice: result.meta?.regularMarketPrice ?? null,
     // On monthly candles the last timestamp is the *start* of the current
@@ -142,7 +149,7 @@ async function handleQuotes(symbols, sinceISO) {
 
   const entries = await Promise.all(symbols.map(async (symbol) => {
     try {
-      const { points, splits, marketPrice, marketTime } = await fetchAcrossHosts(symbol, window);
+      const { points, rawPoints, splits, marketPrice, marketTime } = await fetchAcrossHosts(symbol, window);
       const [candleT, lastClose] = points[points.length - 1];
       // The last monthly candle is the current partial month, so its close is
       // today's price; regularMarketPrice is preferred when present.
@@ -152,6 +159,11 @@ async function handleQuotes(symbols, sinceISO) {
         price: Number(price.toFixed(4)),
         asOf: new Date(asOfT * 1000).toISOString().slice(0, 10),
         splits,
+        // Monthly quoted closes, so a position's market value can be rebuilt
+        // through time. Raw rather than adjusted: dividends are tracked as the
+        // cash they were actually paid out as, and counting them here too
+        // would double them.
+        points: rawPoints.length ? rawPoints : points,
       }];
     } catch (err) {
       // One bad ticker (a delisting, an options contract) shouldn't sink the
