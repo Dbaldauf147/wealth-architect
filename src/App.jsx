@@ -145,8 +145,8 @@ export function App() {
   const [view, setView] = useState(getHashView);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [headerTab, setHeaderTab] = useState('portfolio');
-  const { loading, syncing, lastSync } = useData();
-  const { refresh } = useDataActions();
+  const { loading, syncing, lastSync, privacyMode } = useData();
+  const { refresh, setPrivacyMode } = useDataActions();
   const busy = loading || syncing;
 
   useEffect(() => {
@@ -222,10 +222,12 @@ export function App() {
         </div>
 
         <div className={styles.sidebarProfile}>
-          <div className={styles.profileAvatar}>DB</div>
+          <div className={styles.profileAvatar}>{privacyMode ? 'AS' : 'DB'}</div>
           <div className={styles.profileInfo}>
-            <div className={styles.profileName}>Dan Baldauf</div>
-            <div className={styles.profileEmail}>dan@wealtharchitect.io</div>
+            <div className={styles.profileName}>{privacyMode ? 'Alex Stone' : 'Dan Baldauf'}</div>
+            <div className={styles.profileEmail}>
+              {privacyMode ? 'alex@example.com' : 'dan@wealtharchitect.io'}
+            </div>
           </div>
         </div>
       </aside>
@@ -269,6 +271,18 @@ export function App() {
           </button>
 
           <div className={styles.headerIcons}>
+            <div
+              className={styles.headerIconBtn}
+              onClick={() => setPrivacyMode(!privacyMode)}
+              title={privacyMode
+                ? 'Demo mode is on — every amount is scaled and names are replaced. Click to show your real figures.'
+                : 'Turn on demo mode to show this screen to someone without revealing your real figures.'}
+              style={privacyMode ? { color: 'var(--color-secondary)' } : undefined}
+            >
+              <span className="material-symbols-outlined">
+                {privacyMode ? 'visibility_off' : 'visibility'}
+              </span>
+            </div>
             <div className={styles.headerIconBtn}>
               <span className="material-symbols-outlined">notifications</span>
               <div className={styles.notifDot} />
@@ -290,6 +304,24 @@ export function App() {
           </PageBoundary>
         </main>
       </div>
+
+      {privacyMode && (
+        <div
+          onClick={() => setPrivacyMode(false)}
+          title="Click to turn demo mode off"
+          style={{
+            position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 9998, display: 'flex', alignItems: 'center', gap: 8,
+            padding: '8px 16px', background: 'var(--color-secondary, #0058be)',
+            color: '#fff', borderRadius: 999, boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+            cursor: 'pointer', fontSize: 12.5, fontWeight: 600,
+            fontFamily: 'var(--font-body)',
+          }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 17 }}>visibility_off</span>
+          Demo mode — amounts are scaled, names replaced. Click to exit.
+        </div>
+      )}
 
       <UpdatePill />
 

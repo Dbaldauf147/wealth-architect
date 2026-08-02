@@ -12,6 +12,11 @@ import {
   applyOverrides,
 } from '../lib/categorize';
 import { normalizeEmailSections } from '../lib/renderWeeklyEmail';
+import {
+  makeScrambler, scrambleTransactions, scrambleBalances, scrambleBalanceHistory,
+  scrambleRobinhood, scrambleCustomItems, scrambleLoan, scrambleAccountMaps,
+  scrambleHiddenCards, scramblePaymentPrefs, scrambleNotes,
+} from '../lib/privacy';
 
 const CONFIG_DOC_PATH = ['config', 'default'];
 
@@ -159,6 +164,21 @@ const saveShortTermLoan = (v) => saveJSON('shortTermLoan', v);
 // { trades: [{date, symbol, side, quantity, price, amount}], importedAt,
 // source, skipped, truncated }, or null when nothing is imported. Synced so
 // the import follows the user across devices.
+// Demo mode. Stored locally and *not* included in the Firestore payload:
+// it is a property of the screen you are standing in front of, not of the
+// account, so turning it on to show a colleague must not blank out the
+// numbers on your phone. The seed lives alongside it so aliases and the
+// scaling factor stay put while someone is looking at the page.
+const loadPrivacyMode = () => loadJSON('privacyMode', false) === true;
+const savePrivacyMode = (v) => saveJSON('privacyMode', !!v);
+const loadPrivacySeed = () => {
+  const existing = loadJSON('privacySeed', null);
+  if (typeof existing === 'string' && existing) return existing;
+  const seed = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  saveJSON('privacySeed', seed);
+  return seed;
+};
+
 const loadRobinhoodTrades = () => {
   const stored = loadJSON('robinhoodTrades', null);
   if (!stored) return null;
@@ -563,6 +583,8 @@ export function DataProvider({ children }) {
   const [rangeExcludedCategories, setRangeExcludedCategories] = useState(loadRangeExcludedCategories);
   const [shortTermLoan, setShortTermLoan] = useState(loadShortTermLoan);
   const [robinhoodTrades, setRobinhoodTradesState] = useState(loadRobinhoodTrades);
+  const [privacyMode, setPrivacyModeState] = useState(loadPrivacyMode);
+  const [privacySeed, setPrivacySeed] = useState(loadPrivacySeed);
   const [organizedCategories, setOrganizedCategories] = useState(loadOrganizedCategories);
   const [incomeCategories, setIncomeCategories] = useState(loadIncomeCategories);
   const [savedTxnViews, setSavedTxnViews] = useState(loadSavedTxnViews);
@@ -787,11 +809,27 @@ export function DataProvider({ children }) {
     [ruledTransactions, categoryOverrides, subcategoryOverrides, dateOverrides],
   );
 
-  const transactions = useMemo(
+  const visibleTransactions = useMemo(
     () => allTransactions.filter(t => !hiddenIds.has(t.transactionId)),
     [allTransactions, hiddenIds],
   );
 
+  // Everything below this line is what the pages actually see. Scrambling
+  // here rather than in each page's formatter means a page added later is
+  // covered by default — twelve files format currency independently, and one
+  // of them missing the treatment would leak the real figures.
+  const scrambler = useMemo(
+    () => (privacyMode ? makeScrambler(privacySeed) : null),
+    [privacyMode, privacySeed],
+  );
+
+  const transactions = useMemo(
+    () => (scrambler ? scrambleTransactions(visibleTransactions, scrambler) : visibleTransactions),
+    [visibleTransactions, scrambler],
+  );
+
+  // Recomputed from the scrambled set, so every derived total, average and
+  // chart series is scaled without a second code path.
   const analytics = useMemo(
     () => transactions.length ? computeAnalytics(transactions) : null,
     [transactions],
@@ -832,7 +870,7 @@ export function DataProvider({ children }) {
     const liabilities = [...(rawBalances.liabilities || []), ...(customLiabilities || [])];
     const totalAssets = assets.reduce((s, a) => s + (a.balance || 0), 0);
     const totalLiabilities = liabilities.reduce((s, l) => s + (l.balance || 0), 0);
-    return {
+    const merged = {
       ...rawBalances,
       assets,
       liabilities,
@@ -840,7 +878,9 @@ export function DataProvider({ children }) {
       totalLiabilities,
       netWorth: totalAssets - totalLiabilities,
     };
-  }, [rawBalances, customAssets, customLiabilities]);
+    // Scrambled after the customs merge so user-entered assets are covered too.
+    return scrambler ? scrambleBalances(merged, scrambler) : merged;
+  }, [rawBalances, customAssets, customLiabilities, scrambler]);
 
   // Used inside loadData() so we can suppress the error surface when the
   // background refresh fails but cached data is still on screen — better
@@ -1580,6 +1620,66 @@ export function DataProvider({ children }) {
     [allTransactions, hiddenIds],
   );
 
+  // Remaining surfaces that carry money or identify an account. Derived here
+  // so `reads` below hands every page the demo-safe version.
+  const shownBalanceHistory = useMemo(
+    () => (scrambler ? scrambleBalanceHistory(balanceHistory, scrambler) : balanceHistory),
+    [balanceHistory, scrambler],
+  );
+  const shownRobinhood = useMemo(
+    () => (scrambler ? scrambleRobinhood(robinhoodTrades, scrambler) : robinhoodTrades),
+    [robinhoodTrades, scrambler],
+  );
+  const shownCustomAssets = useMemo(
+    () => (scrambler ? scrambleCustomItems(customAssets, scrambler) : customAssets),
+    [customAssets, scrambler],
+  );
+  const shownCustomLiabilities = useMemo(
+    () => (scrambler ? scrambleCustomItems(customLiabilities, scrambler) : customLiabilities),
+    [customLiabilities, scrambler],
+  );
+  const shownLoan = useMemo(
+    () => (scrambler ? scrambleLoan(shortTermLoan, scrambler) : shortTermLoan),
+    [shortTermLoan, scrambler],
+  );
+  const shownMaps = useMemo(
+    () => (scrambler
+      ? scrambleAccountMaps({ accountNicknames, accountNumbers, accountGroups, assetClasses }, scrambler)
+      : { accountNicknames, accountNumbers, accountGroups, assetClasses }),
+    [accountNicknames, accountNumbers, accountGroups, assetClasses, scrambler],
+  );
+  const shownHiddenCards = useMemo(
+    () => (scrambler ? scrambleHiddenCards(hiddenCards, scrambler) : hiddenCards),
+    [hiddenCards, scrambler],
+  );
+  const shownPaymentPrefs = useMemo(
+    () => (scrambler ? scramblePaymentPrefs(paymentReminderPrefs, scrambler) : paymentReminderPrefs),
+    [paymentReminderPrefs, scrambler],
+  );
+  const shownNotes = useMemo(
+    () => (scrambler ? scrambleNotes(transactionNotes) : transactionNotes),
+    [transactionNotes, scrambler],
+  );
+  const shownHiddenTransactions = useMemo(
+    () => (scrambler ? scrambleTransactions(hiddenTransactions, scrambler) : hiddenTransactions),
+    [hiddenTransactions, scrambler],
+  );
+
+  // Turning demo mode on re-seeds, so a second showing never reuses the
+  // aliases or the scaling factor from the first.
+  const setPrivacyMode = useCallback((value) => {
+    setPrivacyModeState(prev => {
+      const next = typeof value === 'function' ? !!value(prev) : !!value;
+      savePrivacyMode(next);
+      if (next && !prev) {
+        const seed = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+        saveJSON('privacySeed', seed);
+        setPrivacySeed(seed);
+      }
+      return next;
+    });
+  }, []);
+
   // Stable bag of action callbacks. Every callback is wrapped in useCallback
   // with [] deps (or reads state via refs), so this object's identity never
   // changes after mount. Components that only need to write can subscribe to
@@ -1587,6 +1687,7 @@ export function DataProvider({ children }) {
   // when reads (transactions, overrides, etc.) change.
   const actions = useMemo(() => ({
     refresh: loadData,
+    setPrivacyMode,
     updateTransactionCategory,
     updateTransactionSubcategory,
     updateTransactionDate,
@@ -1643,6 +1744,7 @@ export function DataProvider({ children }) {
     getMatchCount,
   }), [
     loadData,
+    setPrivacyMode,
     updateTransactionCategory,
     updateTransactionSubcategory,
     updateTransactionDate,
@@ -1704,7 +1806,7 @@ export function DataProvider({ children }) {
   const reads = useMemo(() => ({
     transactions,
     balances,
-    balanceHistory,
+    balanceHistory: shownBalanceHistory,
     analytics,
     loading,
     syncing,
@@ -1715,8 +1817,8 @@ export function DataProvider({ children }) {
     customCategories,
     hiddenCategories,
     rangeExcludedCategories,
-    shortTermLoan,
-    robinhoodTrades,
+    shortTermLoan: shownLoan,
+    robinhoodTrades: shownRobinhood,
     organizedCategories,
     incomeCategories,
     savedTxnViews,
@@ -1728,25 +1830,25 @@ export function DataProvider({ children }) {
     activeTxnView,
     showAccounts,
     pareto8020View,
-    transactionNotes,
-    accountNicknames,
-    accountNumbers,
-    accountGroups,
-    assetClasses,
-    customAssets,
-    customLiabilities,
+    transactionNotes: shownNotes,
+    accountNicknames: shownMaps.accountNicknames,
+    accountNumbers: shownMaps.accountNumbers,
+    accountGroups: shownMaps.accountGroups,
+    assetClasses: shownMaps.assetClasses,
+    customAssets: shownCustomAssets,
+    customLiabilities: shownCustomLiabilities,
     customAssetClasses,
-    hiddenCards,
-    paymentReminderPrefs,
+    hiddenCards: shownHiddenCards,
+    paymentReminderPrefs: shownPaymentPrefs,
     calendarSyncPrefs,
     weeklyEmailSections,
     weeklyEmailDay,
-    hiddenTransactions,
+    hiddenTransactions: shownHiddenTransactions,
+    privacyMode,
     hiddenCount: hiddenIds.size,
   }), [
     transactions,
     balances,
-    balanceHistory,
     analytics,
     loading,
     syncing,
@@ -1757,8 +1859,6 @@ export function DataProvider({ children }) {
     customCategories,
     hiddenCategories,
     rangeExcludedCategories,
-    shortTermLoan,
-    robinhoodTrades,
     organizedCategories,
     incomeCategories,
     savedTxnViews,
@@ -1770,21 +1870,22 @@ export function DataProvider({ children }) {
     activeTxnView,
     showAccounts,
     pareto8020View,
-    transactionNotes,
-    accountNicknames,
-    accountNumbers,
-    accountGroups,
-    assetClasses,
-    customAssets,
-    customLiabilities,
     customAssetClasses,
-    hiddenCards,
-    paymentReminderPrefs,
     calendarSyncPrefs,
     weeklyEmailSections,
     weeklyEmailDay,
-    hiddenTransactions,
     hiddenIds,
+    privacyMode,
+    shownBalanceHistory,
+    shownRobinhood,
+    shownCustomAssets,
+    shownCustomLiabilities,
+    shownLoan,
+    shownMaps,
+    shownHiddenCards,
+    shownPaymentPrefs,
+    shownNotes,
+    shownHiddenTransactions,
   ]);
 
   return (
