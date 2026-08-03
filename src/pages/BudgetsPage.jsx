@@ -4,6 +4,9 @@ import { useBudgets } from '../hooks/useBudgets';
 import { BudgetCard } from '../components/BudgetCard';
 import BudgetChart from '../components/BudgetChart';
 import styles from './BudgetsPage.module.css';
+import {
+  CHART_WINDOWS, rangeWindows, spendByWindow, bandsFor, seriesFor,
+} from '../lib/normalRange';
 
 const CATEGORY_ICONS = {
   'food & drink': 'restaurant',
@@ -352,7 +355,8 @@ export function BudgetsPage() {
   }, [transactions, budgets, chartWeeks]);
 
   // ──────────────────────────────────────────────
-  // Normal Range Tracker — 3-month subcategory avg ± 25%
+  // Normal Range Tracker — last 30 days against the three 30-day periods
+  // before it, ±25%. See src/lib/normalRange.js for why the windows roll.
   // ──────────────────────────────────────────────
   const RANGE_KEY = 'wa-budget-range-cats';
   const [rangeCats, setRangeCats] = useState(() => {
@@ -391,40 +395,12 @@ export function BudgetsPage() {
   // selection pills can be grouped by Above / On Track / Under / No Baseline.
   const allCategoriesForRange = useMemo(() => {
     if (!transactions || transactions.length === 0) return [];
-    const now = new Date();
-    const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const baselineKeys = [];
-    for (let i = 1; i <= 3; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      baselineKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-    }
-    const byCatMonth = new Map();
-    for (const t of transactions) {
-      if (!t.category || t.category === 'Income') continue;
-      const amt = Number(t.amount) || 0;
-      if (amt >= 0) continue;
-      if (!t.date) continue;
-      const d = new Date(t.date);
-      if (isNaN(d)) continue;
-      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (!byCatMonth.has(t.category)) byCatMonth.set(t.category, new Map());
-      const m = byCatMonth.get(t.category);
-      m.set(monthKey, (m.get(monthKey) || 0) + Math.abs(amt));
-    }
+    const byCat = spendByWindow(transactions, {
+      keyFor: t => (t.category && t.category !== 'Income' ? t.category : null),
+    });
     const result = [];
-    for (const [cat, monthMap] of byCatMonth) {
-      const baselineVals = baselineKeys.map(k => monthMap.get(k) || 0);
-      const present = baselineVals.filter(v => v > 0);
-      const avg = present.length > 0 ? present.reduce((s, v) => s + v, 0) / present.length : 0;
-      const low = avg * 0.75;
-      const high = avg * 1.25;
-      const current = monthMap.get(currentKey) || 0;
-      let status = 'normal';
-      if (avg === 0) status = 'no-data';
-      else if (current === 0) status = 'no-spend';
-      else if (current > high) status = 'over';
-      else if (current < low) status = 'under';
-      result.push({ name: cat, status });
+    for (const [cat, values] of byCat) {
+      result.push({ name: cat, status: bandsFor(values).status });
     }
     return result.sort((a, b) => a.name.localeCompare(b.name));
   }, [transactions]);
@@ -432,73 +408,35 @@ export function BudgetsPage() {
   // Compute per-subcategory range data for the selected categories
   const rangeData = useMemo(() => {
     if (rangeCats.size === 0 || !transactions || transactions.length === 0) return [];
-    const now = new Date();
-    const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    // 3 prior complete months for the baseline
-    const baselineKeys = [];
-    for (let i = 1; i <= 3; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      baselineKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    const windows = rangeWindows();
+    const inScope = t => t.category
+      && rangeCats.has(t.category)
+      && !rangeExcludedSet.has(t.category);
+
+    const bySub = spendByWindow(transactions, {
+      keyFor: t => (inScope(t) ? `${t.category} ${t.subcategory || 'Uncategorized'}` : null),
+    });
+    const byCat = spendByWindow(transactions, {
+      keyFor: t => (inScope(t) ? t.category : null),
+    });
+
+    const withSeries = values => ({ ...bandsFor(values), series: seriesFor(values, windows) });
+
+    const grouped = new Map();
+    for (const [key, values] of bySub) {
+      const [cat, sub] = key.split(' ');
+      if (!grouped.has(cat)) grouped.set(cat, []);
+      grouped.get(cat).push({ sub, ...withSeries(values) });
     }
-    // 6-month chart series: 5 prior + current
-    const chartKeys = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      chartKeys.push({
-        key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
-        label: d.toLocaleString('en-US', { month: 'short' }),
-        isCurrent: i === 0,
-      });
-    }
-    // Aggregate (category, subcategory, monthKey) AND (category, monthKey) → spend (expense-only)
-    const byCatSubMonth = new Map();
-    const byCatMonth = new Map();
-    for (const t of transactions) {
-      if (!t.category || !rangeCats.has(t.category)) continue;
-      if (rangeExcludedSet.has(t.category)) continue;
-      const amt = Number(t.amount) || 0;
-      if (amt >= 0) continue;
-      if (!t.date) continue;
-      const d = new Date(t.date);
-      if (isNaN(d)) continue;
-      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      const sub = t.subcategory || 'Uncategorized';
-      if (!byCatSubMonth.has(t.category)) byCatSubMonth.set(t.category, new Map());
-      const subMap = byCatSubMonth.get(t.category);
-      if (!subMap.has(sub)) subMap.set(sub, new Map());
-      const monthMap = subMap.get(sub);
-      monthMap.set(monthKey, (monthMap.get(monthKey) || 0) + Math.abs(amt));
-      if (!byCatMonth.has(t.category)) byCatMonth.set(t.category, new Map());
-      const catMonthMap = byCatMonth.get(t.category);
-      catMonthMap.set(monthKey, (catMonthMap.get(monthKey) || 0) + Math.abs(amt));
-    }
-    function statusFor(avg, current, low, high) {
-      if (avg === 0) return 'no-data';
-      if (current === 0) return 'no-spend';
-      if (current > high) return 'over';
-      if (current < low) return 'under';
-      return 'normal';
-    }
-    function bandsFor(monthMap) {
-      const baselineVals = baselineKeys.map(k => monthMap.get(k) || 0);
-      const present = baselineVals.filter(v => v > 0);
-      const avg = present.length > 0 ? present.reduce((s, v) => s + v, 0) / present.length : 0;
-      const low = avg * 0.75;
-      const high = avg * 1.25;
-      const current = monthMap.get(currentKey) || 0;
-      const series = chartKeys.map(k => ({ ...k, value: monthMap.get(k.key) || 0 }));
-      return { avg, low, high, current, baselineMonths: present.length, status: statusFor(avg, current, low, high), series };
-    }
+
     const result = [];
-    for (const [cat, subMap] of byCatSubMonth) {
-      // Category-level rollup row
-      const catBands = bandsFor(byCatMonth.get(cat));
-      const subs = [];
-      for (const [sub, monthMap] of subMap) {
-        subs.push({ sub, ...bandsFor(monthMap) });
-      }
+    for (const [cat, subs] of grouped) {
       subs.sort((a, b) => b.avg - a.avg);
-      result.push({ cat, catBands, subs });
+      result.push({
+        cat,
+        catBands: withSeries(byCat.get(cat) || new Array(CHART_WINDOWS).fill(0)),
+        subs,
+      });
     }
     result.sort((a, b) => a.cat.localeCompare(b.cat));
     return result;
@@ -724,7 +662,7 @@ export function BudgetsPage() {
         <div className={styles.chartHeader}>
           <div className={styles.chartTitle}>Normal Range Tracker</div>
           <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
-            3-month average · ±25% normal band · this month vs band
+            Last 30 days vs the average of the three 30-day periods before it · ±25% band
           </div>
         </div>
         <div style={{ marginBottom: 12 }}>
@@ -874,7 +812,7 @@ export function BudgetsPage() {
             { key: 'over',     label: 'Above Range',  bg: 'rgba(186,26,26,0.06)',  fg: '#ba1a1a', icon: 'trending_up',   blurb: 'Spending more than the normal band' },
             { key: 'normal',   label: 'On Track',     bg: 'rgba(0,150,104,0.06)',  fg: '#16a34a', icon: 'check_circle',  blurb: 'Within the ±25% normal range' },
             { key: 'under',    label: 'Under Range',  bg: 'rgba(232,163,23,0.06)', fg: '#e8a317', icon: 'trending_down', blurb: 'Spending less than the normal band' },
-            { key: 'no-spend', label: 'No Spend Yet', bg: 'var(--color-surface-alt)', fg: 'var(--color-text-tertiary)', icon: 'pause_circle',  blurb: 'Has a baseline but nothing this month yet' },
+            { key: 'no-spend', label: 'No Spend Yet', bg: 'var(--color-surface-alt)', fg: 'var(--color-text-tertiary)', icon: 'pause_circle',  blurb: 'Has a baseline but nothing in the last 30 days' },
             { key: 'no-data',  label: 'No Baseline',  bg: 'var(--color-surface-alt)', fg: 'var(--color-text-tertiary)', icon: 'help',          blurb: 'Not enough prior-month history to compare' },
           ];
           // Sort within each bucket: categories first, then subcategories, biggest movers first.
@@ -917,7 +855,7 @@ export function BudgetsPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {b.items.map(({ kind, sub, cat, avg, low, high, current, baselineMonths, status, series }) => {
+                        {b.items.map(({ kind, sub, cat, avg, low, high, current, baselineWindows, status, series }) => {
                           const delta = current - avg;
                           const deltaPct = avg > 0 ? (delta / avg) * 100 : 0;
                           const deltaColor = status === 'over' ? '#ba1a1a' : status === 'under' ? '#e8a317' : 'var(--color-text-tertiary)';
@@ -955,8 +893,8 @@ export function BudgetsPage() {
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                     <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{isExpanded ? '\u25BE' : '\u25B8'}</span>
                                     <span>{cat}</span>
-                                    {baselineMonths < 3 && baselineMonths > 0 && (
-                                      <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>({baselineMonths}mo)</span>
+                                    {baselineWindows < 3 && baselineWindows > 0 && (
+                                      <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>({baselineWindows}×30d)</span>
                                     )}
                                   </div>
                                 </td>

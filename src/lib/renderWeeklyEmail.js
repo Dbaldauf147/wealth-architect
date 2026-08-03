@@ -16,12 +16,33 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function fmtCompact(n) {
-  if (n == null) return '—';
-  const abs = Math.abs(n);
-  if (abs >= 1000) return `$${(abs / 1000).toFixed(abs >= 10000 ? 0 : 1)}k`;
-  return `$${Math.round(abs)}`;
+// Pick an axis maximum and tick step that land on round dollar amounts ($250,
+// $500, $1,000 …) rather than arbitrary fractions of the data max, so the Y
+// labels read as real money.
+function niceScale(rawMax, targetTicks = 4) {
+  const max = Math.max(rawMax, 1);
+  const rough = max / targetTicks;
+  const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+  const norm = rough / mag;
+  const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag;
+  const count = Math.max(1, Math.ceil(max / step));
+  return { yMax: step * count, step, ticks: Array.from({ length: count + 1 }, (_, i) => i * step) };
 }
+
+// Axis money label: whole dollars with thousands separators, keeping a decimal
+// only when the step itself is fractional (e.g. a $2.50 step on a tiny week).
+function fmtAxisDollar(v, step) {
+  const digits = step >= 1 ? (Number.isInteger(step) ? 0 : 1) : 2;
+  return `$${v.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+}
+
+// Shared chart geometry. The extra bottom padding leaves room for a second
+// line of X labels (the calendar dates / axis caption).
+const CHART = {
+  w: 560,
+  h: 236,
+  pad: { top: 16, right: 16, bottom: 44, left: 62 },
+};
 
 // Build an inline SVG of the cumulative-daily-spend comparison (this month
 // vs. last month), mirroring the Overview page chart. Inline SVG renders
@@ -29,17 +50,18 @@ function fmtCompact(n) {
 // clients that strip it (older Outlook), the text headline below provides
 // the same information.
 function renderMonthCompareSvg(mc) {
-  const VB_W = 560;
-  const VB_H = 220;
-  const pad = { top: 16, right: 16, bottom: 32, left: 52 };
+  const VB_W = CHART.w;
+  const VB_H = CHART.h;
+  const pad = CHART.pad;
   const cW = VB_W - pad.left - pad.right;
   const cH = VB_H - pad.top - pad.bottom;
   const maxDay = Math.max(mc.thisMonthDays, mc.lastMonthDays);
-  const yMax = Math.max(
+  const scale = niceScale(Math.max(
     mc.cumThis[mc.today] || 0,
     mc.cumLast[mc.lastMonthDays] || 0,
     1,
-  ) * 1.08;
+  ));
+  const yMax = scale.yMax;
 
   const xPos = day => pad.left + ((day - 1) / Math.max(1, maxDay - 1)) * cW;
   const yPos = amt => pad.top + cH - (amt / yMax) * cH;
@@ -51,9 +73,12 @@ function renderMonthCompareSvg(mc) {
   const lastPath = lastPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
   const thisPath = thisPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
 
-  const tickCount = 4;
-  const yTicks = Array.from({ length: tickCount + 1 }, (_, i) => (yMax * i) / tickCount);
-  const xTickDays = [1, 5, 10, 15, 20, 25, maxDay].filter((v, i, a) => a.indexOf(v) === i);
+  const yTicks = scale.ticks;
+  // Day-of-month ticks. The last one is dropped when it would collide with the
+  // month-end tick that always gets a label.
+  const xTickDays = [1, 5, 10, 15, 20, 25, maxDay]
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .filter(d => d === maxDay || maxDay - d >= 3);
 
   const gridLines = yTicks.map((t, i) => {
     const y = yPos(t).toFixed(1);
@@ -63,12 +88,16 @@ function renderMonthCompareSvg(mc) {
 
   const yLabels = yTicks.map(t => {
     const y = (yPos(t) + 4).toFixed(1);
-    return `<text x="${pad.left - 8}" y="${y}" text-anchor="end" font-size="10" fill="#94a3b8" font-family="-apple-system,'Segoe UI',sans-serif">${fmtCompact(t)}</text>`;
+    return `<text x="${pad.left - 8}" y="${y}" text-anchor="end" font-size="10" fill="#94a3b8" font-family="-apple-system,'Segoe UI',sans-serif">${fmtAxisDollar(t, scale.step)}</text>`;
   }).join('');
 
+  // Both months share a day-of-month axis, so the ticks are day numbers with a
+  // caption underneath saying what they are, rather than a single month's dates.
+  const xLabelY = VB_H - pad.bottom + 16;
   const xLabels = xTickDays.map(d => {
-    return `<text x="${xPos(d).toFixed(1)}" y="${VB_H - pad.bottom + 16}" text-anchor="middle" font-size="10" fill="#94a3b8" font-family="-apple-system,'Segoe UI',sans-serif">${d}</text>`;
-  }).join('');
+    return `<text x="${xPos(d).toFixed(1)}" y="${xLabelY}" text-anchor="middle" font-size="10" fill="#94a3b8" font-family="-apple-system,'Segoe UI',sans-serif">${d}</text>`;
+  }).join('')
+    + `<text x="${(pad.left + (VB_W - pad.right)) / 2}" y="${xLabelY + 16}" text-anchor="middle" font-size="10" fill="#94a3b8" font-family="-apple-system,'Segoe UI',sans-serif">Day of month · ${escapeHtml(mc.thisMonthLabel)} vs ${escapeHtml(mc.lastMonthLabel)}</text>`;
 
   const lastLine = lastPts.length >= 2
     ? `<path d="${lastPath}" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round" />`
@@ -98,13 +127,14 @@ function renderMonthCompareSvg(mc) {
 // Overview page Weekly view. Solid blue = this week through today; dotted gray
 // = the recent-average ("normal") week.
 function renderWeekCompareSvg(wc) {
-  const VB_W = 560;
-  const VB_H = 220;
-  const pad = { top: 16, right: 16, bottom: 32, left: 52 };
+  const VB_W = CHART.w;
+  const VB_H = CHART.h;
+  const pad = CHART.pad;
   const cW = VB_W - pad.left - pad.right;
   const cH = VB_H - pad.top - pad.bottom;
-  const { dayLabels, todayIdx, thisCum, normalCum } = wc;
-  const yMax = Math.max(thisCum[todayIdx] || 0, normalCum[6] || 0, 1) * 1.08;
+  const { dayLabels, dayDates, todayIdx, thisCum, normalCum } = wc;
+  const scale = niceScale(Math.max(thisCum[todayIdx] || 0, normalCum[6] || 0, 1));
+  const yMax = scale.yMax;
 
   const xPos = idx => pad.left + (idx / 6) * cW;
   const yPos = amt => pad.top + cH - (amt / yMax) * cH;
@@ -116,8 +146,7 @@ function renderWeekCompareSvg(wc) {
   const normalPath = normalPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
   const thisPath = thisPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
 
-  const tickCount = 4;
-  const yTicks = Array.from({ length: tickCount + 1 }, (_, i) => (yMax * i) / tickCount);
+  const yTicks = scale.ticks;
 
   const gridLines = yTicks.map((t, i) => {
     const y = yPos(t).toFixed(1);
@@ -127,11 +156,19 @@ function renderWeekCompareSvg(wc) {
 
   const yLabels = yTicks.map(t => {
     const y = (yPos(t) + 4).toFixed(1);
-    return `<text x="${pad.left - 8}" y="${y}" text-anchor="end" font-size="10" fill="#94a3b8" font-family="-apple-system,'Segoe UI',sans-serif">${fmtCompact(t)}</text>`;
+    return `<text x="${pad.left - 8}" y="${y}" text-anchor="end" font-size="10" fill="#94a3b8" font-family="-apple-system,'Segoe UI',sans-serif">${fmtAxisDollar(t, scale.step)}</text>`;
   }).join('');
 
+  // Weekday name on the first line, the actual calendar date (M/D) beneath it.
+  const xLabelY = VB_H - pad.bottom + 16;
   const xLabels = dayLabels.map((lbl, i) => {
-    return `<text x="${xPos(i).toFixed(1)}" y="${VB_H - pad.bottom + 16}" text-anchor="middle" font-size="10" fill="#94a3b8" font-family="-apple-system,'Segoe UI',sans-serif">${lbl}</text>`;
+    const x = xPos(i).toFixed(1);
+    const isToday = i === todayIdx;
+    const name = `<text x="${x}" y="${xLabelY}" text-anchor="middle" font-size="10" fill="${isToday ? '#0058be' : '#64748b'}" font-weight="${isToday ? '700' : '400'}" font-family="-apple-system,'Segoe UI',sans-serif">${lbl}</text>`;
+    const date = dayDates && dayDates[i]
+      ? `<text x="${x}" y="${xLabelY + 14}" text-anchor="middle" font-size="9" fill="${isToday ? '#0058be' : '#94a3b8'}" font-family="-apple-system,'Segoe UI',sans-serif">${dayDates[i]}</text>`
+      : '';
+    return name + date;
   }).join('');
 
   const normalLine = normalPts.length >= 2
@@ -289,7 +326,7 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
       const paceSign = wc.paceDelta >= 0 ? '▲' : '▼';
       return `
           <div style="font-size:15px;font-weight:700;letter-spacing:0.03em;text-transform:uppercase;color:#334155;margin-bottom:10px;">This Week vs Normal</div>
-          ${chart('weekChart', renderWeekCompareSvg(wc), { w: 560, h: 220 })}
+          ${chart('weekChart', renderWeekCompareSvg(wc), { w: CHART.w, h: CHART.h })}
           <div style="font-size:15px;color:#475569;margin-top:10px;line-height:1.5;font-variant-numeric:tabular-nums;">
             <strong style="color:#111;">${money(wc.thisTotalToDate)}</strong> this wk · ${money(wc.normalFull)} normal · <span style="color:${paceColor};font-weight:700;">${paceSign} ${money(Math.abs(wc.paceDelta))}</span>
           </div>`;
@@ -300,7 +337,7 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
       const paceSign = mc.paceDelta >= 0 ? '▲' : '▼';
       return `
           <div style="font-size:15px;font-weight:700;letter-spacing:0.03em;text-transform:uppercase;color:#334155;margin-bottom:10px;">${escapeHtml(mc.thisMonthLabel)} vs ${escapeHtml(mc.lastMonthLabel)}</div>
-          ${chart('monthChart', renderMonthCompareSvg(mc), { w: 560, h: 220 })}
+          ${chart('monthChart', renderMonthCompareSvg(mc), { w: CHART.w, h: CHART.h })}
           <div style="font-size:15px;color:#475569;margin-top:10px;line-height:1.5;font-variant-numeric:tabular-nums;">
             <strong style="color:#111;">${money(mc.thisTotalToDate)}</strong> ${escapeHtml(mc.thisMonthLabel)} · ${money(mc.lastTotalFinal)} ${escapeHtml(mc.lastMonthLabel)} · <span style="color:${paceColor};font-weight:700;">${paceSign} ${money(Math.abs(mc.paceDelta))}</span>
           </div>`;
@@ -331,7 +368,7 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
       <td style="padding:0 28px 20px;">
         <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
           <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:4px;">Above Normal Range</div>
-          <div style="font-size:12px;color:#64748b;margin-bottom:14px;">Categories spending more than their usual range (3-month average ±25%) this month.</div>
+          <div style="font-size:12px;color:#64748b;margin-bottom:14px;">Categories spending more in the last 30 days than their usual range (the average of the three 30-day periods before it, ±25%).</div>
           ${aboveRange.map((item, i) => `
           <table role="presentation" width="100%" style="border-collapse:collapse;margin-bottom:14px;">
             <tr>

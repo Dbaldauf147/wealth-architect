@@ -4,6 +4,8 @@
    Input:  { transactions, rangeStart, rangeEnd }  (ISO date strings, inclusive)
    Output: a plain object describing the summary so rendering is separate. */
 
+import { rangeWindows, spendByWindow, bandsFor, seriesFor } from './normalRange.js';
+
 function parseDate(v) {
   if (!v) return null;
   const d = new Date(v);
@@ -309,6 +311,13 @@ export function weekCompare({ transactions, asOf = new Date(), lookbackWeeks = 8
   }
 
   const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  // Calendar date (M/D) for each weekday slot, so a chart axis can show when
+  // "Mon…Sun" actually was rather than a generic weekday name.
+  const dayDates = dayLabels.map((_, i) => {
+    const d = new Date(thisMon);
+    d.setDate(d.getDate() + i);
+    return `${d.getMonth() + 1}/${d.getDate()}`;
+  });
   const normalDaily = normalSum.map(s => s / weeksObserved);
 
   // Cumulative curves. `thisCum` only runs through today (partial week).
@@ -324,6 +333,7 @@ export function weekCompare({ transactions, asOf = new Date(), lookbackWeeks = 8
 
   return {
     dayLabels,
+    dayDates,
     todayIdx,
     thisCum,
     normalCum,
@@ -336,62 +346,36 @@ export function weekCompare({ transactions, asOf = new Date(), lookbackWeeks = 8
 }
 
 /** Categories currently spending above their normal range, mirroring the
- *  Budgets page "Normal Range Tracker": baseline = average of the 3 prior
- *  complete months (months with spend), band = ±25% of that average, and a
- *  category is "above range" when this month's spend exceeds the high band.
- *  Returns one entry per above-range category (sorted by how far over), each
- *  with a 6-month series so the email can draw the same range sparkline. */
+ *  Budgets page "Normal Range Tracker": the last 30 days against the average
+ *  of the three 30-day periods before it (counting only periods with spend),
+ *  band = ±25% of that average, above range when the current window exceeds
+ *  the high band. Both sides share ./normalRange.js so the email and the page
+ *  cannot drift apart. Returns one entry per above-range category sorted by
+ *  how far over, each with a six-window series for the sparkline. */
 export function aboveRangeCategories({ transactions, asOf = new Date(), excludedCategories = [] }) {
   const excludedSet = new Set(excludedCategories || []);
-  const currentKey = `${asOf.getFullYear()}-${String(asOf.getMonth() + 1).padStart(2, '0')}`;
-  const baselineKeys = [];
-  for (let i = 1; i <= 3; i++) {
-    const d = new Date(asOf.getFullYear(), asOf.getMonth() - i, 1);
-    baselineKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-  }
-  const chartKeys = [];
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(asOf.getFullYear(), asOf.getMonth() - i, 1);
-    chartKeys.push({
-      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
-      label: d.toLocaleString('en-US', { month: 'short' }),
-      isCurrent: i === 0,
-    });
-  }
-
-  const byCatMonth = new Map();
-  for (const t of (transactions || [])) {
-    if (!t.category || t.category === 'Income') continue;
-    if (excludedSet.has(t.category)) continue;
-    const amt = Number(t.amount) || 0;
-    if (amt >= 0) continue;
-    const d = parseDate(t.date);
-    if (!d) continue;
-    const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    if (!byCatMonth.has(t.category)) byCatMonth.set(t.category, new Map());
-    const m = byCatMonth.get(t.category);
-    m.set(monthKey, (m.get(monthKey) || 0) + Math.abs(amt));
-  }
+  const windows = rangeWindows(asOf);
+  const byCat = spendByWindow(transactions, {
+    asOf,
+    keyFor: t => (
+      t.category && t.category !== 'Income' && !excludedSet.has(t.category) ? t.category : null
+    ),
+  });
 
   const result = [];
-  for (const [cat, monthMap] of byCatMonth) {
-    const present = baselineKeys.map(k => monthMap.get(k) || 0).filter(v => v > 0);
-    const avg = present.length > 0 ? present.reduce((s, v) => s + v, 0) / present.length : 0;
+  for (const [cat, values] of byCat) {
+    const { avg, high, current } = bandsFor(values);
     if (avg === 0) continue;
-    const high = avg * 1.25;
-    const low = avg * 0.75;
-    const current = monthMap.get(currentKey) || 0;
     if (current <= high) continue; // only above-range categories
-    const series = chartKeys.map(k => ({ label: k.label, isCurrent: k.isCurrent, value: monthMap.get(k.key) || 0 }));
     result.push({
       name: cat,
       avg,
-      low,
+      low: avg * 0.75,
       high,
       current,
       overBy: current - high,
       overPct: ((current - avg) / avg) * 100,
-      series,
+      series: seriesFor(values, windows),
     });
   }
   result.sort((a, b) => b.overBy - a.overBy);
