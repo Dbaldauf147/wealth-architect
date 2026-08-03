@@ -5,7 +5,7 @@ import { BudgetCard } from '../components/BudgetCard';
 import BudgetChart from '../components/BudgetChart';
 import styles from './BudgetsPage.module.css';
 import {
-  CHART_WINDOWS, rangeWindows, spendByWindow, bandsFor, seriesFor,
+  CHART_WINDOWS, WINDOW_DAYS, rangeWindows, spendByWindow, bandsFor, seriesFor,
 } from '../lib/normalRange';
 
 const CATEGORY_ICONS = {
@@ -847,11 +847,11 @@ export function BudgetsPage() {
                       <thead>
                         <tr style={{ color: 'var(--color-text-tertiary)', textAlign: 'left' }}>
                           <th style={{ padding: '6px 14px', fontWeight: 600 }}>Subcategory</th>
-                          <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>3mo Avg</th>
+                          <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>30d Avg</th>
                           <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>Normal Range</th>
-                          <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>This Month</th>
+                          <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>Last 30 Days</th>
                           <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>Δ vs Avg</th>
-                          <th style={{ padding: '6px 8px', fontWeight: 600 }}>6-mo Trend</th>
+                          <th style={{ padding: '6px 8px', fontWeight: 600 }}>Trend (6 × 30d)</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -865,9 +865,11 @@ export function BudgetsPage() {
                           // Collect matching transactions for the last 6 months when expanded
                           let matchingTxns = [];
                           if (isExpanded) {
+                            // Same span as the six rolling windows charted
+                            // above, so the list accounts for exactly the
+                            // spending the trend line is drawn from.
                             const cutoff = new Date();
-                            cutoff.setMonth(cutoff.getMonth() - 5);
-                            cutoff.setDate(1);
+                            cutoff.setDate(cutoff.getDate() - (CHART_WINDOWS * WINDOW_DAYS - 1));
                             cutoff.setHours(0, 0, 0, 0);
                             matchingTxns = (transactions || [])
                               .filter(t => {
@@ -880,7 +882,10 @@ export function BudgetsPage() {
                                 if (isNaN(d) || d < cutoff) return false;
                                 return true;
                               })
-                              .sort((a, c) => new Date(c.date) - new Date(a.date));
+                              // Biggest spend first — the point of opening a row is
+                              // to see what drove the total, not to read a diary.
+                              // Same-amount rows fall back to newest first.
+                              .sort((a, c) => (Math.abs(c.amount) - Math.abs(a.amount)) || (new Date(c.date) - new Date(a.date)));
                           }
                           return (
                             <Fragment key={rowKey}>
@@ -921,10 +926,10 @@ export function BudgetsPage() {
                                 <tr style={{ background: 'var(--color-surface-alt, #f7f7f7)' }}>
                                   <td colSpan={6} style={{ padding: '10px 14px 14px 28px' }}>
                                     <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 6, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                                      {matchingTxns.length} {matchingTxns.length === 1 ? 'transaction' : 'transactions'} · last 6 months · {isCat ? `all subcategories of ${cat}` : `${cat} · ${sub}`}
+                                      {matchingTxns.length} {matchingTxns.length === 1 ? 'transaction' : 'transactions'} · last 180 days · largest first · {isCat ? `all subcategories of ${cat}` : `${cat} · ${sub}`}
                                     </div>
                                     {matchingTxns.length === 0 ? (
-                                      <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>No matching transactions in the last 6 months.</div>
+                                      <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>No matching transactions in the last 180 days.</div>
                                     ) : (
                                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                                         <thead>
@@ -955,7 +960,7 @@ export function BudgetsPage() {
                                     )}
                                     {matchingTxns.length > 200 && (
                                       <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 6, fontStyle: 'italic' }}>
-                                        Showing 200 of {matchingTxns.length}. Refine on the Transactions tab for the full list.
+                                        Showing the 200 largest of {matchingTxns.length}. Refine on the Transactions tab for the full list.
                                       </div>
                                     )}
                                   </td>
