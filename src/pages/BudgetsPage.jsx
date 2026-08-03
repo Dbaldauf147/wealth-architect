@@ -6,6 +6,7 @@ import BudgetChart from '../components/BudgetChart';
 import styles from './BudgetsPage.module.css';
 import {
   CHART_WINDOWS, WINDOW_DAYS, rangeWindows, spendByWindow, bandsFor, seriesFor,
+  windowIndexFor,
 } from '../lib/normalRange';
 
 const CATEGORY_ICONS = {
@@ -865,12 +866,13 @@ export function BudgetsPage() {
                           // Collect matching transactions for the last 6 months when expanded
                           let matchingTxns = [];
                           if (isExpanded) {
-                            // Same span as the six rolling windows charted
-                            // above, so the list accounts for exactly the
-                            // spending the trend line is drawn from.
-                            const cutoff = new Date();
-                            cutoff.setDate(cutoff.getDate() - (CHART_WINDOWS * WINDOW_DAYS - 1));
-                            cutoff.setHours(0, 0, 0, 0);
+                            // Exactly the rows behind the Last 30 Days figure on
+                            // this line. Membership is decided by the same
+                            // function that computes that figure, so the list
+                            // always sums to the number it sits under — a
+                            // separate date comparison here would eventually
+                            // disagree with it at a window edge.
+                            const asOf = new Date();
                             matchingTxns = (transactions || [])
                               .filter(t => {
                                 if (t.category !== cat) return false;
@@ -878,9 +880,7 @@ export function BudgetsPage() {
                                 const amt = Number(t.amount) || 0;
                                 if (amt >= 0) return false;
                                 if (!t.date) return false;
-                                const d = new Date(t.date);
-                                if (isNaN(d) || d < cutoff) return false;
-                                return true;
+                                return windowIndexFor(t.date, asOf, 1) === 0;
                               })
                               // Biggest spend first — the point of opening a row is
                               // to see what drove the total, not to read a diary.
@@ -926,10 +926,10 @@ export function BudgetsPage() {
                                 <tr style={{ background: 'var(--color-surface-alt, #f7f7f7)' }}>
                                   <td colSpan={6} style={{ padding: '10px 14px 14px 28px' }}>
                                     <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 6, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                                      {matchingTxns.length} {matchingTxns.length === 1 ? 'transaction' : 'transactions'} · last 180 days · largest first · {isCat ? `all subcategories of ${cat}` : `${cat} · ${sub}`}
+                                      {matchingTxns.length} {matchingTxns.length === 1 ? 'transaction' : 'transactions'} · last {WINDOW_DAYS} days · largest first · totalling {fmt(matchingTxns.reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0))} · {isCat ? `all subcategories of ${cat}` : `${cat} · ${sub}`}
                                     </div>
                                     {matchingTxns.length === 0 ? (
-                                      <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>No matching transactions in the last 180 days.</div>
+                                      <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>No spending in this category in the last 30 days.</div>
                                     ) : (
                                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                                         <thead>

@@ -1,5 +1,9 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useData } from '../contexts/DataContext';
+import {
+  REWARD_CATEGORIES, CARD_KEYS, CARD_LABELS, CARD_COLORS, BOFA_CHOICE, POINT_VALUE_CENTS,
+  detectCardKey, findSuboptimalCharges,
+} from '../lib/cardRewards';
 
 function fmt(n) {
   if (n == null || n === '') return '—';
@@ -176,26 +180,47 @@ function rewardCardColor(best) {
   return '#475569';
 }
 
-// Per-card rate grid. `best` is the column index (0=Sapphire, 1=Prime, 2=BofA)
-// of the winning card for that row, used to highlight the best cell.
-const CARD_RATE_COLUMNS = ['Sapphire Reserve', 'Prime Visa', 'BofA Customized Cash'];
-const CARD_RATE_COLORS = ['#0058be', '#00a8e1', '#e31837'];
-const CARD_RATE_MATRIX = [
-  { cat: 'Amazon / Whole Foods / Amazon Fresh', rates: ['1X', '5%', '1%'], best: 1 },
-  { cat: 'Dining / Restaurants', rates: ['3X', '2%', '1% (or 3% if selected)'], best: 0 },
-  { cat: 'Gas / EV charging', rates: ['1X', '2%', '3% (your likely default)'], best: 2 },
-  { cat: 'Travel (booked direct)', rates: ['4X flights & hotels', '1%', '1% (or 3% if selected)'], best: 0 },
-  { cat: 'Travel (via card portal)', rates: ['8X (Chase Travel)', '5% (Chase Travel)', '1% (or 3% if selected)'], best: 0 },
-  { cat: 'Transit / rideshare', rates: ['1X', '2%', '1%'], best: 1 },
-  { cat: 'Groceries (supermarkets)', rates: ['1X', '1%', '2%'], best: 2 },
-  { cat: 'Wholesale clubs', rates: ['1X', '1%', '2%'], best: 2 },
-  { cat: 'Drugstores / pharmacies', rates: ['1X', '1%', '1% (or 3% if selected)'], best: 2 },
-  { cat: 'Online shopping', rates: ['1X', '1%', '1% (or 3% if selected)'], best: 2 },
-  { cat: 'Home improvement', rates: ['1X', '1%', '1% (or 3% if selected)'], best: 2 },
-  { cat: 'Everything else', rates: ['1X', '1%', '1%'], best: 0 },
-];
+// Per-card rate grid, derived from the shared rate table in lib/cardRewards so
+// the grid and the suboptimal-charge flagging can't disagree. `best` is the
+// column index of the winning card, used to highlight the cell.
+const CARD_RATE_COLUMNS = CARD_KEYS.map(k => CARD_LABELS[k]);
+const CARD_RATE_COLORS = CARD_KEYS.map(k => CARD_COLORS[k]);
+const CARD_RATE_MATRIX = REWARD_CATEGORIES.map(c => {
+  const rates = CARD_KEYS.map(k => c.display[k]);
+  const effective = CARD_KEYS.map(k => c.rates[k]);
+  return { cat: c.label, rates, effective, best: effective.indexOf(Math.max(...effective)) };
+});
 
 const STORAGE_KEY = 'cardPromos';
+
+// Which rate profile each account uses. Only needed for accounts whose name
+// doesn't already say which card it is (e.g. "CREDIT CARD (-1947)"). Values are
+// a card key, or 'ignore' to leave an account out of the analysis entirely.
+const CARD_MAP_KEY = 'cardRateProfiles';
+
+function loadCardMap() {
+  try {
+    const saved = localStorage.getItem(CARD_MAP_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch { /* corrupt entry — fall through to an empty map */ }
+  return {};
+}
+
+function saveCardMap(map) {
+  localStorage.setItem(CARD_MAP_KEY, JSON.stringify(map));
+}
+
+// Cents matter here — a single miss is often worth under a dollar.
+function fmtCents(n) {
+  if (n == null) return '—';
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+}
+
+function shortDate(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
+}
 
 function loadPromos() {
   try {
@@ -217,8 +242,20 @@ export function CardPromosPage() {
   const [editDraft, setEditDraft] = useState({});
   const [showSeedBtn, setShowSeedBtn] = useState(false);
   const [view, setView] = useState('csr'); // 'csr' | 'promos'
+  const [cardMap, setCardMap] = useState(loadCardMap);
 
   useEffect(() => savePromos(promos), [promos]);
+  useEffect(() => saveCardMap(cardMap), [cardMap]);
+
+  // Charges in the last 30 days that would have earned more on another card.
+  // An explicit mapping wins over guessing the card from the account name.
+  const suboptimal = useMemo(() => {
+    const resolve = name => (accountGroups && accountGroups[name]) || (accountNicknames && accountNicknames[name]) || name;
+    return findSuboptimalCharges({
+      transactions,
+      cardKeyFor: account => cardMap[account] || detectCardKey(account, resolve(account)),
+    });
+  }, [transactions, cardMap, accountNicknames, accountGroups]);
 
   // Resolve "effective used" per promo, in priority order:
   //   1. manually marked complete this cycle → count the full value
@@ -396,7 +433,15 @@ export function CardPromosPage() {
         <StatCard label="Completed" value={`${totals.doneCount} of ${totals.count}`} color="#7c3aed" icon="task_alt" sub="Manually logged this cycle" />
       </div>
 
-      {/* Cash-back reward matrix — cross-card comparison, so it lives on the general tab */}
+      {/* Cross-card comparisons live on the general tab */}
+      {view === 'promos' && (
+        <SuboptimalCharges
+          result={suboptimal}
+          cardMap={cardMap}
+          setCardMap={setCardMap}
+          displayName={displayName}
+        />
+      )}
       {view === 'promos' && <CashBackSummary />}
 
       {/* Grouped by card */}
@@ -581,6 +626,152 @@ export function CardPromosPage() {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* Last-30-days charges where another card in the wallet pays more. "Missed" is
+   the spend times the rate gap, i.e. what swiping the better card would have
+   added — not a loss on the rewards already earned. */
+function SuboptimalCharges({ result, cardMap, setCardMap, displayName }) {
+  const [showAll, setShowAll] = useState(false);
+  const { flagged, totalMissed, totalCharges, evaluatedCount, unknownAccounts, start, end } = result;
+  const cardStyle = { background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' };
+  const th = { padding: '8px 10px', textAlign: 'left', fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', borderBottom: '1px solid var(--border-ghost)', whiteSpace: 'nowrap' };
+  const td = { padding: '9px 10px', fontSize: 12.5, borderBottom: '1px solid var(--border-ghost)', verticalAlign: 'middle' };
+  const windowLabel = `${shortDate(start.toISOString())} – ${shortDate(end.toISOString())}`;
+  const LIMIT = 25;
+  const rows = showAll ? flagged : flagged.slice(0, LIMIT);
+  const flaggedSpend = flagged.reduce((s, f) => s + f.spend, 0);
+
+  const cardPill = key => (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+      <span style={{ width: 8, height: 8, borderRadius: 2, background: CARD_COLORS[key], flexShrink: 0 }} />
+      {CARD_LABELS[key]}
+    </span>
+  );
+
+  return (
+    <div style={cardStyle}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 14 }}>
+        <div>
+          <div style={{ fontFamily: 'var(--font-headline)', fontSize: 16, fontWeight: 700, marginBottom: 2 }}>
+            Suboptimal Card Usage
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+            Charges from the last 30 days ({windowLabel}) where another card would have paid more.
+          </div>
+        </div>
+        {evaluatedCount > 0 && (
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontFamily: 'var(--font-headline)', fontSize: 22, fontWeight: 700, color: flagged.length ? '#ba1a1a' : '#16a34a' }}>
+              {fmtCents(totalMissed)}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+              left on the table · {flagged.length} of {evaluatedCount} charges
+            </div>
+          </div>
+        )}
+      </div>
+
+      {evaluatedCount === 0 ? (
+        <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>
+          {unknownAccounts.length
+            ? 'No card accounts are mapped to a rate profile yet — set them below and this fills in.'
+            : 'No card charges in the last 30 days to evaluate.'}
+        </div>
+      ) : flagged.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: '#16a34a', fontWeight: 600 }}>
+          Every one of the {evaluatedCount} charges in this window was on the best-paying card. Nice.
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginBottom: 10 }}>
+            {fmt(flaggedSpend)} of {fmt(totalCharges)} in card spend went to a second-best card.
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
+              <thead>
+                <tr>
+                  <th style={{ ...th, width: 74 }}>Date</th>
+                  <th style={th}>Merchant</th>
+                  <th style={th}>Earns as</th>
+                  <th style={th}>Card used</th>
+                  <th style={th}>Should have used</th>
+                  <th style={{ ...th, textAlign: 'right' }}>Amount</th>
+                  <th style={{ ...th, textAlign: 'right' }}>Missed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(f => (
+                  <tr key={f.id}>
+                    <td style={{ ...td, color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>{shortDate(f.date)}</td>
+                    <td style={{ ...td, fontWeight: 600 }} title={displayName(f.account) || f.account}>{f.description}</td>
+                    <td style={{ ...td, color: 'var(--color-text-tertiary)' }}>{f.categoryLabel}</td>
+                    <td style={td}>
+                      {cardPill(f.usedKey)}
+                      <span style={{ color: 'var(--color-text-tertiary)', marginLeft: 6, fontVariantNumeric: 'tabular-nums' }}>{f.usedRate}%</span>
+                    </td>
+                    <td style={{ ...td, fontWeight: 600 }}>
+                      {cardPill(f.bestKey)}
+                      <span style={{ color: '#16a34a', marginLeft: 6, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{f.bestRate}%</span>
+                    </td>
+                    <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(f.spend)}</td>
+                    <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#ba1a1a', fontVariantNumeric: 'tabular-nums' }}>{fmtCents(f.missed)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {flagged.length > LIMIT && (
+            <button onClick={() => setShowAll(v => !v)} style={{ ...btnSecondaryStyle, marginTop: 10 }}>
+              {showAll ? 'Show top 25' : `Show all ${flagged.length}`}
+            </button>
+          )}
+        </>
+      )}
+
+      {unknownAccounts.length > 0 && (
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border-ghost)' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', marginBottom: 4 }}>
+            Unmapped card accounts
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 10 }}>
+            These accounts had charges in the window but their name doesn't say which card they are, so they were skipped. Pick a rate profile to include them.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {unknownAccounts.map(a => (
+              <div key={a.account} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, minWidth: 200 }}>{displayName(a.account) || a.account}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', minWidth: 150 }}>
+                  {a.count} {a.count === 1 ? 'charge' : 'charges'} · {fmt(a.total)}
+                </div>
+                <select
+                  value={cardMap[a.account] || ''}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setCardMap(prev => {
+                      const next = { ...prev };
+                      if (v) next[a.account] = v; else delete next[a.account];
+                      return next;
+                    });
+                  }}
+                  style={{ ...inputStyle, width: 'auto', minWidth: 200 }}
+                >
+                  <option value="">Not set — skipped</option>
+                  {CARD_KEYS.map(k => <option key={k} value={k}>{CARD_LABELS[k]}</option>)}
+                  <option value="ignore">Ignore this account</option>
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 14, lineHeight: 1.5 }}>
+        Rates come from the table below, valuing Chase points at {POINT_VALUE_CENTS}¢ and assuming BofA's 3% choice category is {BOFA_CHOICE}.
+        Transfers, card payments, rent, investments, and fees are excluded, as are misses worth under 25¢.
+      </div>
     </div>
   );
 }
