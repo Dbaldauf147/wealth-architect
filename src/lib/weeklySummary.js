@@ -5,6 +5,7 @@
    Output: a plain object describing the summary so rendering is separate. */
 
 import { rangeWindows, spendByWindow, bandsFor, seriesFor } from './normalRange.js';
+import { findSuboptimalCharges, detectCardKey, CARD_LABELS } from './cardRewards.js';
 
 function parseDate(v) {
   if (!v) return null;
@@ -453,7 +454,7 @@ export function monthlyTrends({ transactions, weekEnd }) {
  *  `accountNicknames` and `accountGroups` are optional maps applied to
  *  user-visible account names so the email matches the in-app naming.
  *  Group membership takes precedence over individual nicknames. */
-export function buildWeeklySummary({ transactions, start, end, asOf = new Date(), accountNicknames = {}, accountGroups = {}, rangeExcludedCategories = [] }) {
+export function buildWeeklySummary({ transactions, start, end, asOf = new Date(), accountNicknames = {}, accountGroups = {}, rangeExcludedCategories = [], cardMap = {} }) {
   const inRange = (transactions || []).filter(t => withinRange(t, start, end) && !isTransferLike(t));
   // Prior week of the same length for week-over-week comparison
   const spanMs = end.getTime() - start.getTime();
@@ -517,6 +518,35 @@ export function buildWeeklySummary({ transactions, start, end, asOf = new Date()
   const week = weekCompare({ transactions, asOf });
   const aboveRange = aboveRangeCategories({ transactions, asOf, excludedCategories: rangeExcludedCategories });
 
+  // Charges that went on the wrong card. Same 30-day window and same rate
+  // table the Card Promotions tab uses, so the email can't claim a different
+  // amount left on the table than the page does. Accounts the user hasn't
+  // mapped fall back to name detection, exactly as the page does.
+  const subCards = findSuboptimalCharges({
+    transactions,
+    asOf,
+    days: 30,
+    cardKeyFor: account => cardMap[account] || detectCardKey(account, accountNicknames[account]),
+  });
+  const suboptimalCards = {
+    totalMissed: subCards.totalMissed,
+    evaluatedCount: subCards.evaluatedCount,
+    unknownCount: subCards.unknownAccounts.length,
+    // Only the worst handful reach the email; the page has the full list.
+    items: subCards.flagged.slice(0, 6).map(f => ({
+      date: f.date,
+      description: f.description,
+      spend: f.spend,
+      categoryLabel: f.categoryLabel,
+      usedLabel: CARD_LABELS[f.usedKey] || f.usedKey,
+      bestLabel: CARD_LABELS[f.bestKey] || f.bestKey,
+      usedRate: f.usedRate,
+      bestRate: f.bestRate,
+      missed: f.missed,
+    })),
+    moreCount: Math.max(0, subCards.flagged.length - 6),
+  };
+
   return {
     range: { start: start.toISOString(), end: end.toISOString() },
     expenseTotal,
@@ -533,6 +563,7 @@ export function buildWeeklySummary({ transactions, start, end, asOf = new Date()
     monthCompare: compare,
     weekCompare: week,
     aboveRange,
+    suboptimalCards,
     fmt,
   };
 }

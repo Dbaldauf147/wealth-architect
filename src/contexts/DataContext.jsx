@@ -164,6 +164,22 @@ const saveShortTermLoan = (v) => saveJSON('shortTermLoan', v);
 // { trades: [{date, symbol, side, quantity, price, amount}], importedAt,
 // source, skipped, truncated }, or null when nothing is imported. Synced so
 // the import follows the user across devices.
+// Which physical card each account maps to, for the Card Promotions reward
+// analysis. Lived in localStorage under 'cardRateProfiles' and so was
+// invisible to the server, which is why the weekly email could not report on
+// it — the cron reads Firestore, not the browser. Migrated on first load.
+const loadCardMap = () => {
+  const current = loadJSON('cardMap', null);
+  if (current && Object.keys(current).length > 0) return current;
+  const legacy = loadJSON('cardRateProfiles', null);
+  if (legacy && Object.keys(legacy).length > 0) {
+    saveJSON('cardMap', legacy);
+    return legacy;
+  }
+  return current || {};
+};
+const saveCardMap = (v) => saveJSON('cardMap', v);
+
 // Demo mode. Stored locally and *not* included in the Firestore payload:
 // it is a property of the screen you are standing in front of, not of the
 // account, so turning it on to show a colleague must not blank out the
@@ -353,6 +369,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.transactionNotes, remote.transactionNotes],
     [merged.accountNicknames, remote.accountNicknames],
     [merged.accountGroups, remote.accountGroups],
+    [merged.cardMap, remote.cardMap],
     [merged.assetClasses, remote.assetClasses],
     [merged.paymentReminderPrefs, remote.paymentReminderPrefs],
     [merged.calendarSyncPrefs, remote.calendarSyncPrefs],
@@ -421,6 +438,7 @@ function readLocalConfig() {
     transactionNotes: loadNotes(),
     accountNicknames: loadAccountNicknames(),
     accountGroups: loadAccountGroups(),
+    cardMap: loadCardMap(),
     assetClasses: loadAssetClasses(),
     customAssets: loadCustomAssets(),
     customLiabilities: loadCustomLiabilities(),
@@ -463,6 +481,7 @@ function mergeConfig(remote, locals) {
     transactionNotes: unionMap(locals.transactionNotes, remote.transactionNotes),
     accountNicknames: unionMap(locals.accountNicknames, remote.accountNicknames),
     accountGroups: unionMap(locals.accountGroups, remote.accountGroups),
+    cardMap: unionMap(locals.cardMap, remote.cardMap),
     assetClasses: unionMap(locals.assetClasses, remote.assetClasses),
     customAssets: unionByName(locals.customAssets, Array.isArray(remote.customAssets) ? remote.customAssets : []),
     customLiabilities: unionByName(locals.customLiabilities, Array.isArray(remote.customLiabilities) ? remote.customLiabilities : []),
@@ -503,6 +522,7 @@ function buildSyncPayload(v) {
     transactionNotes: v.transactionNotes,
     accountNicknames: v.accountNicknames,
     accountGroups: v.accountGroups,
+    cardMap: v.cardMap,
     assetClasses: v.assetClasses,
     customAssets: v.customAssets,
     customLiabilities: v.customLiabilities,
@@ -599,6 +619,7 @@ export function DataProvider({ children }) {
   const [transactionNotes, setTransactionNotes] = useState(loadNotes);
   const [accountNicknames, setAccountNicknames] = useState(loadAccountNicknames);
   const [accountGroups, setAccountGroups] = useState(loadAccountGroups);
+  const [cardMap, setCardMapState] = useState(loadCardMap);
   const [assetClasses, setAssetClasses] = useState(loadAssetClasses);
   const [customAssets, setCustomAssets] = useState(loadCustomAssets);
   const [customLiabilities, setCustomLiabilities] = useState(loadCustomLiabilities);
@@ -646,6 +667,7 @@ export function DataProvider({ children }) {
     setTransactionNotes(m.transactionNotes); saveNotes(m.transactionNotes);
     setAccountNicknames(m.accountNicknames); saveAccountNicknames(m.accountNicknames);
     setAccountGroups(m.accountGroups); saveAccountGroups(m.accountGroups);
+    setCardMapState(m.cardMap); saveCardMap(m.cardMap);
     setAssetClasses(m.assetClasses); saveAssetClasses(m.assetClasses);
     setCustomAssets(m.customAssets); saveCustomAssets(m.customAssets);
     setCustomLiabilities(m.customLiabilities); saveCustomLiabilities(m.customLiabilities);
@@ -724,7 +746,7 @@ export function DataProvider({ children }) {
     if (!syncHydrated.current) return;
     const currentConfig = {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
-      transactionNotes, accountNicknames, accountGroups, assetClasses, customAssets,
+      transactionNotes, accountNicknames, accountGroups, cardMap, assetClasses, customAssets,
       customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay,
       customCategories, hiddenCategories, rangeExcludedCategories, shortTermLoan, robinhoodTrades, organizedCategories,
       incomeCategories, savedTxnViews, chartHiddenCats, chartHiddenSubs, txnColumnWidths: columnWidths,
@@ -759,6 +781,7 @@ export function DataProvider({ children }) {
     transactionNotes,
     accountNicknames,
     accountGroups,
+    cardMap,
     assetClasses,
     customAssets,
     customLiabilities,
@@ -991,6 +1014,18 @@ export function DataProvider({ children }) {
       if (note) next[transactionId] = note;
       else delete next[transactionId];
       saveNotes(next);
+      return next;
+    });
+  }, []);
+
+  // Assign an account to a physical card (or clear it with a falsy value).
+  const setCardForAccount = useCallback((accountName, cardKey) => {
+    if (!accountName) return;
+    setCardMapState(prev => {
+      const next = { ...prev };
+      if (cardKey) next[accountName] = cardKey;
+      else delete next[accountName];
+      saveCardMap(next);
       return next;
     });
   }, []);
@@ -1644,9 +1679,12 @@ export function DataProvider({ children }) {
   );
   const shownMaps = useMemo(
     () => (scrambler
-      ? scrambleAccountMaps({ accountNicknames, accountNumbers, accountGroups, assetClasses }, scrambler)
-      : { accountNicknames, accountNumbers, accountGroups, assetClasses }),
-    [accountNicknames, accountNumbers, accountGroups, assetClasses, scrambler],
+      ? { ...scrambleAccountMaps({ accountNicknames, accountNumbers, accountGroups, assetClasses }, scrambler),
+          cardMap: Object.fromEntries(
+            Object.entries(cardMap || {}).map(([k, v]) => [scrambler.accountName(k), v]),
+          ) }
+      : { accountNicknames, accountNumbers, accountGroups, assetClasses, cardMap }),
+    [accountNicknames, accountNumbers, accountGroups, assetClasses, cardMap, scrambler],
   );
   const shownHiddenCards = useMemo(
     () => (scrambler ? scrambleHiddenCards(hiddenCards, scrambler) : hiddenCards),
@@ -1704,6 +1742,7 @@ export function DataProvider({ children }) {
     unhideCategory,
     updateTransactionNote,
     setAccountNickname,
+    setCardForAccount,
     setAccountGroup,
     setAssetClass,
     addCustomAsset,
@@ -1761,6 +1800,7 @@ export function DataProvider({ children }) {
     unhideCategory,
     updateTransactionNote,
     setAccountNickname,
+    setCardForAccount,
     setAccountGroup,
     setAssetClass,
     addCustomAsset,
@@ -1834,6 +1874,7 @@ export function DataProvider({ children }) {
     accountNicknames: shownMaps.accountNicknames,
     accountNumbers: shownMaps.accountNumbers,
     accountGroups: shownMaps.accountGroups,
+    cardMap: shownMaps.cardMap,
     assetClasses: shownMaps.assetClasses,
     customAssets: shownCustomAssets,
     customLiabilities: shownCustomLiabilities,

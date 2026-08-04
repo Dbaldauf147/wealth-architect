@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import { useData } from '../contexts/DataContext';
+import { useData, useDataActions } from '../contexts/DataContext';
 import {
   REWARD_CATEGORIES, CARD_KEYS, CARD_LABELS, CARD_COLORS, BOFA_CHOICE, POINT_VALUE_CENTS,
   detectCardKey, findSuboptimalCharges,
@@ -196,19 +196,7 @@ const STORAGE_KEY = 'cardPromos';
 // Which rate profile each account uses. Only needed for accounts whose name
 // doesn't already say which card it is (e.g. "CREDIT CARD (-1947)"). Values are
 // a card key, or 'ignore' to leave an account out of the analysis entirely.
-const CARD_MAP_KEY = 'cardRateProfiles';
 
-function loadCardMap() {
-  try {
-    const saved = localStorage.getItem(CARD_MAP_KEY);
-    if (saved) return JSON.parse(saved);
-  } catch { /* corrupt entry — fall through to an empty map */ }
-  return {};
-}
-
-function saveCardMap(map) {
-  localStorage.setItem(CARD_MAP_KEY, JSON.stringify(map));
-}
 
 // Cents matter here — a single miss is often worth under a dollar.
 function fmtCents(n) {
@@ -235,17 +223,16 @@ function savePromos(promos) {
 }
 
 export function CardPromosPage() {
-  const { transactions, accountNicknames, accountGroups } = useData();
+  const { transactions, accountNicknames, accountGroups, cardMap } = useData();
+  const { setCardForAccount } = useDataActions();
   const displayName = (name) => (accountGroups && accountGroups[name]) || (accountNicknames && accountNicknames[name]) || name;
   const [promos, setPromos] = useState(loadPromos);
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState({});
   const [showSeedBtn, setShowSeedBtn] = useState(false);
   const [view, setView] = useState('csr'); // 'csr' | 'promos'
-  const [cardMap, setCardMap] = useState(loadCardMap);
 
   useEffect(() => savePromos(promos), [promos]);
-  useEffect(() => saveCardMap(cardMap), [cardMap]);
 
   // Charges in the last 30 days that would have earned more on another card.
   // An explicit mapping wins over guessing the card from the account name.
@@ -438,7 +425,7 @@ export function CardPromosPage() {
         <SuboptimalCharges
           result={suboptimal}
           cardMap={cardMap}
-          setCardMap={setCardMap}
+          setCardForAccount={setCardForAccount}
           displayName={displayName}
         />
       )}
@@ -633,7 +620,7 @@ export function CardPromosPage() {
 /* Last-30-days charges where another card in the wallet pays more. "Missed" is
    the spend times the rate gap, i.e. what swiping the better card would have
    added — not a loss on the rewards already earned. */
-function SuboptimalCharges({ result, cardMap, setCardMap, displayName }) {
+function SuboptimalCharges({ result, cardMap, setCardForAccount, displayName }) {
   const [showAll, setShowAll] = useState(false);
   const { flagged, totalMissed, totalCharges, evaluatedCount, unknownAccounts, start, end } = result;
   const cardStyle = { background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' };
@@ -748,14 +735,7 @@ function SuboptimalCharges({ result, cardMap, setCardMap, displayName }) {
                 </div>
                 <select
                   value={cardMap[a.account] || ''}
-                  onChange={e => {
-                    const v = e.target.value;
-                    setCardMap(prev => {
-                      const next = { ...prev };
-                      if (v) next[a.account] = v; else delete next[a.account];
-                      return next;
-                    });
-                  }}
+                  onChange={e => setCardForAccount(a.account, e.target.value)}
                   style={{ ...inputStyle, width: 'auto', minWidth: 200 }}
                 >
                   <option value="">Not set — skipped</option>

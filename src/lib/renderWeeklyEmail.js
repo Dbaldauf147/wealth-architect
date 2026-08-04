@@ -226,6 +226,7 @@ function renderRangeSparklineSvg(item) {
 export const WEEKLY_EMAIL_SECTIONS = [
   { id: 'spendCharts', label: 'Spend charts (weekly + monthly)' },
   { id: 'aboveRange', label: 'Above Normal Range' },
+  { id: 'suboptimalCards', label: 'Suboptimal Card Usage' },
   { id: 'topCategories', label: 'Top Categories' },
   { id: 'topMerchants', label: 'Top Merchants' },
   { id: 'monthlyTrends', label: 'Month-to-Date & Movers' },
@@ -271,7 +272,7 @@ export function normalizeEmailSections(stored) {
 export function renderWeeklyEmailHtml(summary, opts = {}) {
   const chart = opts.chart || ((key, svg) => svg);
   const sections = normalizeEmailSections(opts.sections);
-  const { topCategories, topMerchants, uncategorized, monthlyTrends, monthCompare, weekCompare, aboveRange } = summary;
+  const { topCategories, topMerchants, uncategorized, monthlyTrends, monthCompare, weekCompare, aboveRange, suboptimalCards } = summary;
 
   const catBarMax = topCategories.length ? topCategories[0].amount : 1;
 
@@ -382,6 +383,31 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
               </td>
             </tr>
           </table>`).join('')}
+        </div>
+      </td>
+    </tr>` : '';
+
+  parts.suboptimalCards = (suboptimalCards && suboptimalCards.items && suboptimalCards.items.length) ? `
+    <tr>
+      <td style="padding:0 28px 20px;">
+        <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:4px;">Suboptimal Card Usage</div>
+          <div style="font-size:12px;color:#64748b;margin-bottom:14px;">Charges in the last 30 days that would have earned more on another card. <strong>${money(suboptimalCards.totalMissed)}</strong> left on the table across ${suboptimalCards.evaluatedCount} charge${suboptimalCards.evaluatedCount === 1 ? '' : 's'}.</div>
+          <table role="presentation" width="100%" style="border-collapse:collapse;font-size:12px;">
+            ${suboptimalCards.items.map(item => `
+            <tr>
+              <td style="padding:6px 8px 6px 0;vertical-align:top;">
+                <div style="font-size:12.5px;font-weight:600;color:#111;">${escapeHtml(item.description)}</div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:2px;">${escapeHtml(item.categoryLabel)} · ${money(item.spend)} on ${escapeHtml(item.usedLabel)} (${item.usedRate}%)</div>
+              </td>
+              <td style="padding:6px 0;vertical-align:top;text-align:right;white-space:nowrap;">
+                <div style="font-size:12.5px;font-weight:700;color:#b91c1c;font-variant-numeric:tabular-nums;">-${money(item.missed)}</div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px;">${escapeHtml(item.bestLabel)} pays ${item.bestRate}%</div>
+              </td>
+            </tr>`).join('')}
+          </table>
+          ${suboptimalCards.moreCount ? `<div style="font-size:11px;color:#94a3b8;margin-top:10px;font-style:italic;">and ${suboptimalCards.moreCount} more on the Card Promotions tab.</div>` : ''}
+          ${suboptimalCards.unknownCount ? `<div style="font-size:11px;color:#94a3b8;margin-top:6px;font-style:italic;">${suboptimalCards.unknownCount} card account${suboptimalCards.unknownCount === 1 ? ' is' : 's are'} unassigned, so their charges were not checked.</div>` : ''}
         </div>
       </td>
     </tr>` : '';
