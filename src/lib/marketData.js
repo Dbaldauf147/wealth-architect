@@ -9,8 +9,13 @@ const SERIES_CACHE_PREFIX = 'marketSeries:v1:';
 // produces wrong answers rather than a miss — `points` was added for the
 // portfolio history and stale entries without it priced every holding at zero.
 const QUOTE_CACHE_KEY = 'marketQuotes:v2';
+const CPI_CACHE_PREFIX = 'cpiSeries:v1:';
 const SERIES_TTL_MS = 12 * 60 * 60 * 1000; // closes settle once a day
 const QUOTE_TTL_MS = 30 * 60 * 1000;
+// CPI is published once a month, and the BLS API allows only 25 unkeyed
+// requests a day per IP — a day-long client cache keeps well inside that even
+// before the CDN in front of the route.
+const CPI_TTL_MS = 24 * 60 * 60 * 1000;
 
 function readCache(key) {
   try {
@@ -56,6 +61,38 @@ export async function fetchSeries(symbol, start, { onFresh } = {}) {
   if (cached?.payload) {
     // Serve the stale copy now, reconcile in the background. A failed
     // background refresh is not worth surfacing — the user has real data.
+    refresh().then(fresh => onFresh?.(fresh)).catch(() => {});
+    return { payload: cached.payload, stale: true };
+  }
+
+  return { payload: await refresh(), stale: false };
+}
+
+/**
+ * Monthly CPI-U from `startYear` onwards, in the same shape as fetchSeries.
+ *
+ * Same stale-while-revalidate contract: a cached copy is handed back at once
+ * and `onFresh` fires if a background refresh turns up a newer month.
+ */
+export async function fetchCpi(startYear = 2000, { onFresh } = {}) {
+  const key = `${CPI_CACHE_PREFIX}${startYear}`;
+  const cached = readCache(key);
+  const age = cached?.fetchedAt ? Date.now() - cached.fetchedAt : Infinity;
+
+  const refresh = async () => {
+    const res = await fetch(`/api/market-data?cpi=${encodeURIComponent(startYear)}`);
+    const json = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(json?.error || `CPI request failed (${res.status})`);
+    if (!Array.isArray(json?.points) || !json.points.length) {
+      throw new Error('No CPI readings were returned');
+    }
+    writeCache(key, { fetchedAt: Date.now(), payload: json });
+    return json;
+  };
+
+  if (cached?.payload && age < CPI_TTL_MS) return { payload: cached.payload, stale: false };
+
+  if (cached?.payload) {
     refresh().then(fresh => onFresh?.(fresh)).catch(() => {});
     return { payload: cached.payload, stale: true };
   }

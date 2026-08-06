@@ -5,12 +5,15 @@
 //     → one symbol's daily closes, as [[epochSeconds, close], …]
 //   /api/market-data?quotes=AAPL,MSFT&since=2020-01-01
 //     → { quotes: { AAPL: { price, asOf, splits, points }, … } }
+//   /api/market-data?cpi=2000
+//     → monthly CPI-U from that year, same [[epochSeconds, level], …] shape
 //
 // This lives server-side purely because Yahoo doesn't send CORS headers; no
 // API key is involved. The feed access itself is in _lib/marketFeed.js so the
 // daily snapshot cron prices positions exactly the same way this route does.
 
 import { getSeries, getQuotes } from './_lib/marketFeed.js';
+import { getCpi } from './_lib/cpiFeed.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -18,7 +21,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { series, quotes, start, since } = req.query || {};
+  const { series, quotes, cpi, start, since } = req.query || {};
 
   try {
     if (series) {
@@ -39,7 +42,15 @@ export default async function handler(req, res) {
       return res.status(200).json({ quotes: payload });
     }
 
-    return res.status(400).json({ error: 'Supply either ?series=SYMBOL or ?quotes=A,B,C' });
+    if (cpi) {
+      const payload = await getCpi(Number(cpi) || 2000);
+      // CPI moves once a month and the BLS API is rate-limited per IP, so this
+      // wants a much longer edge cache than the price routes get.
+      res.setHeader('Cache-Control', 'public, s-maxage=43200, stale-while-revalidate=604800');
+      return res.status(200).json(payload);
+    }
+
+    return res.status(400).json({ error: 'Supply ?series=SYMBOL, ?quotes=A,B,C or ?cpi=YEAR' });
   } catch (err) {
     console.error('market-data failed:', err);
     return res.status(err.statusCode || 500).json({ error: err.message });

@@ -1,10 +1,20 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
-import { fetchSeries, fetchQuotes } from '../lib/marketData';
+import { fetchSeries, fetchQuotes, fetchCpi } from '../lib/marketData';
 import {
   makeSeries, cagr, returnBetween, calendarYearReturns, rollingReturns,
   growthPath, maxDrawdown, toISODate, xirr, MS_DAY,
 } from '../lib/benchmark';
+import {
+  makeCpiSeries, inflationCompare, realCashComparison, realHistory,
+  calendarYearInflation, inflationCagr, inflationBetween, realReturn,
+  cpiLagMonths,
+} from '../lib/inflation';
+import {
+  FILING_STATUSES, TAX_YEAR, TAX_SOURCE, STANDARD_DEDUCTION, NIIT_RATE,
+  NIIT_THRESHOLD, MAX_LOSS_OFFSET, LONG_TERM_DAYS,
+  estimateTax, summarizeLots, isLongTerm, longTermDate, heldDays,
+} from '../lib/taxes';
 import {
   readTable, guessMapping, missingFields, parseRows, sortTrades,
   mergeTrades, mergeCorporateActions, mergeIncome, mergeCashRows, buildLots,
@@ -23,6 +33,9 @@ import styles from './StockPerformancePage.module.css';
 // over 20 years is the difference between beating the market and not.
 const BENCHMARK_SYMBOL = '^SP500TR';
 const SERIES_START = '1999-12-31';
+// CPI is pulled from the year before the index series begins, so the first
+// trading day already has a price level behind it to measure from.
+const CPI_START_YEAR = 1999;
 
 const RANGE_OPTIONS = [
   { id: '5y', label: '5Y', years: 5 },
@@ -57,6 +70,12 @@ function fmtAxis(n) {
   if (abs >= 1_000_000) return `$${(n / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
   if (abs >= 1_000) return `$${Math.round(n / 1_000)}k`;
   return `$${Math.round(n)}`;
+}
+
+// Inflation is always a rise, so the +/− prefix fmtPct adds reads as noise.
+function fmtPlain(n, digits = 1) {
+  if (n == null || !Number.isFinite(n)) return '—';
+  return (n * 100).toFixed(digits) + '%';
 }
 
 function fmtMonth(t) {
@@ -338,9 +357,16 @@ function useLoggedHistory() {
   return rows;
 }
 
-/** The whole-account summary shown on the benchmark tab. */
-function MyMoneySection({ series }) {
-  const { trades, income, cashRows, quotes, lots, result, external } = usePortfolio(series);
+/**
+ * The reconstructed value of the account through time, with recorded daily
+ * snapshots layered over the reconstruction wherever they exist.
+ *
+ * Shared by the benchmark tab's summary and the inflation tab, which need the
+ * identical line — one in nominal dollars, one deflated — and would otherwise
+ * be at risk of drifting into two slightly different histories.
+ */
+function useAccountHistory(series, portfolio) {
+  const { trades, income, cashRows, quotes, lots } = portfolio;
   const loggedRows = useLoggedHistory();
 
   // Split-adjusted price series per ticker, rebuilt from the monthly closes
@@ -373,6 +399,17 @@ function MyMoneySection({ series }) {
     () => (history ? mergeLoggedHistory(history.points, loggedRows) : null),
     [history, loggedRows],
   );
+
+  const shown = merged?.points?.length ? merged.points : history?.points || null;
+
+  return { history, events, merged, shown };
+}
+
+/** The whole-account summary shown on the benchmark tab. */
+function MyMoneySection({ series }) {
+  const portfolio = usePortfolio(series);
+  const { trades, cashRows, result, external } = portfolio;
+  const { history, events, merged, shown: shownPoints } = useAccountHistory(series, portfolio);
 
   if (!trades.length) {
     return (
@@ -428,7 +465,7 @@ function MyMoneySection({ series }) {
     );
   }
 
-  const shown = merged?.points?.length ? merged.points : history.points;
+  const shown = shownPoints;
   const last = shown[shown.length - 1];
   const gain = last.value - last.contributed;
   const vsBench = Number.isFinite(last.bench) ? last.value - last.bench : null;
@@ -535,7 +572,7 @@ function MyMoneySection({ series }) {
 }
 
 // ── Benchmark tab ───────────────────────────────────────────────────────
-function BenchmarkTab({ series, meta }) {
+function BenchmarkTab({ series, meta, cpi }) {
   const [rangeId, setRangeId] = useState('20y');
   // A fixed reference amount. The interactive upfront/monthly inputs are gone:
   // the question they answered ("what would I have?") is answered better by the
@@ -584,6 +621,29 @@ function BenchmarkTab({ series, meta }) {
     [series],
   );
 
+  // Inflation over the same window, so the headline can be read in what it
+  // actually buys rather than what it says on the statement.
+  const infl = useMemo(() => {
+    if (!cpi?.series) return null;
+    const total = inflationBetween(cpi.series, startT, endT);
+    const annual = inflationCagr(cpi.series, startT, endT);
+    return {
+      total,
+      annual,
+      realTotal: realReturn(stats.total, total),
+      realCagr: realReturn(stats.cagr, annual),
+      // The same rolling-window machinery run over the price level, so each
+      // horizon is compared against inflation across *its own* windows rather
+      // than one long-run average that no individual hold experienced.
+      byHorizon: Object.fromEntries(
+        rolling
+          .map(r => [r.years, rollingReturns(cpi.series, r.years)])
+          .filter(([, w]) => w)
+          .map(([years, w]) => [years, w.avg]),
+      ),
+    };
+  }, [cpi, startT, endT, stats.total, stats.cagr, rolling]);
+
   const last = path.length ? path[path.length - 1] : null;
 
   return (
@@ -597,6 +657,11 @@ function BenchmarkTab({ series, meta }) {
           <span className={stats.total >= 0 ? styles.changeUp : styles.changeDown}>
             {fmtPct(stats.total)} total
           </span>
+          {infl && (
+            <span className={infl.realCagr >= 0 ? styles.changeUp : styles.changeDown}>
+              {fmtPct(infl.realCagr, 2)}/yr after inflation
+            </span>
+          )}
           <span className={styles.changeRange}>
             · {fmtDay(startT)} → {fmtDay(endT)}
             {meta.totalReturn ? ' · dividends reinvested' : ' · price only, excludes dividends'}
@@ -650,6 +715,15 @@ function BenchmarkTab({ series, meta }) {
           <div className={styles.statSub}>Compound, {range.years ? `${range.years} years` : 'full history'}</div>
         </div>
         <div className={styles.statCard}>
+          <div className={styles.statLabel}>After inflation</div>
+          <div className={`${styles.statValue} ${infl && infl.realCagr >= 0 ? styles.up : styles.down}`}>
+            {infl ? fmtPct(infl.realCagr, 2) : '—'}
+          </div>
+          <div className={styles.statSub}>
+            {infl ? `prices rose ${fmtPlain(infl.annual, 2)}/yr over the same window` : 'CPI unavailable'}
+          </div>
+        </div>
+        <div className={styles.statCard}>
           <div className={styles.statLabel}>Average calendar year</div>
           <div className={styles.statValue}>{fmtPct(stats.avgYear)}</div>
           <div className={styles.statSub}>{stats.complete.length} complete years</div>
@@ -689,6 +763,8 @@ function BenchmarkTab({ series, meta }) {
         <div className={styles.cardSub}>
           Every possible start month across the full series, annualized. This is the honest answer
           to "what do I get if I invest" — a single start date flatters or punishes by luck alone.
+          The last two columns run the same windows over the price level, so "real" is what the
+          money actually bought after inflation took its cut.
         </div>
         <div className={styles.tableWrap}>
           <table className={styles.table}>
@@ -699,26 +775,36 @@ function BenchmarkTab({ series, meta }) {
                 <th className={styles.num}>Median</th>
                 <th className={styles.num}>Best</th>
                 <th className={styles.num}>Worst</th>
+                <th className={styles.num}>Inflation</th>
+                <th className={styles.num}>Real average</th>
                 <th className={styles.num}>Made money</th>
                 <th className={styles.num}>Windows</th>
               </tr>
             </thead>
             <tbody>
-              {rolling.map(r => (
-                <tr key={r.years}>
-                  <td><strong>{r.years} year{r.years > 1 ? 's' : ''}</strong></td>
-                  <td className={styles.num}>{fmtPct(r.avg, 2)}</td>
-                  <td className={styles.num}>{fmtPct(r.median, 2)}</td>
-                  <td className={`${styles.num} ${styles.up}`} title={`Started ${fmtMonth(r.best.startT)}`}>
-                    {fmtPct(r.best.annual, 2)}
-                  </td>
-                  <td className={`${styles.num} ${r.worst.annual < 0 ? styles.down : ''}`} title={`Started ${fmtMonth(r.worst.startT)}`}>
-                    {fmtPct(r.worst.annual, 2)}
-                  </td>
-                  <td className={styles.num}>{Math.round(r.positivePct * 100)}%</td>
-                  <td className={`${styles.num} ${styles.muted}`}>{r.count}</td>
-                </tr>
-              ))}
+              {rolling.map(r => {
+                const inflAvg = infl?.byHorizon?.[r.years] ?? null;
+                const real = realReturn(r.avg, inflAvg);
+                return (
+                  <tr key={r.years}>
+                    <td><strong>{r.years} year{r.years > 1 ? 's' : ''}</strong></td>
+                    <td className={styles.num}>{fmtPct(r.avg, 2)}</td>
+                    <td className={styles.num}>{fmtPct(r.median, 2)}</td>
+                    <td className={`${styles.num} ${styles.up}`} title={`Started ${fmtMonth(r.best.startT)}`}>
+                      {fmtPct(r.best.annual, 2)}
+                    </td>
+                    <td className={`${styles.num} ${r.worst.annual < 0 ? styles.down : ''}`} title={`Started ${fmtMonth(r.worst.startT)}`}>
+                      {fmtPct(r.worst.annual, 2)}
+                    </td>
+                    <td className={`${styles.num} ${styles.muted}`}>{fmtPlain(inflAvg, 2)}</td>
+                    <td className={`${styles.num} ${real == null ? '' : real >= 0 ? styles.up : styles.down}`}>
+                      <strong>{fmtPct(real, 2)}</strong>
+                    </td>
+                    <td className={styles.num}>{Math.round(r.positivePct * 100)}%</td>
+                    <td className={`${styles.num} ${styles.muted}`}>{r.count}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -847,7 +933,7 @@ function LotScatter({ rows }) {
 }
 
 /** Dollars gained or lost against the benchmark, per ticker. */
-function AlphaBars({ symbols, onSelect, selected }) {
+function AlphaBars({ symbols, onSelect, selected, benchName = 'S&P' }) {
   const rows = (symbols || []).filter(s => Number.isFinite(s.alpha));
   const W = 880;
   const rowH = 26;
@@ -891,7 +977,7 @@ function AlphaBars({ symbols, onSelect, selected }) {
             </text>
             <rect x={ahead ? zeroX : zeroX - w} y={cy - 8} width={Math.max(w, 1)} height={16} rx={2}
               fill={ahead ? WIN : LOSE} fillOpacity={0.82}>
-              <title>{`${s.symbol}: ${fmt(s.invested)} invested · you ${fmtPct(s.ret)} vs S&P ${fmtPct(s.benchRet)} · ${fmtSigned(s.alpha)}`}</title>
+              <title>{`${s.symbol}: ${fmt(s.invested)} invested · you ${fmtPct(s.ret)} vs ${benchName} ${fmtPct(s.benchRet)} · ${fmtSigned(s.alpha)}`}</title>
             </rect>
             <text x={ahead ? zeroX + w + 8 : zeroX - w - 8} y={cy + 4}
               textAnchor={ahead ? 'start' : 'end'} fontSize={11}
@@ -1808,7 +1894,7 @@ function usePortfolio(series) {
   };
 }
 
-function TradesTab({ series, meta }) {
+function TradesTab({ series, meta, cpi }) {
   const { setRobinhoodTrades } = useDataActions();
   const [showLots, setShowLots] = useState(false);
   const [reimporting, setReimporting] = useState(false);
@@ -1818,6 +1904,26 @@ function TradesTab({ series, meta }) {
   const {
     robinhoodTrades, trades, corporateActions, income, cashRows, quotes, lots, result, external,
   } = usePortfolio(series);
+
+  // Same lots, measured against the price level instead of the index.
+  const infl = useMemo(
+    () => (result && cpi?.series ? inflationCompare(result, cpi.series) : null),
+    [result, cpi],
+  );
+  const realCash = useMemo(() => {
+    if (!external || !cpi?.series) return null;
+    return realCashComparison({
+      transfers: cashRows.transfers,
+      cpi: cpi.series,
+      ending: external.ending,
+      asOfT: series.lastT,
+    });
+  }, [external, cpi, cashRows, series]);
+  const inflBySymbol = useMemo(() => {
+    const map = new Map();
+    for (const s of infl?.symbols || []) map.set(s.symbol, s);
+    return map;
+  }, [infl]);
 
   const handleCommit = useCallback((payload) => {
     setRobinhoodTrades(payload);
@@ -1920,6 +2026,26 @@ function TradesTab({ series, meta }) {
               {fmtSigned(external.alpha)}
             </div>
             <div className={styles.statSub}>dividends already inside both sides</div>
+          </div>
+          <div className={styles.statCard}>
+            <div className={styles.statLabel}>Inflation needs</div>
+            <div className={styles.statValue}>{realCash ? fmt(realCash.inflatedIn) : '—'}</div>
+            <div className={styles.statSub}>
+              {realCash
+                ? `what your ${fmt(realCash.nominalIn)} of deposits would cost today`
+                : 'CPI unavailable'}
+            </div>
+          </div>
+          <div className={styles.statCard}>
+            <div className={styles.statLabel}>Real gain</div>
+            <div className={`${styles.statValue} ${realCash && realCash.realGain >= 0 ? styles.up : styles.down}`}>
+              {realCash ? fmtSigned(realCash.realGain) : '—'}
+            </div>
+            <div className={styles.statSub}>
+              {realCash
+                ? `${fmtPct(realCash.realIrr, 1)}/yr in real terms · ${realCash.beatInflation ? 'ahead of' : 'behind'} inflation`
+                : 'purchasing power created'}
+            </div>
           </div>
         </div>
       )}
@@ -2043,8 +2169,9 @@ function TradesTab({ series, meta }) {
           <div className={styles.cardTitle}>By ticker</div>
           <div className={styles.cardSub}>
             Sorted by dollars gained or lost against the benchmark. "S&amp;P" is what the same
-            money would have done over the exact same holding periods. Click a row to chart it
-            against the index.
+            money would have done over the exact same holding periods, and "Inflation" is what it
+            would have taken merely to stand still — anything left over in the last column is real
+            purchasing power. Click a row to chart it against the index.
           </div>
           <div className={styles.tableWrap}>
             <table className={styles.table}>
@@ -2057,40 +2184,56 @@ function TradesTab({ series, meta }) {
                   <th className={styles.num}>You</th>
                   <th className={styles.num}>S&amp;P</th>
                   <th className={styles.num}>Difference</th>
+                  <th className={styles.num}>Inflation</th>
+                  <th className={styles.num}>Real return</th>
+                  <th className={styles.num}>Beat inflation by</th>
                   <th className={styles.num}>Lots</th>
                 </tr>
               </thead>
               <tbody>
-                {result.symbols.map(s => (
-                  <tr key={s.symbol}
-                    className={`${styles.clickRow} ${selected === s.symbol ? styles.clickRowActive : ''}`}
-                    onClick={() => setSelected(selected === s.symbol ? null : s.symbol)}>
-                    <td>
-                      <strong>{s.symbol}</strong>
-                      <span className="material-symbols-outlined" style={{ fontSize: 13, verticalAlign: 'middle', marginLeft: 4, opacity: 0.45 }}>
-                        show_chart
-                      </span>
-                    </td>
-                    <td className={styles.num}>{fmt(s.invested)}</td>
-                    <td className={styles.num}>{fmt(s.returned)}</td>
-                    <td className={`${styles.num} ${s.income > 0 ? styles.up : styles.muted}`}>
-                      {s.income > 0 ? fmt(s.income) : '—'}
-                    </td>
-                    <td className={`${styles.num} ${s.ret >= 0 ? styles.up : styles.down}`}
-                      title={s.income > 0 ? `${fmtPct(s.priceRet)} from price, ${fmtPct(s.ret - s.priceRet)} from dividends` : undefined}>
-                      {fmtPct(s.ret)}
-                    </td>
-                    <td className={styles.num}>{fmtPct(s.benchRet)}</td>
-                    <td className={`${styles.num} ${s.alpha >= 0 ? styles.up : styles.down}`}>
-                      <strong>{fmtSigned(s.alpha)}</strong>
-                    </td>
-                    <td className={`${styles.num} ${styles.muted}`}>
-                      {s.closedLots > 0 && `${s.closedLots} closed`}
-                      {s.closedLots > 0 && s.openLots > 0 && ', '}
-                      {s.openLots > 0 && `${s.openLots} open`}
-                    </td>
-                  </tr>
-                ))}
+                {result.symbols.map(s => {
+                  const real = inflBySymbol.get(s.symbol) || null;
+                  return (
+                    <tr key={s.symbol}
+                      className={`${styles.clickRow} ${selected === s.symbol ? styles.clickRowActive : ''}`}
+                      onClick={() => setSelected(selected === s.symbol ? null : s.symbol)}>
+                      <td>
+                        <strong>{s.symbol}</strong>
+                        <span className="material-symbols-outlined" style={{ fontSize: 13, verticalAlign: 'middle', marginLeft: 4, opacity: 0.45 }}>
+                          show_chart
+                        </span>
+                      </td>
+                      <td className={styles.num}>{fmt(s.invested)}</td>
+                      <td className={styles.num}>{fmt(s.returned)}</td>
+                      <td className={`${styles.num} ${s.income > 0 ? styles.up : styles.muted}`}>
+                        {s.income > 0 ? fmt(s.income) : '—'}
+                      </td>
+                      <td className={`${styles.num} ${s.ret >= 0 ? styles.up : styles.down}`}
+                        title={s.income > 0 ? `${fmtPct(s.priceRet)} from price, ${fmtPct(s.ret - s.priceRet)} from dividends` : undefined}>
+                        {fmtPct(s.ret)}
+                      </td>
+                      <td className={styles.num}>{fmtPct(s.benchRet)}</td>
+                      <td className={`${styles.num} ${s.alpha >= 0 ? styles.up : styles.down}`}>
+                        <strong>{fmtSigned(s.alpha)}</strong>
+                      </td>
+                      <td className={`${styles.num} ${styles.muted}`}
+                        title={real ? `${fmt(s.invested)} needed to be ${fmt(real.inflValue)} just to stand still` : undefined}>
+                        {real ? fmtPlain(real.inflRet) : '—'}
+                      </td>
+                      <td className={`${styles.num} ${real == null ? '' : real.realRet >= 0 ? styles.up : styles.down}`}>
+                        {real ? fmtPct(real.realRet) : '—'}
+                      </td>
+                      <td className={`${styles.num} ${real == null ? '' : real.realGain >= 0 ? styles.up : styles.down}`}>
+                        <strong>{real ? fmtSigned(real.realGain) : '—'}</strong>
+                      </td>
+                      <td className={`${styles.num} ${styles.muted}`}>
+                        {s.closedLots > 0 && `${s.closedLots} closed`}
+                        {s.closedLots > 0 && s.openLots > 0 && ', '}
+                        {s.openLots > 0 && `${s.openLots} open`}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr>
@@ -2104,6 +2247,15 @@ function TradesTab({ series, meta }) {
                   <td className={styles.num}><strong>{fmtPct(result.totals.benchRet)}</strong></td>
                   <td className={`${styles.num} ${result.totals.alpha >= 0 ? styles.up : styles.down}`}>
                     <strong>{fmtSigned(result.totals.alpha)}</strong>
+                  </td>
+                  <td className={`${styles.num} ${styles.muted}`}>
+                    <strong>{infl ? fmtPlain(infl.totals.inflRet) : '—'}</strong>
+                  </td>
+                  <td className={`${styles.num} ${infl && infl.totals.realRet >= 0 ? styles.up : styles.down}`}>
+                    <strong>{infl ? fmtPct(infl.totals.realRet) : '—'}</strong>
+                  </td>
+                  <td className={`${styles.num} ${infl && infl.totals.realGain >= 0 ? styles.up : styles.down}`}>
+                    <strong>{infl ? fmtSigned(infl.totals.realGain) : '—'}</strong>
                   </td>
                   <td className={`${styles.num} ${styles.muted}`}><strong>{result.totals.lots}</strong></td>
                 </tr>
@@ -2153,10 +2305,14 @@ function TradesTab({ series, meta }) {
                     <th className={styles.num}>You</th>
                     <th className={styles.num}>S&amp;P</th>
                     <th className={styles.num}>Difference</th>
+                    <th className={styles.num}>Inflation</th>
+                    <th className={styles.num}>Real</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {result.rows.map((r, i) => (
+                  {result.rows.map((r, i) => {
+                    const real = infl?.byRow?.get(r) || null;
+                    return (
                     <tr key={i} className={styles.clickRow}
                       onClick={() => setSelected(r.symbol)}>
                       <td>
@@ -2177,8 +2333,14 @@ function TradesTab({ series, meta }) {
                       <td className={`${styles.num} ${r.ret >= 0 ? styles.up : styles.down}`}>{fmtPct(r.ret)}</td>
                       <td className={styles.num}>{fmtPct(r.benchRet)}</td>
                       <td className={`${styles.num} ${r.alpha >= 0 ? styles.up : styles.down}`}>{fmtSigned(r.alpha)}</td>
+                      <td className={`${styles.num} ${styles.muted}`}>{real ? fmtPlain(real.inflRet) : '—'}</td>
+                      <td className={`${styles.num} ${real == null ? '' : real.realGain >= 0 ? styles.up : styles.down}`}
+                        title={real ? `${fmtPct(real.realRet)} after inflation` : undefined}>
+                        {real ? fmtSigned(real.realGain) : '—'}
+                      </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -2322,17 +2484,1192 @@ function formatRatio(factor) {
   return `${factor.toFixed(4)}×`;
 }
 
+// ── Inflation tab ───────────────────────────────────────────────────────
+/**
+ * Did the money grow faster than prices did?
+ *
+ * Every figure here is in *today's* dollars. A deposit made in 2016 is
+ * restated at what it would cost to buy the same basket now, and the account's
+ * value is what it is. The difference is real gain — the only kind you can
+ * spend. Nominal returns flatter long holds precisely because the dollars that
+ * went in were worth more than the ones coming out.
+ */
+function InflationTab({ series, cpi }) {
+  const portfolio = usePortfolio(series);
+  const { trades, cashRows, result, external } = portfolio;
+  const { history, shown } = useAccountHistory(series, portfolio);
+  const [selected, setSelected] = useState(null);
+
+  const infl = useMemo(
+    () => (result && cpi?.series ? inflationCompare(result, cpi.series) : null),
+    [result, cpi],
+  );
+
+  const realCash = useMemo(() => {
+    if (!external || !cpi?.series) return null;
+    return realCashComparison({
+      transfers: cashRows.transfers,
+      cpi: cpi.series,
+      ending: external.ending,
+      asOfT: series.lastT,
+    });
+  }, [external, cpi, cashRows, series]);
+
+  const realLine = useMemo(
+    () => (shown && cpi?.series
+      ? realHistory(shown, cashRows.transfers, cpi.series, series.lastT)
+      : null),
+    [shown, cashRows, cpi, series],
+  );
+
+  const years = useMemo(() => {
+    if (!cpi?.series) return [];
+    const indexYears = new Map(calendarYearReturns(series).map(y => [y.year, y]));
+    return calendarYearInflation(cpi.series).map(y => ({
+      ...y,
+      index: indexYears.get(y.year)?.ret ?? null,
+      real: realReturn(indexYears.get(y.year)?.ret ?? null, y.ret),
+    })).reverse();
+  }, [cpi, series]);
+
+  const lag = cpi?.series ? cpiLagMonths(cpi.series, series.lastT) : null;
+
+  if (!cpi) {
+    return <div className={styles.emptyState}>Loading consumer price history…</div>;
+  }
+
+  if (cpi.error) {
+    return (
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Consumer prices couldn&apos;t be loaded</div>
+        <div className={styles.error}>
+          {cpi.error} Everything on this tab is measured against the CPI-U series from the Bureau
+          of Labor Statistics, so rather than show you a number built on a guess at inflation,
+          it shows nothing. Reload to retry.
+        </div>
+      </div>
+    );
+  }
+
+  const beat = realCash ? realCash.beatInflation : (infl ? infl.totals.realGain >= 0 : null);
+
+  return (
+    <>
+      <div className={styles.hero}>
+        <div className={styles.heroLabel}>Your money vs the cost of living</div>
+        {!trades.length ? (
+          <>
+            <div className={styles.heroTitle}>Nothing imported yet</div>
+            <div className={styles.heroSubtitle}>
+              Import your trades on the <strong>My Trades</strong> tab and this measures every
+              dollar you put in against what it would take to buy the same things today.
+            </div>
+          </>
+        ) : !realCash && !infl ? (
+          <div className={styles.heroValue}>…</div>
+        ) : (
+          <>
+            <div className={styles.heroValue}>
+              {fmtSigned(realCash ? realCash.realGain : infl.totals.realGain)}
+              <span className={styles.heroUnit}>{beat ? ' of real gain' : ' of real loss'}</span>
+            </div>
+            <div className={styles.heroChange}>
+              <span className={beat ? styles.changeUp : styles.changeDown}>
+                {realCash
+                  ? `${fmtPct(realCash.realIrr, 1)}/yr after inflation`
+                  : `${fmtPct(infl.totals.realRet)} real`}
+              </span>
+              <span className={styles.changeRange}>
+                {realCash
+                  ? `· prices rose ${fmtPlain(realCash.inflationSinceFirst)} since your first deposit `
+                    + `(${fmtPlain(realCash.inflationAnnual, 2)}/yr)`
+                  : '· measured over each lot’s own holding period'}
+              </span>
+            </div>
+          </>
+        )}
+      </div>
+
+      {realCash && (
+        <>
+          <div className={styles.statGrid}>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>You put in</div>
+              <div className={styles.statValue}>{fmt(realCash.nominalIn)}</div>
+              <div className={styles.statSub}>net of everything you took back out</div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>In today&apos;s dollars</div>
+              <div className={styles.statValue}>{fmt(realCash.inflatedIn)}</div>
+              <div className={styles.statSub}>
+                what those same deposits would cost you now
+              </div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>Worth today</div>
+              <div className={styles.statValue}>{fmt(realCash.ending)}</div>
+              <div className={styles.statSub}>holdings plus uninvested cash</div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>Real gain</div>
+              <div className={`${styles.statValue} ${realCash.realGain >= 0 ? styles.up : styles.down}`}>
+                {fmtSigned(realCash.realGain)}
+              </div>
+              <div className={styles.statSub}>
+                {fmtPct(realCash.realRet)} of genuine purchasing power
+              </div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>Nominal gain</div>
+              <div className={`${styles.statValue} ${realCash.ending >= realCash.nominalIn ? styles.up : styles.down}`}>
+                {fmtSigned(realCash.ending - realCash.nominalIn)}
+              </div>
+              <div className={styles.statSub}>
+                {fmtPct(realCash.nominalRet)} — {fmt(realCash.inflatedIn - realCash.nominalIn)} of
+                it is inflation, not gain
+              </div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>Real annualized</div>
+              <div className={`${styles.statValue} ${realCash.realIrr >= 0 ? styles.up : styles.down}`}>
+                {fmtPct(realCash.realIrr, 1)}
+              </div>
+              <div className={styles.statSub}>
+                money-weighted, every flow deflated to today
+              </div>
+            </div>
+          </div>
+
+          <div className={realCash.beatInflation ? styles.infoCard : styles.noteCard}>
+            <div className={styles.noteTitle}>
+              <span className="material-symbols-outlined" style={{ fontSize: 17 }}>
+                {realCash.beatInflation ? 'trending_up' : 'trending_down'}
+              </span>
+              {realCash.beatInflation
+                ? 'Your money grew faster than prices'
+                : 'Your money did not keep up with prices'}
+            </div>
+            <div className={styles.cardSub} style={{ marginTop: 2 }}>
+              You have put <strong>{fmt(realCash.nominalIn)}</strong> into this account. Because
+              prices have risen {fmtPlain(realCash.inflationSinceFirst)} since your first deposit,
+              those dollars would cost <strong>{fmt(realCash.inflatedIn)}</strong> to reproduce
+              today — that is the line the account has to clear before a single dollar of the gain
+              is real. It is worth <strong>{fmt(realCash.ending)}</strong>, which puts you{' '}
+              <strong>{fmt(Math.abs(realCash.realGain))}</strong>{' '}
+              {realCash.beatInflation ? 'ahead of' : 'short of'} standing still.
+            </div>
+          </div>
+        </>
+      )}
+
+      {realLine && (
+        <div className={styles.chartCard}>
+          <div className={styles.chartHeader}>
+            <div>
+              <div className={styles.cardTitle}>Everything in today&apos;s dollars</div>
+              <div className={styles.cardSub}>
+                Both lines are deflated, not just one: the account&apos;s value at each point is
+                what that balance would buy now, and the flat line accumulates each deposit at
+                what it would cost now. Where the solid line sits below the flat one, the account
+                had lost purchasing power — even in the stretches where the nominal balance was
+                climbing.
+              </div>
+            </div>
+          </div>
+          <PortfolioHistoryChart history={realLine} events={[]} />
+          <div className={styles.legend} style={{ justifyContent: 'center', marginTop: 6 }}>
+            <span>
+              <span className={styles.legendDot} style={{ background: 'var(--color-secondary)' }} />
+              Account value, in today&apos;s dollars
+            </span>
+            <span>
+              <span className={styles.legendDot} style={{ background: 'var(--color-text-tertiary)' }} />
+              What you put in, in today&apos;s dollars
+            </span>
+          </div>
+        </div>
+      )}
+
+      {infl && (
+        <>
+          <div className={styles.sectionHead}>
+            Attribution by position
+            <span> — which picks actually created purchasing power</span>
+          </div>
+
+          <div className={styles.chartCard}>
+            <div className={styles.cardTitle}>Dollars ahead of inflation, by ticker</div>
+            <div className={styles.cardSub}>
+              What each position is worth against what its cost basis would have to be worth just
+              to have held its value. Bars to the left are positions that lost you buying power
+              even where the nominal return was positive.
+            </div>
+            <AlphaBars
+              benchName="inflation"
+              symbols={infl.symbols.map(s => ({
+                symbol: s.symbol,
+                alpha: s.realGain,
+                invested: s.invested,
+                ret: s.ret,
+                benchRet: s.inflRet,
+              }))}
+              onSelect={(sym) => setSelected(selected === sym ? null : sym)}
+              selected={selected}
+            />
+          </div>
+
+          <div className={styles.card}>
+            <div className={styles.cardTitle}>By ticker, after inflation</div>
+            <div className={styles.cardSub}>
+              &quot;Needed to stand still&quot; is the cost basis carried forward at the price
+              level over that position&apos;s own holding period. Anything above it is real.
+            </div>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Ticker</th>
+                    <th className={styles.num}>Invested</th>
+                    <th className={styles.num}>Now worth</th>
+                    <th className={styles.num}>Needed to stand still</th>
+                    <th className={styles.num}>Real gain</th>
+                    <th className={styles.num}>Your return</th>
+                    <th className={styles.num}>Inflation</th>
+                    <th className={styles.num}>Real return</th>
+                    <th className={styles.num}>Lots</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {infl.symbols.map(s => (
+                    <tr key={s.symbol}
+                      className={`${styles.clickRow} ${selected === s.symbol ? styles.clickRowActive : ''}`}
+                      onClick={() => setSelected(selected === s.symbol ? null : s.symbol)}>
+                      <td><strong>{s.symbol}</strong></td>
+                      <td className={styles.num}>{fmt(s.invested)}</td>
+                      <td className={styles.num}>{fmt(s.totalValue)}</td>
+                      <td className={`${styles.num} ${styles.muted}`}>{fmt(s.inflValue)}</td>
+                      <td className={`${styles.num} ${s.realGain >= 0 ? styles.up : styles.down}`}>
+                        <strong>{fmtSigned(s.realGain)}</strong>
+                      </td>
+                      <td className={`${styles.num} ${s.ret >= 0 ? styles.up : styles.down}`}>
+                        {fmtPct(s.ret)}
+                      </td>
+                      <td className={`${styles.num} ${styles.muted}`}>{fmtPlain(s.inflRet)}</td>
+                      <td className={`${styles.num} ${s.realRet >= 0 ? styles.up : styles.down}`}>
+                        {fmtPct(s.realRet)}
+                      </td>
+                      <td className={`${styles.num} ${styles.muted}`}>{s.lots}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td><strong>Total</strong></td>
+                    <td className={styles.num}><strong>{fmt(infl.totals.invested)}</strong></td>
+                    <td className={styles.num}><strong>{fmt(infl.totals.totalValue)}</strong></td>
+                    <td className={`${styles.num} ${styles.muted}`}><strong>{fmt(infl.totals.inflValue)}</strong></td>
+                    <td className={`${styles.num} ${infl.totals.realGain >= 0 ? styles.up : styles.down}`}>
+                      <strong>{fmtSigned(infl.totals.realGain)}</strong>
+                    </td>
+                    <td className={`${styles.num} ${infl.totals.ret >= 0 ? styles.up : styles.down}`}>
+                      <strong>{fmtPct(infl.totals.ret)}</strong>
+                    </td>
+                    <td className={`${styles.num} ${styles.muted}`}><strong>{fmtPlain(infl.totals.inflRet)}</strong></td>
+                    <td className={`${styles.num} ${infl.totals.realRet >= 0 ? styles.up : styles.down}`}>
+                      <strong>{fmtPct(infl.totals.realRet)}</strong>
+                    </td>
+                    <td className={`${styles.num} ${styles.muted}`}><strong>{infl.totals.lots}</strong></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            {infl.excluded.lots > 0 && (
+              <div className={styles.cardSub} style={{ marginTop: 10 }}>
+                {infl.excluded.lots} lot{infl.excluded.lots === 1 ? '' : 's'} covering{' '}
+                {fmt(infl.excluded.cost)} of cost fall outside the published CPI range and are left
+                out of this table rather than measured against a price level that doesn&apos;t exist.
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Year by year</div>
+        <div className={styles.cardSub}>
+          Calendar-year inflation against the S&amp;P 500&apos;s calendar-year total return, and
+          what was left over. Measured December to December on both sides.
+        </div>
+        <div className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Year</th>
+                <th className={styles.num}>Inflation</th>
+                <th className={styles.num}>S&amp;P 500</th>
+                <th className={styles.num}>Real</th>
+              </tr>
+            </thead>
+            <tbody>
+              {years.map(y => (
+                <tr key={y.year}>
+                  <td>
+                    <strong>{y.year}</strong>
+                    {y.partial && <span className={styles.tag}>to date</span>}
+                  </td>
+                  <td className={styles.num}>{fmtPlain(y.ret, 2)}</td>
+                  <td className={`${styles.num} ${y.index == null ? styles.muted : y.index >= 0 ? styles.up : styles.down}`}>
+                    {fmtPct(y.index, 2)}
+                  </td>
+                  <td className={`${styles.num} ${y.real == null ? styles.muted : y.real >= 0 ? styles.up : styles.down}`}>
+                    <strong>{fmtPct(y.real, 2)}</strong>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className={styles.noteCard}>
+        <div className={styles.noteTitle}>
+          <span className="material-symbols-outlined" style={{ fontSize: 17 }}>info</span>
+          How inflation is measured here
+        </div>
+        <ul className={styles.noteList}>
+          <li>
+            {cpi.label || 'CPI-U'} from the Bureau of Labor Statistics, series {cpi.series}. Not
+            seasonally adjusted, because the question is what a dollar from a given month buys,
+            not what forecasters need smoothed.
+          </li>
+          <li>
+            The newest reading is {cpi.latest ? `${cpi.latest.year}-${String(cpi.latest.month).padStart(2, '0')}` : 'unknown'},
+            {lag > 0
+              ? ` about ${lag} month${lag === 1 ? '' : 's'} behind today — the BLS publishes a month in the middle of the next one, so the most recent inflation is not in these numbers yet and real returns here run very slightly high.`
+              : ' current.'}
+          </li>
+          <li>
+            CPI is a national basket. Your own inflation rate depends on where you live and what
+            you buy; someone with a fixed mortgage and a short commute has experienced markedly
+            less than this, and a renter markedly more.
+          </li>
+          <li>
+            Nothing here is after tax. The tax you would owe on selling is on the{' '}
+            <strong>Tax on Selling</strong> tab, and it is charged on the nominal gain — you are
+            taxed on the inflation too.
+          </li>
+          {cpi.missingMonths > 0 && (
+            <li>
+              {cpi.missingMonths} month{cpi.missingMonths === 1 ? '' : 's'} in the range{' '}
+              {cpi.missingMonths === 1 ? 'was' : 'were'} never published — the 2025 funding lapse
+              cost October — so a date landing in the gap uses the last reading before it.
+            </li>
+          )}
+        </ul>
+      </div>
+
+      {!history && trades.length > 0 && (
+        <div className={styles.emptyState}>Rebuilding your account history…</div>
+      )}
+    </>
+  );
+}
+
+// ── Tax tab ─────────────────────────────────────────────────────────────
+
+// Filing status and income are the two inputs the answer swings hardest on,
+// and re-entering them on every visit would make the tab useless. They stay in
+// this browser rather than in the synced settings document — they are answers
+// about a tax return, and nothing else on the site needs them.
+const TAX_PREFS_KEY = 'stockTaxPrefs:v1';
+
+function loadTaxPrefs() {
+  try { return JSON.parse(localStorage.getItem(TAX_PREFS_KEY)) || {}; }
+  catch { return {}; }
+}
+
+function saveTaxPrefs(prefs) {
+  try { localStorage.setItem(TAX_PREFS_KEY, JSON.stringify(prefs)); }
+  catch { /* private mode — the inputs just won't persist */ }
+}
+
+const SCOPES = [
+  { id: 'all', label: 'Sell everything', hint: 'Every open lot, today' },
+  { id: 'long', label: 'Long-term only', hint: 'Only lots past the one-year line' },
+  { id: 'gains', label: 'Only winners', hint: 'Lots currently above cost' },
+  { id: 'losses', label: 'Harvest losses', hint: 'Lots currently below cost' },
+];
+
+/** Realized gains already booked this tax year, split short vs long. */
+function realizedThisYear(rows, taxYear) {
+  const out = { shortTermGain: 0, longTermGain: 0, lots: 0, proceeds: 0 };
+  for (const r of rows || []) {
+    if (r.open || !Number.isFinite(r.exitT)) continue;
+    if (new Date(r.exitT).getUTCFullYear() !== taxYear) continue;
+    const gain = r.value - r.costBasis;
+    if (heldDays(r.buyT, r.exitT) >= LONG_TERM_DAYS) out.longTermGain += gain;
+    else out.shortTermGain += gain;
+    out.proceeds += r.value;
+    out.lots++;
+  }
+  return out;
+}
+
+/**
+ * What selling would cost.
+ *
+ * The number that matters is the *incremental* one: tax owed with the sale,
+ * less tax owed without it. Quoting the gross bill on the whole year's gains
+ * would blame this sale for tax that was already due, and quoting a flat rate
+ * on the gain would miss that a large sale pushes its own last dollars into a
+ * higher band than its first.
+ */
+function TaxTab({ series }) {
+  const { trades, result, awaitingQuotes } = usePortfolio(series);
+
+  const [status, setStatus] = useState(() => loadTaxPrefs().status || 'single');
+  const [incomeText, setIncomeText] = useState(() => loadTaxPrefs().income ?? '');
+  const [stateText, setStateText] = useState(() => loadTaxPrefs().stateRate ?? '');
+  const [includeNiit, setIncludeNiit] = useState(() => loadTaxPrefs().includeNiit !== false);
+  const [includeRealized, setIncludeRealized] = useState(() => loadTaxPrefs().includeRealized !== false);
+  const [scope, setScope] = useState('all');
+  const [chosen, setChosen] = useState(() => new Set());
+  const [showLots, setShowLots] = useState(false);
+
+  const otherIncome = Math.max(0, Number(String(incomeText).replace(/[$,\s]/g, '')) || 0);
+  const stateRate = Math.max(0, Math.min(0.2, (Number(String(stateText).replace(/[%\s]/g, '')) || 0) / 100));
+
+  useEffect(() => {
+    saveTaxPrefs({ status, income: incomeText, stateRate: stateText, includeNiit, includeRealized });
+  }, [status, incomeText, stateText, includeNiit, includeRealized]);
+
+  const nowT = series.lastT;
+  const taxYear = new Date(nowT).getUTCFullYear();
+
+  const openRows = useMemo(() => (result?.rows || []).filter(r => r.open), [result]);
+
+  const included = useMemo(() => {
+    if (scope === 'long') return openRows.filter(r => isLongTerm(r.buyT, nowT));
+    if (scope === 'gains') return openRows.filter(r => r.value > r.costBasis);
+    if (scope === 'losses') return openRows.filter(r => r.value < r.costBasis);
+    if (scope === 'custom') return openRows.filter(r => chosen.has(r.symbol));
+    return openRows;
+  }, [scope, openRows, chosen, nowT]);
+
+  const includedSymbols = useMemo(
+    () => new Set(included.map(r => r.symbol)),
+    [included],
+  );
+
+  const sale = useMemo(() => summarizeLots(included, nowT), [included, nowT]);
+  const realized = useMemo(() => realizedThisYear(result?.rows, taxYear), [result, taxYear]);
+
+  const base = includeRealized ? realized : { shortTermGain: 0, longTermGain: 0 };
+
+  // Two runs of the same estimator: the year as it already stands, and the
+  // year with this sale added on top. The gap is what selling actually costs.
+  const before = useMemo(() => estimateTax({
+    shortTermGain: base.shortTermGain,
+    longTermGain: base.longTermGain,
+    otherTaxableIncome: otherIncome, status, stateRate, includeNiit,
+  }), [base.shortTermGain, base.longTermGain, otherIncome, status, stateRate, includeNiit]);
+
+  const after = useMemo(() => estimateTax({
+    shortTermGain: base.shortTermGain + sale.shortTermGain,
+    longTermGain: base.longTermGain + sale.longTermGain,
+    otherTaxableIncome: otherIncome, status, stateRate, includeNiit,
+  }), [base.shortTermGain, base.longTermGain, sale, otherIncome, status, stateRate, includeNiit]);
+
+  const cost = {
+    federalShort: after.federalShort - before.federalShort,
+    federalLong: after.federalLong - before.federalLong,
+    niit: after.niit - before.niit,
+    state: after.state - before.state,
+    total: after.total - before.total,
+    relief: after.lossRelief - before.lossRelief,
+  };
+  cost.net = cost.total - cost.relief;
+
+  const perSymbol = useMemo(() => {
+    const map = new Map();
+    for (const r of openRows) {
+      if (!map.has(r.symbol)) {
+        map.set(r.symbol, {
+          symbol: r.symbol, value: 0, basis: 0,
+          shortTermGain: 0, longTermGain: 0, shortLots: 0, longLots: 0,
+        });
+      }
+      const s = map.get(r.symbol);
+      s.value += r.value;
+      s.basis += r.costBasis;
+      if (isLongTerm(r.buyT, nowT)) { s.longTermGain += r.value - r.costBasis; s.longLots++; }
+      else { s.shortTermGain += r.value - r.costBasis; s.shortLots++; }
+    }
+    return [...map.values()]
+      .map(s => ({ ...s, gain: s.shortTermGain + s.longTermGain }))
+      .sort((a, b) => b.gain - a.gain);
+  }, [openRows, nowT]);
+
+  // Short-term lots sitting on a gain, and what patience is worth on each.
+  // Priced exactly rather than as (ordinary rate − LT rate) × gain, because a
+  // lot that straddles a bracket boundary doesn't move at one rate.
+  const ripening = useMemo(() => {
+    const rows = openRows
+      .filter(r => !isLongTerm(r.buyT, nowT) && r.value > r.costBasis)
+      .map(r => {
+        const gain = r.value - r.costBasis;
+        const asShort = estimateTax({
+          shortTermGain: base.shortTermGain + gain,
+          longTermGain: base.longTermGain,
+          otherTaxableIncome: otherIncome, status, stateRate, includeNiit,
+        });
+        const asLong = estimateTax({
+          shortTermGain: base.shortTermGain,
+          longTermGain: base.longTermGain + gain,
+          otherTaxableIncome: otherIncome, status, stateRate, includeNiit,
+        });
+        return {
+          ...r,
+          gain,
+          qualifiesT: longTermDate(r.buyT),
+          daysLeft: Math.max(0, Math.ceil((longTermDate(r.buyT) - nowT) / MS_DAY)),
+          saving: asShort.total - asLong.total,
+        };
+      })
+      .filter(r => r.saving > 0.5)
+      .sort((a, b) => b.saving - a.saving);
+    return {
+      rows,
+      total: rows.reduce((s, r) => s + r.saving, 0),
+    };
+  }, [openRows, nowT, base.shortTermGain, base.longTermGain, otherIncome, status, stateRate, includeNiit]);
+
+  const toggleSymbol = (symbol) => {
+    setChosen(prev => {
+      const next = new Set(scope === 'custom' ? prev : includedSymbols);
+      if (next.has(symbol)) next.delete(symbol); else next.add(symbol);
+      return next;
+    });
+    setScope('custom');
+  };
+
+  if (!trades.length) {
+    return (
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Nothing to sell yet</div>
+        <div className={styles.cardSub}>
+          Import your trades on the <strong>My Trades</strong> tab. This tab reads the open lots
+          it builds — purchase dates, cost basis and today&apos;s value — and works out what
+          selling them would cost in tax.
+        </div>
+      </div>
+    );
+  }
+
+  if (!result || awaitingQuotes) {
+    return <div className={styles.emptyState}>Pricing your open positions…</div>;
+  }
+
+  if (!openRows.length) {
+    return (
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>No open positions</div>
+        <div className={styles.cardSub}>
+          Every lot in your imported history has been sold, so there is nothing left to model a
+          sale of. {realized.lots > 0 && `You did realize ${fmtSigned(realized.shortTermGain + realized.longTermGain)} across ${realized.lots} lots in ${taxYear}.`}
+        </div>
+      </div>
+    );
+  }
+
+  const netProceeds = sale.proceeds - cost.net;
+
+  return (
+    <>
+      <div className={styles.hero}>
+        <div className={styles.heroLabel}>
+          Estimated tax · {taxYear} rules · {FILING_STATUSES.find(f => f.id === status)?.label}
+        </div>
+        <div className={styles.heroValue}>
+          {fmt(Math.abs(cost.net))}
+          <span className={styles.heroUnit}>
+            {cost.net < 0 ? ' cut from your bill' : ' of tax'}
+          </span>
+        </div>
+        <div className={styles.heroChange}>
+          <span className={styles.changeRange}>
+            Selling {included.length === openRows.length ? 'everything' : `${included.length} of ${openRows.length} lots`}
+            {' · '}{fmt(sale.proceeds)} of stock{' · '}{fmtSigned(sale.gain)} of gain
+          </span>
+          {sale.gain > 0 && (
+            <span className={styles.changeUp}>
+              {fmtPlain(cost.net / sale.gain)} of the gain
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Your situation</div>
+        <div className={styles.cardSub}>
+          The rate on a capital gain depends entirely on the income it lands on top of, so these
+          three answers change the number more than anything about the stocks does. They stay in
+          this browser and are never sent anywhere.
+        </div>
+        <div className={styles.inputRow}>
+          <label className={styles.inputField}>
+            <span>Filing status</span>
+            <select className={styles.select} value={status} onChange={e => setStatus(e.target.value)}>
+              {FILING_STATUSES.map(f => (
+                <option key={f.id} value={f.id}>{f.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className={styles.inputField}>
+            <span>Other taxable income</span>
+            <input type="text" inputMode="numeric" value={incomeText}
+              placeholder="0"
+              onChange={e => setIncomeText(e.target.value)} />
+          </label>
+          <label className={styles.inputField}>
+            <span>State rate on gains</span>
+            <input type="text" inputMode="decimal" value={stateText}
+              placeholder="0"
+              onChange={e => setStateText(e.target.value)} />
+          </label>
+        </div>
+        <div className={styles.cardSub} style={{ marginTop: 10 }}>
+          <strong>Other taxable income</strong> means the figure after your deductions — line 15 of
+          a 1040, excluding these gains. If you only know your gross pay, subtract the{' '}
+          {TAX_YEAR} standard deduction of {fmt(STANDARD_DEDUCTION[status])} for{' '}
+          {FILING_STATUSES.find(f => f.id === status)?.label.toLowerCase()}. <strong>State rate</strong> is
+          a percentage — enter 5 for 5%, or leave it blank for a state with no income tax.
+        </div>
+        <label className={styles.checkbox}>
+          <input type="checkbox" checked={includeNiit} onChange={e => setIncludeNiit(e.target.checked)} />
+          <span>
+            Apply the {fmtPlain(NIIT_RATE)} net investment income tax above{' '}
+            {fmt(NIIT_THRESHOLD[status])} of modified AGI. Leave this on unless you know it
+            doesn&apos;t apply to you.
+          </span>
+        </label>
+        {realized.lots > 0 && (
+          <label className={styles.checkbox}>
+            <input type="checkbox" checked={includeRealized}
+              onChange={e => setIncludeRealized(e.target.checked)} />
+            <span>
+              Stack this on the {fmtSigned(realized.shortTermGain + realized.longTermGain)} you
+              already realized across {realized.lots} lot{realized.lots === 1 ? '' : 's'} in{' '}
+              {taxYear}. Those gains fill your lower brackets first, so leaving them out
+              understates what a further sale costs.
+            </span>
+          </label>
+        )}
+      </div>
+
+      <div className={styles.controls}>
+        <div className={styles.pillGroup}>
+          {SCOPES.map(o => (
+            <button key={o.id} type="button" title={o.hint}
+              className={`${styles.pill} ${scope === o.id ? styles.pillActive : ''}`}
+              onClick={() => setScope(o.id)}>
+              {o.label}
+            </button>
+          ))}
+          {scope === 'custom' && (
+            <span className={`${styles.pill} ${styles.pillActive}`}>
+              {chosen.size} picked by hand
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className={styles.statGrid}>
+        <div className={styles.statCard}>
+          <div className={styles.statLabel}>You&apos;d receive</div>
+          <div className={styles.statValue}>{fmt(sale.proceeds)}</div>
+          <div className={styles.statSub}>
+            {fmt(sale.basis)} of that is your own money back
+          </div>
+        </div>
+        <div className={styles.statCard}>
+          <div className={styles.statLabel}>Long-term gain</div>
+          <div className={`${styles.statValue} ${sale.longTermGain >= 0 ? styles.up : styles.down}`}>
+            {fmtSigned(sale.longTermGain)}
+          </div>
+          <div className={styles.statSub}>
+            {sale.longLots} lot{sale.longLots === 1 ? '' : 's'} held over a year
+          </div>
+        </div>
+        <div className={styles.statCard}>
+          <div className={styles.statLabel}>Short-term gain</div>
+          <div className={`${styles.statValue} ${sale.shortTermGain >= 0 ? styles.up : styles.down}`}>
+            {fmtSigned(sale.shortTermGain)}
+          </div>
+          <div className={styles.statSub}>
+            {sale.shortLots} lot{sale.shortLots === 1 ? '' : 's'} · taxed as ordinary income
+          </div>
+        </div>
+        <div className={styles.statCard}>
+          <div className={styles.statLabel}>Estimated tax</div>
+          <div className={`${styles.statValue} ${cost.net > 0 ? styles.down : styles.up}`}>
+            {cost.net < 0 ? `−${fmt(-cost.net)}` : fmt(cost.net)}
+          </div>
+          <div className={styles.statSub}>
+            {cost.net < 0
+              ? 'a net loss, so it reduces what you owe'
+              : `federal ${fmt(cost.federalShort + cost.federalLong + cost.niit)}`}
+            {cost.state > 0 && ` + state ${fmt(cost.state)}`}
+          </div>
+        </div>
+        <div className={styles.statCard}>
+          <div className={styles.statLabel}>You&apos;d keep</div>
+          <div className={styles.statValue}>{fmt(netProceeds)}</div>
+          <div className={styles.statSub}>after the tax above is paid</div>
+        </div>
+        <div className={styles.statCard}>
+          <div className={styles.statLabel}>Rate on the gain</div>
+          <div className={styles.statValue}>
+            {sale.gain > 0 ? fmtPlain(cost.net / sale.gain) : '—'}
+          </div>
+          <div className={styles.statSub}>
+            {after.topLongTermRate != null
+              ? `last long-term dollar at ${fmtPlain(after.topLongTermRate, 0)}`
+              : `marginal ordinary rate ${fmtPlain(after.marginalOrdinaryRate, 0)}`}
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Where the tax comes from</div>
+        <div className={styles.cardSub}>
+          Each line is what the sale <em>adds</em> to your bill, not the whole year&apos;s
+          {includeRealized && realized.lots > 0 ? ' — the gains you already booked are held constant in both columns' : ''}.
+          Long-term gains stack on top of your ordinary income, so the first ones are taxed in
+          whatever bracket room is left and the last ones can land a band higher.
+        </div>
+        <div className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th className={styles.num}>Taxable amount</th>
+                <th className={styles.num}>Rate</th>
+                <th className={styles.num}>Tax</th>
+              </tr>
+            </thead>
+            <tbody>
+              {/* Every rate either run touches, so a band that shrank because
+                  short-term gains pushed the ordinary base up is still shown
+                  rather than silently dropped from a total that includes it. */}
+              {[...new Set([
+                ...after.longTermBands.map(b => b.rate),
+                ...before.longTermBands.map(b => b.rate),
+              ])].sort((a, b) => a - b).map(rate => {
+                const amount = (after.longTermBands.find(x => x.rate === rate)?.amount || 0)
+                  - (before.longTermBands.find(x => x.rate === rate)?.amount || 0);
+                if (Math.abs(amount) < 0.5) return null;
+                return (
+                  <tr key={`lt${rate}`}>
+                    <td>Long-term capital gain</td>
+                    <td className={styles.num}>{fmt(amount)}</td>
+                    <td className={styles.num}>{fmtPlain(rate, 0)}</td>
+                    <td className={styles.num}>{fmt(amount * rate)}</td>
+                  </tr>
+                );
+              })}
+              {Math.abs(cost.federalShort) >= 0.5 && (
+                <tr>
+                  <td>Short-term gain, as ordinary income</td>
+                  <td className={styles.num}>{fmt(sale.shortTermGain)}</td>
+                  <td className={styles.num}>
+                    up to {fmtPlain(after.marginalOrdinaryRate, 0)}
+                  </td>
+                  <td className={styles.num}>{fmt(cost.federalShort)}</td>
+                </tr>
+              )}
+              {Math.abs(cost.niit) >= 0.5 && (
+                <tr>
+                  <td>Net investment income tax</td>
+                  <td className={styles.num}>{fmt(after.niitBase - before.niitBase)}</td>
+                  <td className={styles.num}>{fmtPlain(NIIT_RATE)}</td>
+                  <td className={styles.num}>{fmt(cost.niit)}</td>
+                </tr>
+              )}
+              {Math.abs(cost.state) >= 0.5 && (
+                <tr>
+                  <td>State tax on gains</td>
+                  <td className={styles.num}>{fmt(Math.max(0, sale.gain))}</td>
+                  <td className={styles.num}>{fmtPlain(stateRate)}</td>
+                  <td className={styles.num}>{fmt(cost.state)}</td>
+                </tr>
+              )}
+              {Math.abs(cost.relief) >= 0.5 && (
+                <tr>
+                  <td>Loss written off against ordinary income</td>
+                  <td className={styles.num}>{fmt(after.net.ordinaryOffset)}</td>
+                  <td className={styles.num}>{fmtPlain(after.marginalOrdinaryRate, 0)}</td>
+                  <td className={`${styles.num} ${styles.up}`}>−{fmt(cost.relief)}</td>
+                </tr>
+              )}
+              {Math.abs(cost.total) < 0.5 && Math.abs(cost.relief) < 0.5 && (
+                <tr>
+                  <td colSpan={4} className={styles.muted}>
+                    No tax on this sale — the gains fall inside the {fmtPlain(0, 0)} long-term band.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td><strong>Total</strong></td>
+                <td className={styles.num} />
+                <td className={styles.num}>
+                  <strong>{sale.gain > 0 ? fmtPlain(cost.net / sale.gain) : '—'}</strong>
+                </td>
+                <td className={`${styles.num} ${cost.net > 0 ? styles.down : styles.up}`}>
+                  <strong>{fmt(cost.net)}</strong>
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        {after.net.carryForward > 0 && (
+          <div className={styles.cardSub} style={{ marginTop: 10 }}>
+            This sale books a net loss. Only {fmt(MAX_LOSS_OFFSET)} of it can be written off
+            against ordinary income this year; the remaining {fmt(after.net.carryForward)} carries
+            forward indefinitely and can shelter future gains.
+          </div>
+        )}
+      </div>
+
+      {ripening.rows.length > 0 && (
+        <div className={styles.infoCard}>
+          <div className={styles.noteTitle}>
+            <span className="material-symbols-outlined" style={{ fontSize: 17 }}>schedule</span>
+            {fmt(ripening.total)} of tax turns on holding a little longer
+          </div>
+          <div className={styles.cardSub} style={{ marginTop: 2, marginBottom: 10 }}>
+            These lots are still short-term, so their gains are taxed as ordinary income. Each
+            crosses into long-term treatment on the date shown — the saving is the exact
+            difference in your bill, not a rate-times-gain approximation.
+          </div>
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Ticker</th>
+                  <th>Bought</th>
+                  <th className={styles.num}>Gain</th>
+                  <th>Long-term from</th>
+                  <th className={styles.num}>Days to wait</th>
+                  <th className={styles.num}>Tax saved</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ripening.rows.map((r, i) => (
+                  <tr key={i}>
+                    <td><strong>{r.symbol}</strong></td>
+                    <td>{fmtDay(r.buyT)}</td>
+                    <td className={`${styles.num} ${styles.up}`}>{fmtSigned(r.gain)}</td>
+                    <td>{fmtDay(r.qualifiesT)}</td>
+                    <td className={styles.num}>{r.daysLeft}</td>
+                    <td className={`${styles.num} ${styles.up}`}><strong>{fmt(r.saving)}</strong></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className={styles.cardSub} style={{ marginTop: 10 }}>
+            Each row is priced on its own, as though it were the only thing you sold. Selling
+            several at once pushes the later ones into higher bands, so the savings do not simply
+            add up. And waiting is a market bet, not a free one — a {fmtPlain(0.1, 0)} fall in the
+            price costs more than most of these rows save.
+          </div>
+        </div>
+      )}
+
+      <div className={styles.card}>
+        <div className={styles.cardHeaderRow}>
+          <div>
+            <div className={styles.cardTitle}>By ticker</div>
+            <div className={styles.cardSub}>
+              Every open position, split at the one-year line. Tick a row to model selling just
+              that position — the totals above follow your selection.
+            </div>
+          </div>
+          <button type="button" className={styles.ghostBtn} onClick={() => setShowLots(v => !v)}>
+            {showLots ? 'Hide lots' : `Show all ${openRows.length} lots`}
+          </button>
+        </div>
+        <div className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Sell</th>
+                <th>Ticker</th>
+                <th className={styles.num}>Value</th>
+                <th className={styles.num}>Cost basis</th>
+                <th className={styles.num}>Long-term gain</th>
+                <th className={styles.num}>Short-term gain</th>
+                <th className={styles.num}>Total gain</th>
+                <th className={styles.num}>Lots</th>
+              </tr>
+            </thead>
+            <tbody>
+              {perSymbol.map(s => (
+                <tr key={s.symbol} className={styles.clickRow} onClick={() => toggleSymbol(s.symbol)}>
+                  <td>
+                    <input type="checkbox" readOnly checked={includedSymbols.has(s.symbol)}
+                      style={{ cursor: 'pointer' }} />
+                  </td>
+                  <td><strong>{s.symbol}</strong></td>
+                  <td className={styles.num}>{fmt(s.value)}</td>
+                  <td className={styles.num}>{fmt(s.basis)}</td>
+                  <td className={`${styles.num} ${s.longTermGain >= 0 ? styles.up : styles.down}`}>
+                    {s.longLots ? fmtSigned(s.longTermGain) : '—'}
+                  </td>
+                  <td className={`${styles.num} ${s.shortTermGain >= 0 ? styles.up : styles.down}`}>
+                    {s.shortLots ? fmtSigned(s.shortTermGain) : '—'}
+                  </td>
+                  <td className={`${styles.num} ${s.gain >= 0 ? styles.up : styles.down}`}>
+                    <strong>{fmtSigned(s.gain)}</strong>
+                  </td>
+                  <td className={`${styles.num} ${styles.muted}`}>
+                    {s.longLots > 0 && `${s.longLots} long`}
+                    {s.longLots > 0 && s.shortLots > 0 && ', '}
+                    {s.shortLots > 0 && `${s.shortLots} short`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td />
+                <td><strong>Selected</strong></td>
+                <td className={styles.num}><strong>{fmt(sale.proceeds)}</strong></td>
+                <td className={styles.num}><strong>{fmt(sale.basis)}</strong></td>
+                <td className={`${styles.num} ${sale.longTermGain >= 0 ? styles.up : styles.down}`}>
+                  <strong>{fmtSigned(sale.longTermGain)}</strong>
+                </td>
+                <td className={`${styles.num} ${sale.shortTermGain >= 0 ? styles.up : styles.down}`}>
+                  <strong>{fmtSigned(sale.shortTermGain)}</strong>
+                </td>
+                <td className={`${styles.num} ${sale.gain >= 0 ? styles.up : styles.down}`}>
+                  <strong>{fmtSigned(sale.gain)}</strong>
+                </td>
+                <td className={`${styles.num} ${styles.muted}`}><strong>{included.length}</strong></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        {showLots && (
+          <div className={styles.tableWrap} style={{ marginTop: 18 }}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Ticker</th>
+                  <th className={styles.num}>Shares</th>
+                  <th>Bought</th>
+                  <th className={styles.num}>Held</th>
+                  <th>Treatment</th>
+                  <th className={styles.num}>Cost basis</th>
+                  <th className={styles.num}>Value</th>
+                  <th className={styles.num}>Gain</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...openRows].sort((a, b) => a.buyT - b.buyT).map((r, i) => {
+                  const long = isLongTerm(r.buyT, nowT);
+                  const gain = r.value - r.costBasis;
+                  return (
+                    <tr key={i} style={{ opacity: included.includes(r) ? 1 : 0.45 }}>
+                      <td><strong>{r.symbol}</strong></td>
+                      <td className={styles.num}>
+                        {/* A lot that came through a reorg holds a basket of
+                            tickers rather than a share count. */}
+                        {r.quantity == null
+                          ? <span className={styles.muted}>basket</span>
+                          : r.quantity.toLocaleString('en-US', { maximumFractionDigits: 4 })}
+                      </td>
+                      <td>{fmtDay(r.buyT)}</td>
+                      <td className={`${styles.num} ${styles.muted}`}>
+                        {heldDays(r.buyT, nowT).toLocaleString('en-US')}d
+                      </td>
+                      <td>
+                        {long
+                          ? <span className={styles.tag}>long-term</span>
+                          : `short — ${Math.max(0, Math.ceil((longTermDate(r.buyT) - nowT) / MS_DAY))}d to go`}
+                      </td>
+                      <td className={styles.num}>{fmt(r.costBasis, 2)}</td>
+                      <td className={styles.num}>{fmt(r.value, 2)}</td>
+                      <td className={`${styles.num} ${gain >= 0 ? styles.up : styles.down}`}>
+                        {fmtSigned(gain)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {realized.lots > 0 && (
+        <div className={styles.card}>
+          <div className={styles.cardTitle}>Already realized in {taxYear}</div>
+          <div className={styles.cardSub}>
+            Sales you have already made this year, which are taxable whether or not you sell
+            anything else. They occupy your lower brackets first, which is why a sale in a year
+            you have already booked gains costs more than the same sale in a quiet one.
+          </div>
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Ticker</th>
+                  <th>Sold</th>
+                  <th>Treatment</th>
+                  <th className={styles.num}>Proceeds</th>
+                  <th className={styles.num}>Cost basis</th>
+                  <th className={styles.num}>Gain</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.rows
+                  .filter(r => !r.open && new Date(r.exitT).getUTCFullYear() === taxYear)
+                  .sort((a, b) => b.exitT - a.exitT)
+                  .map((r, i) => {
+                    const long = heldDays(r.buyT, r.exitT) >= LONG_TERM_DAYS;
+                    const gain = r.value - r.costBasis;
+                    return (
+                      <tr key={i}>
+                        <td><strong>{r.symbol}</strong></td>
+                        <td>{fmtDay(r.exitT)}</td>
+                        <td>{long ? <span className={styles.tag}>long-term</span> : 'short-term'}</td>
+                        <td className={styles.num}>{fmt(r.value, 2)}</td>
+                        <td className={styles.num}>{fmt(r.costBasis, 2)}</td>
+                        <td className={`${styles.num} ${gain >= 0 ? styles.up : styles.down}`}>
+                          {fmtSigned(gain)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td><strong>Total</strong></td>
+                  <td colSpan={2} />
+                  <td className={styles.num}><strong>{fmt(realized.proceeds)}</strong></td>
+                  <td className={styles.num} />
+                  <td className={`${styles.num} ${realized.shortTermGain + realized.longTermGain >= 0 ? styles.up : styles.down}`}>
+                    <strong>{fmtSigned(realized.shortTermGain + realized.longTermGain)}</strong>
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className={styles.noteCard}>
+        <div className={styles.noteTitle}>
+          <span className="material-symbols-outlined" style={{ fontSize: 17 }}>gavel</span>
+          What this estimate assumes, and what it ignores
+        </div>
+        <ul className={styles.noteList}>
+          <li>
+            <strong>This is an estimate, not tax advice.</strong> Federal figures are the {TAX_YEAR}{' '}
+            brackets from {TAX_SOURCE}. Check them against your own return before acting on a
+            number this size, and talk to someone who does this for a living before a large sale.
+          </li>
+          <li>
+            It assumes the account is an ordinary taxable brokerage account. Nothing sold inside
+            an IRA or 401(k) works like this.
+          </li>
+          <li>
+            Lots are matched first-in-first-out, the same way the rest of this page does it. If
+            your broker has you on specific-identification or average cost, the split between
+            long- and short-term will differ and so will the bill.
+          </li>
+          <li>
+            State tax is applied as one flat rate on the whole gain. Real state treatment varies
+            a lot — some states tax long-term gains at ordinary rates, some exclude a portion,
+            some have their own brackets, and a loss may or may not carry the same relief.
+          </li>
+          <li>
+            Wash sales are not modelled. If you harvest a loss and buy the same security back
+            within 30 days either side, that loss is disallowed and the relief shown above
+            evaporates.
+          </li>
+          <li>
+            Not modelled: the alternative minimum tax, the QSBS exclusion, Section 1256 contracts,
+            the additional Medicare tax on earned income, quarterly estimated-payment penalties,
+            the qualified business income deduction, and any credit or phase-out that keys off AGI
+            — a large gain can quietly cost you more by raising your AGI than it does in capital
+            gains tax itself.
+          </li>
+          <li>
+            Dividends you have already received are excluded, because they were taxed in the year
+            they were paid. Only proceeds less cost basis is treated as a capital gain here.
+          </li>
+          <li>
+            Values are today&apos;s prices. A sale settles at whatever the market does on the day,
+            and the gain — and the tax — moves with it.
+          </li>
+        </ul>
+      </div>
+    </>
+  );
+}
+
 // ── Page ────────────────────────────────────────────────────────────────
 const TABS = [
   { id: 'benchmark', label: 'S&P Benchmark' },
   { id: 'trades', label: 'My Trades' },
+  { id: 'inflation', label: 'vs Inflation' },
+  { id: 'tax', label: 'Tax on Selling' },
 ];
+
+/**
+ * Consumer prices, loaded once for the whole page.
+ *
+ * Returns null while in flight, and an object carrying either a usable series
+ * or an `error` — never a partial one. A missing CPI has to stay visible as a
+ * missing CPI: an inflation comparison that quietly falls back to an assumed
+ * 2%/yr would be indistinguishable from a real one and wrong by thousands.
+ */
+function useCpi() {
+  const [state, setState] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const accept = (payload) => {
+      if (cancelled) return;
+      setState({
+        series: makeCpiSeries(payload.points),
+        label: payload.label,
+        latest: payload.latest,
+        missingMonths: payload.missingMonths || 0,
+        error: null,
+      });
+    };
+    fetchCpi(CPI_START_YEAR, { onFresh: accept })
+      .then(({ payload }) => accept(payload))
+      .catch(err => { if (!cancelled) setState({ series: null, error: err.message }); });
+    return () => { cancelled = true; };
+  }, []);
+
+  return state;
+}
 
 export function StockPerformancePage() {
   const [tab, setTab] = useState('benchmark');
   const [payload, setPayload] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const cpi = useCpi();
 
   useEffect(() => {
     let cancelled = false;
@@ -2384,9 +3721,10 @@ export function StockPerformancePage() {
         ))}
       </div>
 
-      {tab === 'benchmark'
-        ? <BenchmarkTab series={series} meta={meta} />
-        : <TradesTab series={series} meta={meta} />}
+      {tab === 'benchmark' && <BenchmarkTab series={series} meta={meta} cpi={cpi} />}
+      {tab === 'trades' && <TradesTab series={series} meta={meta} cpi={cpi} />}
+      {tab === 'inflation' && <InflationTab series={series} cpi={cpi} />}
+      {tab === 'tax' && <TaxTab series={series} />}
     </div>
   );
 }
