@@ -3847,6 +3847,192 @@ function TaxTab({ series }) {
 const HORIZONS = [1, 3, 5, 10, 20];
 
 /**
+ * The two futures, drawn against each other.
+ *
+ * Both lines are the same quantity the break-even table solves on — what you
+ * would actually have, after the tax finally due, if you cashed out in that
+ * year. Charting the raw balances instead would be prettier and would disagree
+ * with the table sitting underneath it.
+ *
+ * Where they cross is the whole decision: before it, keeping is ahead; after
+ * it, the index has made back the tax and more. If they never cross, no
+ * horizon rescues the switch at these rates.
+ */
+function SwitchCrossoverChart({
+  symbol, value, basis, taxToSell, indexReturn, stockReturn, futureTaxRate, forever, years = 20,
+}) {
+  const W = 880, H = 340;
+  const pad = { top: 18, right: 128, bottom: 40, left: 72 };
+  const innerW = W - pad.left - pad.right;
+  const innerH = H - pad.top - pad.bottom;
+
+  const model = useMemo(() => {
+    const proceeds = value - taxToSell;
+    if (!(value > 0) || !(proceeds > 0)) return null;
+    const tau = Math.min(Math.max(futureTaxRate, 0), 0.9);
+
+    const afterTax = (gross, costBasis) => (
+      forever ? gross : gross - tau * (gross - costBasis)
+    );
+
+    const pts = [];
+    for (let n = 0; n <= years; n++) {
+      pts.push({
+        n,
+        keep: afterTax(value * Math.pow(1 + stockReturn, n), basis),
+        sell: afterTax(proceeds * Math.pow(1 + indexReturn, n), proceeds),
+      });
+    }
+
+    // At most one crossing: the two curves are exponentials with different
+    // rates, so their difference changes sign once at the outside.
+    //
+    // Below this the two paths are the same answer. The keep side applies a
+    // flat future rate while the sell side is reduced by the real
+    // bracket-aware bill, so the two disagree by a few dollars at year zero
+    // even when they are conceptually identical — without a floor that noise
+    // reads as a crossing and pins "they meet at 0.0y" to the left edge.
+    const EPS = Math.max(1, value * 0.002);
+    let firstSign = 0;
+    for (const p of pts) {
+      const d = p.sell - p.keep;
+      if (Math.abs(d) > EPS) { firstSign = Math.sign(d); break; }
+    }
+
+    let crossN = null;
+    if (firstSign !== 0) {
+      for (let i = 1; i < pts.length; i++) {
+        const b = pts[i].sell - pts[i].keep;
+        if (Math.abs(b) > EPS && Math.sign(b) !== firstSign) {
+          const a = pts[i - 1].sell - pts[i - 1].keep;
+          crossN = pts[i - 1].n + (b - a === 0 ? 0 : (0 - a) / (b - a));
+          break;
+        }
+      }
+    }
+    return { pts, crossN, proceeds };
+  }, [value, basis, taxToSell, indexReturn, stockReturn, futureTaxRate, forever, years]);
+
+  if (!model) return <div className={styles.emptyState}>Nothing to project.</div>;
+
+  const { pts, crossN } = model;
+  const all = pts.flatMap(p => [p.keep, p.sell]);
+  const hi = Math.max(...all) * 1.04;
+  const lo = Math.min(...all) * 0.96;
+  const x = (n) => pad.left + (n / years) * innerW;
+  const y = (v) => pad.top + (1 - (v - lo) / (hi - lo || 1)) * innerH;
+  const line = (key) => `M ${pts.map(p => `${x(p.n)} ${y(p[key])}`).join(' L ')}`;
+
+  // The band between the curves, split at the crossing. Each side is coloured
+  // by who is actually ahead across it rather than by an assumption about
+  // which way the crossing runs — with a higher future rate entered, the
+  // switch can start ahead and fall behind, which is the reverse of the usual.
+  const at = (n) => {
+    const i = Math.min(Math.floor(n), pts.length - 2);
+    const f = n - i;
+    const a = pts[i];
+    const b = pts[i + 1];
+    return { n, keep: a.keep + (b.keep - a.keep) * f, sell: a.sell + (b.sell - a.sell) * f };
+  };
+
+  const segments = crossN == null
+    ? [pts]
+    // The crossing point belongs to both halves, so the band closes to zero
+    // width there instead of leaving a wedge between the sampled years.
+    : [[...pts.filter(p => p.n <= crossN), at(crossN)],
+      [at(crossN), ...pts.filter(p => p.n >= crossN)]];
+
+  const bandPath = (seg) => {
+    if (seg.length < 2) return '';
+    const top = seg.map(p => `${x(p.n)} ${y(p.sell)}`).join(' L ');
+    const bottom = [...seg].reverse().map(p => `${x(p.n)} ${y(p.keep)}`).join(' L ');
+    return `M ${top} L ${bottom} Z`;
+  };
+
+  const last = pts[pts.length - 1];
+  const tickYears = [0, 5, 10, 15, 20].filter(t => t <= years);
+
+  return (
+    <>
+      <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet"
+        style={{ display: 'block' }}>
+        {ticksFor(lo, hi, 5).map((v, i) => (
+          <g key={i}>
+            <line x1={pad.left} y1={y(v)} x2={W - pad.right} y2={y(v)}
+              stroke="var(--color-text-tertiary)" strokeOpacity={0.15} strokeWidth={1} />
+            <text x={pad.left - 8} y={y(v) + 4} textAnchor="end" fontSize={10.5}
+              fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">{fmtAxis(v)}</text>
+          </g>
+        ))}
+
+        {tickYears.map(t => (
+          <text key={t} x={x(t)} y={H - 14} textAnchor="middle" fontSize={10.5}
+            fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">
+            {t === 0 ? 'today' : `${t}y`}
+          </text>
+        ))}
+
+        {segments.map((seg, i) => {
+          const lead = seg.reduce((s, p) => s + (p.sell - p.keep), 0);
+          return (
+            <path key={i} d={bandPath(seg)} fill={lead >= 0 ? WIN : LOSE} fillOpacity={0.1} />
+          );
+        })}
+
+        <path d={line('sell')} fill="none" stroke="var(--color-text-secondary)"
+          strokeWidth={1.9} strokeDasharray="5 4" strokeOpacity={0.9} />
+        <path d={line('keep')} fill="none" stroke="var(--color-secondary)"
+          strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" />
+
+        {crossN != null && (
+          <g>
+            <line x1={x(crossN)} y1={pad.top} x2={x(crossN)} y2={H - pad.bottom}
+              stroke="var(--color-text-primary)" strokeOpacity={0.35} strokeWidth={1}
+              strokeDasharray="3 3" />
+            <text x={x(crossN) + 6} y={pad.top + 12} fontSize={10.5} fontWeight={700}
+              fill="var(--color-text-primary)" fontFamily="var(--font-headline)">
+              they meet at {crossN.toFixed(1)}y
+            </text>
+          </g>
+        )}
+
+        {/* End labels rather than a number on every point. */}
+        <text x={x(years) + 8} y={y(last.keep) + 4} fontSize={11} fontWeight={700}
+          fill="var(--color-secondary)" fontFamily="var(--font-headline)">
+          {fmtAxis(last.keep)}
+        </text>
+        <text x={x(years) + 8} y={y(last.sell) + 4} fontSize={11} fontWeight={700}
+          fill="var(--color-text-secondary)" fontFamily="var(--font-headline)">
+          {fmtAxis(last.sell)}
+        </text>
+
+        {/* Hover targets, one per year. */}
+        {pts.map(p => (
+          <rect key={p.n} x={Math.max(pad.left, x(p.n) - innerW / years / 2)} y={pad.top}
+            width={innerW / years} height={innerH} fill="transparent">
+            <title>
+              {`Year ${p.n}\nKeep ${symbol}: ${fmt(p.keep)}\nSell and buy the S&P: ${fmt(p.sell)}`}
+              {`\n${p.sell >= p.keep ? 'switching ahead by ' : 'keeping ahead by '}${fmt(Math.abs(p.sell - p.keep))}`}
+            </title>
+          </rect>
+        ))}
+      </svg>
+
+      <div className={styles.legend} style={{ justifyContent: 'center', marginTop: 6 }}>
+        <span>
+          <span className={styles.legendDot} style={{ background: 'var(--color-secondary)' }} />
+          Keep {symbol} at {fmtPlain(stockReturn, 1)}/yr
+        </span>
+        <span>
+          <span className={styles.legendDash} />
+          Sell, pay {fmt(Math.abs(taxToSell))} of tax, buy the S&amp;P at {fmtPlain(indexReturn, 1)}/yr
+        </span>
+      </div>
+    </>
+  );
+}
+
+/**
  * One position, end to end: what it has done, what selling it would cost, and
  * what it has to earn from here for keeping it to have been the right call.
  *
@@ -3868,6 +4054,7 @@ function SingleStockTab({ series, cpi }) {
   const [forever, setForever] = useState(false);
   const [indexText, setIndexText] = useState('');
   const [futureRateText, setFutureRateText] = useState('');
+  const [stockText, setStockText] = useState('');
 
   const nowT = series.lastT;
   const taxYear = new Date(nowT).getUTCFullYear();
@@ -3915,6 +4102,31 @@ function SingleStockTab({ series, cpi }) {
     if (!vals.length) return { worst: null, best: null };
     return { worst: Math.min(...vals, 0), best: Math.max(...vals, 0) };
   }, [infl]);
+
+  const symbolIncome = useMemo(
+    () => (income || []).filter(d => (active?.symbol || '').split(' + ').includes(d.symbol)),
+    [income, active],
+  );
+
+  // What this position has actually annualized on its own cash flows. A
+  // starting point for the projection, emphatically not a forecast.
+  const stockHistoricAnnual = useMemo(() => {
+    if (!active) return null;
+    const flows = [];
+    for (const r of active.all) {
+      flows.push({ t: r.buyT, amount: -r.costBasis });
+      flows.push({ t: r.exitT, amount: r.value });
+    }
+    for (const d of symbolIncome) flows.push({ t: d.t, amount: d.amount });
+    return xirr(flows);
+  }, [active, symbolIncome]);
+
+  const defaultStockReturn = Number.isFinite(stockHistoricAnnual)
+    ? Math.max(-0.5, Math.min(0.5, stockHistoricAnnual))
+    : defaultIndexReturn;
+  const stockReturn = stockText.trim() === ''
+    ? defaultStockReturn
+    : Math.max(-0.5, Math.min(0.5, (Number(stockText.replace(/[%\s]/g, '')) || 0) / 100));
 
   const realized = useMemo(() => realizedThisYear(result?.rows, taxYear), [result, taxYear]);
   const base = includeRealized
@@ -4197,6 +4409,13 @@ function SingleStockTab({ series, cpi }) {
                   onChange={e => setIndexText(e.target.value)} />
               </label>
               <label className={styles.inputField}>
+                <span>{active.symbol} return a year</span>
+                <input type="text" inputMode="decimal"
+                  placeholder={(defaultStockReturn * 100).toFixed(1)}
+                  value={stockText}
+                  onChange={e => setStockText(e.target.value)} />
+              </label>
+              <label className={styles.inputField}>
                 <span>Tax rate when you sell</span>
                 <input type="text" inputMode="decimal"
                   placeholder={(impliedRate * 100).toFixed(1)}
@@ -4207,7 +4426,11 @@ function SingleStockTab({ series, cpi }) {
             <div className={styles.cardSub} style={{ marginTop: 10 }}>
               Blank uses {fmtPlain(defaultIndexReturn, 1)} for the index — what a typical ten-year
               hold has actually averaged across every start month in the series, which is a fairer
-              figure than any single stretch of history.
+              figure than any single stretch of history. For {active.symbol} it uses{' '}
+              {fmtPlain(defaultStockReturn, 1)}, which is what your own money in it has annualized
+              so far. <strong>That is history, not a forecast</strong> — a position that has run
+              hot is the one least likely to repeat it, so it is worth putting a sober number in
+              that box and seeing what happens to the picture below.
             </div>
             <div className={styles.cardSub} style={{ marginTop: 6 }}>
               The <strong>tax rate when you sell</strong> is the one number a bracket calculation
@@ -4236,6 +4459,43 @@ function SingleStockTab({ series, cpi }) {
                   + 'the most in this case, so the hurdle is at its lowest.'
                 : 'Both paths are taxed when they finally sell, so deferring buys time rather than '
                   + 'forgiveness — which is the honest default unless you know you\'ll never sell.'}
+            </div>
+          </div>
+
+          <div className={styles.chartCard}>
+            <div className={styles.chartHeader}>
+              <div>
+                <div className={styles.cardTitle}>
+                  The two futures, side by side
+                </div>
+                <div className={styles.cardSub}>
+                  Both lines are what you would actually have <strong>after tax</strong> if you
+                  cashed out in that year, which is the same measure the table below solves on.
+                  Selling costs {fmt(Math.abs(tax.cost))} up front, so the dashed line starts from
+                  a smaller stake — the shaded band is how far apart the two choices are, and where
+                  the lines cross is the moment the index has made that tax back.
+                </div>
+              </div>
+            </div>
+            <SwitchCrossoverChart
+              symbol={active.symbol}
+              value={sale.proceeds}
+              basis={sale.basis}
+              taxToSell={tax.cost}
+              indexReturn={indexReturn}
+              stockReturn={stockReturn}
+              futureTaxRate={futureTaxRate}
+              forever={forever}
+              years={20}
+            />
+            <div className={styles.cardSub} style={{ marginTop: 12 }}>
+              {forever
+                ? `Because this money is never sold again, the gap you see at year zero is the tax `
+                  + `itself — ${fmt(Math.abs(tax.cost))} that leaves and never compounds for you again.`
+                : `Both paths pay tax when they finally sell, so at year zero they are worth the `
+                  + `same and no gap is visible. That is the point: selling today costs you nothing `
+                  + `today — it costs you the compounding on the ${fmt(Math.abs(tax.cost))} that `
+                  + `goes to tax years before it had to.`}
             </div>
           </div>
 
