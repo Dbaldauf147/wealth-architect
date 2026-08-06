@@ -65,6 +65,59 @@ export function requiredReturn({
   };
 }
 
+/**
+ * Both paths year by year, plus the year they cross.
+ *
+ * Values are what you would actually have after the tax finally due if you
+ * cashed out that year — the same measure requiredReturn() solves on, so a
+ * chart drawn from this and a table drawn from that cannot disagree.
+ */
+export function projectPaths({
+  value, basis, taxToSell, indexReturn, stockReturn,
+  futureTaxRate = 0.15, forever = false, years = 20,
+}) {
+  const proceeds = value - taxToSell;
+  if (!(value > 0) || !(proceeds > 0) || !(years > 0)) return null;
+  if (!Number.isFinite(stockReturn) || !Number.isFinite(indexReturn)) return null;
+
+  const tau = Math.min(Math.max(futureTaxRate, 0), 0.9);
+  const afterTax = (gross, costBasis) => (forever ? gross : gross - tau * (gross - costBasis));
+
+  const pts = [];
+  for (let n = 0; n <= years; n++) {
+    pts.push({
+      n,
+      keep: afterTax(value * Math.pow(1 + stockReturn, n), basis),
+      sell: afterTax(proceeds * Math.pow(1 + indexReturn, n), proceeds),
+    });
+  }
+
+  // Below this the two paths are the same answer. The keep side applies a flat
+  // future rate while the sell side is reduced by the real bracket-aware bill,
+  // so they disagree by a few dollars at year zero even when conceptually
+  // identical — without a floor that noise reads as a crossing at year zero.
+  const eps = Math.max(1, value * 0.002);
+  let firstSign = 0;
+  for (const p of pts) {
+    const d = p.sell - p.keep;
+    if (Math.abs(d) > eps) { firstSign = Math.sign(d); break; }
+  }
+
+  let crossN = null;
+  if (firstSign !== 0) {
+    for (let i = 1; i < pts.length; i++) {
+      const b = pts[i].sell - pts[i].keep;
+      if (Math.abs(b) > eps && Math.sign(b) !== firstSign) {
+        const a = pts[i - 1].sell - pts[i - 1].keep;
+        crossN = pts[i - 1].n + (b - a === 0 ? 0 : (0 - a) / (b - a));
+        break;
+      }
+    }
+  }
+
+  return { pts, crossN, proceeds, last: pts[pts.length - 1] };
+}
+
 /** The same question across several horizons. */
 export function breakEvenTable({
   value, basis, taxToSell, indexReturn,

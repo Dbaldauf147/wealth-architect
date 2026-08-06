@@ -11,7 +11,7 @@ import {
   cpiLagMonths, priceRatio,
 } from '../lib/inflation';
 import {
-  breakEvenTable, requiredReturn, taxOpportunityCost, impliedTaxRate,
+  breakEvenTable, requiredReturn, projectPaths, taxOpportunityCost, impliedTaxRate,
 } from '../lib/switchAnalysis';
 import {
   FILING_STATUSES, TAX_YEAR, TAX_SOURCE, STANDARD_DEDUCTION, NIIT_RATE,
@@ -3951,63 +3951,38 @@ function MarginBars({ rows, onSelect, selected }) {
  * horizon rescues the switch at these rates.
  */
 function SwitchCrossoverChart({
-  symbol, value, basis, taxToSell, indexReturn, stockReturn, futureTaxRate, forever, years = 20,
+  symbol, value, basis, taxToSell, indexReturn, scenarios, activeKey,
+  futureTaxRate, forever, years = 20,
 }) {
   const W = 880, H = 340;
-  const pad = { top: 18, right: 128, bottom: 40, left: 72 };
+  const pad = { top: 18, right: 156, bottom: 40, left: 72 };
   const innerW = W - pad.left - pad.right;
   const innerH = H - pad.top - pad.bottom;
 
   const model = useMemo(() => {
-    const proceeds = value - taxToSell;
-    if (!(value > 0) || !(proceeds > 0)) return null;
-    const tau = Math.min(Math.max(futureTaxRate, 0), 0.9);
-
-    const afterTax = (gross, costBasis) => (
-      forever ? gross : gross - tau * (gross - costBasis)
-    );
-
-    const pts = [];
-    for (let n = 0; n <= years; n++) {
-      pts.push({
-        n,
-        keep: afterTax(value * Math.pow(1 + stockReturn, n), basis),
-        sell: afterTax(proceeds * Math.pow(1 + indexReturn, n), proceeds),
-      });
-    }
-
-    // At most one crossing: the two curves are exponentials with different
-    // rates, so their difference changes sign once at the outside.
-    //
-    // Below this the two paths are the same answer. The keep side applies a
-    // flat future rate while the sell side is reduced by the real
-    // bracket-aware bill, so the two disagree by a few dollars at year zero
-    // even when they are conceptually identical — without a floor that noise
-    // reads as a crossing and pins "they meet at 0.0y" to the left edge.
-    const EPS = Math.max(1, value * 0.002);
-    let firstSign = 0;
-    for (const p of pts) {
-      const d = p.sell - p.keep;
-      if (Math.abs(d) > EPS) { firstSign = Math.sign(d); break; }
-    }
-
-    let crossN = null;
-    if (firstSign !== 0) {
-      for (let i = 1; i < pts.length; i++) {
-        const b = pts[i].sell - pts[i].keep;
-        if (Math.abs(b) > EPS && Math.sign(b) !== firstSign) {
-          const a = pts[i - 1].sell - pts[i - 1].keep;
-          crossN = pts[i - 1].n + (b - a === 0 ? 0 : (0 - a) / (b - a));
-          break;
-        }
-      }
-    }
-    return { pts, crossN, proceeds };
-  }, [value, basis, taxToSell, indexReturn, stockReturn, futureTaxRate, forever, years]);
+    const runs = (scenarios || [])
+      .map(sc => ({
+        ...sc,
+        path: projectPaths({
+          value, basis, taxToSell, indexReturn, stockReturn: sc.rate,
+          futureTaxRate, forever, years,
+        }),
+      }))
+      .filter(r => r.path);
+    if (!runs.length) return null;
+    return { runs, active: runs.find(r => r.key === activeKey) || runs[0] };
+  }, [scenarios, activeKey, value, basis, taxToSell, indexReturn, futureTaxRate, forever, years]);
 
   if (!model) return <div className={styles.emptyState}>Nothing to project.</div>;
 
-  const { pts, crossN } = model;
+  const { runs, active } = model;
+  const pts = active.path.pts;
+  const crossN = active.path.crossN;
+  // Scale to the selected case alone. Fitting all three would keep the axis
+  // still while switching, but a good case compounding five points harder for
+  // twenty years ends up several times the others — and squashing the crossing
+  // flat to accommodate it loses the one thing the chart is for. The siblings
+  // are clipped instead.
   const all = pts.flatMap(p => [p.keep, p.sell]);
   const hi = Math.max(...all) * 1.04;
   const lo = Math.min(...all) * 0.96;
@@ -4044,10 +4019,49 @@ function SwitchCrossoverChart({
   const last = pts[pts.length - 1];
   const tickYears = [0, 5, 10, 15, 20].filter(t => t <= years);
 
+  // Clamp each end label into the frame, then walk them in vertical order
+  // pushing apart anything closer than a line height.
+  const endLabels = [
+    ...runs.map(r => ({
+      key: r.key, short: r.short, value: r.path.last.keep,
+      color: 'var(--color-secondary)', bold: r.key === active.key,
+    })),
+    {
+      key: '__sp', short: 'S&P', value: last.sell,
+      color: 'var(--color-text-secondary)', bold: true,
+    },
+  ]
+    .map(l => ({ ...l, raw: y(l.value) }))
+    .sort((a, b) => a.raw - b.raw);
+
+  const LABEL_GAP = 13;
+  const topY = pad.top + 8;
+  const bottomY = H - pad.bottom;
+
+  let floorY = topY - LABEL_GAP;
+  for (const l of endLabels) {
+    l.yPos = Math.max(Math.min(Math.max(l.raw, topY), bottomY), floorY + LABEL_GAP);
+    // The arrow means the line left the chart, not that the label was nudged.
+    l.off = l.raw < pad.top || l.raw > bottomY;
+    floorY = l.yPos;
+  }
+  // Pushing downward can run the stack off the bottom when several cluster
+  // there, so walk back up and pull them inside the frame.
+  let ceilY = bottomY;
+  for (let i = endLabels.length - 1; i >= 0; i--) {
+    endLabels[i].yPos = Math.min(endLabels[i].yPos, ceilY);
+    ceilY = endLabels[i].yPos - LABEL_GAP;
+  }
+
   return (
     <>
       <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet"
         style={{ display: 'block' }}>
+        <defs>
+          <clipPath id="switch-plot">
+            <rect x={pad.left} y={pad.top} width={innerW} height={innerH} />
+          </clipPath>
+        </defs>
         {ticksFor(lo, hi, 5).map((v, i) => (
           <g key={i}>
             <line x1={pad.left} y1={y(v)} x2={W - pad.right} y2={y(v)}
@@ -4073,6 +4087,19 @@ function SwitchCrossoverChart({
 
         <path d={line('sell')} fill="none" stroke="var(--color-text-secondary)"
           strokeWidth={1.9} strokeDasharray="5 4" strokeOpacity={0.9} />
+
+        {/* The scenarios not selected, kept faint — the fan is the point, but
+            only one of them is driving the numbers below. Clipped, because the
+            axis is fitted to the selected case. */}
+        <g clipPath="url(#switch-plot)">
+          {runs.filter(r => r.key !== active.key).map(r => (
+            <path key={r.key}
+              d={`M ${r.path.pts.map(p => `${x(p.n)} ${y(p.keep)}`).join(' L ')}`}
+              fill="none" stroke="var(--color-secondary)" strokeWidth={1.3}
+              strokeOpacity={0.32} strokeLinecap="round" />
+          ))}
+        </g>
+
         <path d={line('keep')} fill="none" stroke="var(--color-secondary)"
           strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" />
 
@@ -4088,15 +4115,17 @@ function SwitchCrossoverChart({
           </g>
         )}
 
-        {/* End labels rather than a number on every point. */}
-        <text x={x(years) + 8} y={y(last.keep) + 4} fontSize={11} fontWeight={700}
-          fill="var(--color-secondary)" fontFamily="var(--font-headline)">
-          {fmtAxis(last.keep)}
-        </text>
-        <text x={x(years) + 8} y={y(last.sell) + 4} fontSize={11} fontWeight={700}
-          fill="var(--color-text-secondary)" fontFamily="var(--font-headline)">
-          {fmtAxis(last.sell)}
-        </text>
+        {/* End labels rather than a number on every point. Two scenarios that
+            both run off the top would otherwise pin to the same pixel and print
+            over each other, so they are clamped to the frame and then pushed
+            apart in order. */}
+        {endLabels.map(l => (
+          <text key={l.key} x={x(years) + 8} y={l.yPos + 4} fontSize={11}
+            fontWeight={l.bold ? 700 : 500} fillOpacity={l.bold ? 1 : 0.55}
+            fill={l.color} fontFamily="var(--font-headline)">
+            {l.off ? (l.raw < pad.top ? '↑ ' : '↓ ') : ''}{fmtAxis(l.value)} {l.short}
+          </text>
+        ))}
 
         {/* Hover targets, one per year. */}
         {pts.map(p => (
@@ -4113,8 +4142,13 @@ function SwitchCrossoverChart({
       <div className={styles.legend} style={{ justifyContent: 'center', marginTop: 6 }}>
         <span>
           <span className={styles.legendDot} style={{ background: 'var(--color-secondary)' }} />
-          Keep {symbol} at {fmtPlain(stockReturn, 1)}/yr
+          Keep {symbol} — {active.label} at {fmtPlain(active.rate, 1)}/yr
         </span>
+        {runs.length > 1 && (
+          <span className={styles.muted}>
+            faint lines are the other {runs.length - 1} case{runs.length === 2 ? '' : 's'}
+          </span>
+        )}
         <span>
           <span className={styles.legendDash} />
           Sell, pay {fmt(Math.abs(taxToSell))} of tax, buy the S&amp;P at {fmtPlain(indexReturn, 1)}/yr
@@ -4149,6 +4183,8 @@ function SingleStockTab({ series, cpi }) {
   const [indexText, setIndexText] = useState('');
   const [futureRateText, setFutureRateText] = useState('');
   const [stockText, setStockText] = useState('');
+  const [spreadText, setSpreadText] = useState('');
+  const [scenario, setScenario] = useState('base');
 
   const nowT = series.lastT;
   const taxYear = new Date(nowT).getUTCFullYear();
@@ -4218,9 +4254,25 @@ function SingleStockTab({ series, cpi }) {
   const defaultStockReturn = Number.isFinite(stockHistoricAnnual)
     ? Math.max(-0.5, Math.min(0.5, stockHistoricAnnual))
     : defaultIndexReturn;
-  const stockReturn = stockText.trim() === ''
+  // The central case: its own history unless you say otherwise.
+  const centralReturn = stockText.trim() === ''
     ? defaultStockReturn
     : Math.max(-0.5, Math.min(0.5, (Number(stockText.replace(/[%\s]/g, '')) || 0) / 100));
+
+  // How far the good and bad cases sit either side of it, in percentage
+  // points. Points rather than a multiplier so it still behaves when the
+  // central case is negative — half of −8%/yr is not a worse outcome.
+  const spread = spreadText.trim() === ''
+    ? 0.05
+    : Math.max(0, Math.min(0.4, (Number(spreadText.replace(/[%\s]/g, '')) || 0) / 100));
+
+  const scenarios = useMemo(() => ([
+    { key: 'worse', label: 'does worse', short: 'worse', rate: centralReturn - spread },
+    { key: 'base', label: 'holds its average', short: 'as before', rate: centralReturn },
+    { key: 'better', label: 'does better', short: 'better', rate: centralReturn + spread },
+  ]), [centralReturn, spread]);
+
+  const activeScenario = scenarios.find(s => s.key === scenario) || scenarios[1];
 
   const realized = useMemo(() => realizedThisYear(result?.rows, taxYear), [result, taxYear]);
   const base = includeRealized
@@ -4471,6 +4523,10 @@ function SingleStockTab({ series, cpi }) {
                   ? `it may trail the S&P by ${fmtPlain(-headline.hurdle, 2)}/yr and still win`
                   : `it must beat the S&P by ${fmtPlain(headline.hurdle, 2)}/yr`}
               </span>
+              <span className={activeScenario.rate >= headline.required ? styles.changeUp : styles.changeDown}>
+                · {activeScenario.label} at {fmtPlain(activeScenario.rate, 1)},{' '}
+                {activeScenario.rate >= headline.required ? 'which clears it' : 'which falls short'}
+              </span>
               <span className={styles.changeRange}>
                 · over 10 years · S&amp;P assumed at {fmtPlain(indexReturn, 1)}/yr
               </span>
@@ -4636,11 +4692,17 @@ function SingleStockTab({ series, cpi }) {
                   onChange={e => setIndexText(e.target.value)} />
               </label>
               <label className={styles.inputField}>
-                <span>{active.symbol} return a year</span>
+                <span>{active.symbol} central case</span>
                 <input type="text" inputMode="decimal"
                   placeholder={(defaultStockReturn * 100).toFixed(1)}
                   value={stockText}
                   onChange={e => setStockText(e.target.value)} />
+              </label>
+              <label className={styles.inputField}>
+                <span>Better / worse by</span>
+                <input type="text" inputMode="decimal" placeholder="5"
+                  value={spreadText}
+                  onChange={e => setSpreadText(e.target.value)} />
               </label>
               <label className={styles.inputField}>
                 <span>Tax rate when you sell</span>
@@ -4656,8 +4718,21 @@ function SingleStockTab({ series, cpi }) {
               figure than any single stretch of history. For {active.symbol} it uses{' '}
               {fmtPlain(defaultStockReturn, 1)}, which is what your own money in it has annualized
               so far. <strong>That is history, not a forecast</strong> — a position that has run
-              hot is the one least likely to repeat it, so it is worth putting a sober number in
-              that box and seeing what happens to the picture below.
+              hot is the one least likely to repeat it, which is what the three cases below are
+              for. <strong>Better / worse by</strong> is in percentage points either side of the
+              central case, so 5 gives you {fmtPlain(centralReturn - spread, 1)},{' '}
+              {fmtPlain(centralReturn, 1)} and {fmtPlain(centralReturn + spread, 1)}.
+            </div>
+
+            <div className={styles.pillGroup} style={{ marginTop: 12 }}>
+              {scenarios.map(s => (
+                <button key={s.key} type="button"
+                  className={`${styles.pill} ${scenario === s.key ? styles.pillActive : ''}`}
+                  onClick={() => setScenario(s.key)}>
+                  {s.key === 'base' ? 'Holds its average' : s.key === 'worse' ? 'Does worse' : 'Does better'}
+                  {' '}<span className={styles.muted}>{fmtPlain(s.rate, 1)}</span>
+                </button>
+              ))}
             </div>
             <div className={styles.cardSub} style={{ marginTop: 6 }}>
               The <strong>tax rate when you sell</strong> is the one number a bracket calculation
@@ -4710,11 +4785,61 @@ function SingleStockTab({ series, cpi }) {
               basis={sale.basis}
               taxToSell={tax.cost}
               indexReturn={indexReturn}
-              stockReturn={stockReturn}
+              scenarios={scenarios}
+              activeKey={scenario}
               futureTaxRate={futureTaxRate}
               forever={forever}
               years={20}
             />
+
+            <div className={styles.tableWrap} style={{ marginTop: 16 }}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>If {active.symbol}</th>
+                    <th className={styles.num}>Returns</th>
+                    <th className={styles.num}>In 20 years, keeping</th>
+                    <th className={styles.num}>Switching</th>
+                    <th className={styles.num}>Difference</th>
+                    <th>Verdict</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scenarios.map(s => {
+                    const p = projectPaths({
+                      value: sale.proceeds, basis: sale.basis, taxToSell: tax.cost,
+                      indexReturn, stockReturn: s.rate, futureTaxRate, forever, years: 20,
+                    });
+                    if (!p) return null;
+                    const gap = p.last.keep - p.last.sell;
+                    return (
+                      <tr key={s.key}
+                        className={styles.clickRow}
+                        onClick={() => setScenario(s.key)}
+                        style={scenario === s.key
+                          ? { background: 'rgba(0, 88, 190, 0.06)', fontWeight: 600 }
+                          : undefined}>
+                        <td><strong>{s.label}</strong></td>
+                        <td className={styles.num}>{fmtPlain(s.rate, 1)}</td>
+                        <td className={styles.num}>{fmt(p.last.keep)}</td>
+                        <td className={`${styles.num} ${styles.muted}`}>{fmt(p.last.sell)}</td>
+                        <td className={`${styles.num} ${gap >= 0 ? styles.up : styles.down}`}>
+                          <strong>{fmtSigned(gap)}</strong>
+                        </td>
+                        <td className={gap >= 0 ? styles.up : styles.down}>
+                          {gap >= 0 ? 'keeping wins' : 'switching wins'}
+                          {p.crossN != null && (
+                            <span className={styles.muted}>
+                              {' '}· they cross at {p.crossN.toFixed(1)}y
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
             <div className={styles.cardSub} style={{ marginTop: 12 }}>
               {forever
                 ? `Because this money is never sold again, the gap you see at year zero is the tax `
