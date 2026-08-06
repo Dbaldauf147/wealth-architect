@@ -8,8 +8,11 @@ import {
 import {
   makeCpiSeries, inflationCompare, realCashComparison, realHistory,
   calendarYearInflation, inflationCagr, inflationBetween, realReturn,
-  cpiLagMonths,
+  cpiLagMonths, priceRatio,
 } from '../lib/inflation';
+import {
+  breakEvenTable, taxOpportunityCost, impliedTaxRate,
+} from '../lib/switchAnalysis';
 import {
   FILING_STATUSES, TAX_YEAR, TAX_SOURCE, STANDARD_DEDUCTION, NIIT_RATE,
   NIIT_THRESHOLD, MAX_LOSS_OFFSET, LONG_TERM_DAYS,
@@ -1168,7 +1171,7 @@ function LotTable({ rows, symbol }) {
   );
 }
 
-function TickerDetail({ symbol, rows, summary, income, series, onClose }) {
+function TickerDetail({ symbol, rows, summary, income, series, cpi, onClose }) {
   const [loaded, setLoaded] = useState(null);
   // A position that came through a reorganisation spans several tickers whose
   // price histories don't line up — the ticker was renamed mid-life — so there
@@ -1245,12 +1248,19 @@ function TickerDetail({ symbol, rows, summary, income, series, onClose }) {
     for (const t of sampled) {
       let you = 0;
       let sp = 0;
+      // The same dollars asked only to have held their value — the floor the
+      // position has to clear before any of the gain is real.
+      let infl = 0;
       for (const r of rows) {
         if (r.buyT > t) continue;
         if (!r.open && t >= r.exitT) {
           // Sold: the money stops compounding at what it actually realised.
           you += r.value;
           sp += r.benchValue;
+          if (cpi) {
+            const f = priceRatio(cpi, r.buyT, r.exitT);
+            if (f) infl += r.costBasis * f;
+          }
           continue;
         }
         const buyPx = tickerSeries.closeAt(r.buyT);
@@ -1260,11 +1270,17 @@ function TickerDetail({ symbol, rows, summary, income, series, onClose }) {
         if (!buyPx || !nowPx || !spBuy || !spNow) continue;
         you += r.costBasis * (nowPx / buyPx);
         sp += r.costBasis * (spNow / spBuy);
+        // Accumulated inside the same guard, so all three lines always
+        // describe the identical set of lots.
+        if (cpi) {
+          const f = priceRatio(cpi, r.buyT, t);
+          if (f) infl += r.costBasis * f;
+        }
       }
-      out.push({ t, you, sp });
+      out.push({ t, you, sp, infl: cpi ? infl : null });
     }
     return out.length >= 2 ? { points: out, unpriceable } : null;
-  }, [tickerSeries, rows, series, firstBuyT]);
+  }, [tickerSeries, rows, series, firstBuyT, cpi]);
 
   const W = 880, H = 300;
   const pad = { top: 16, right: 16, bottom: 32, left: 68 };
@@ -1274,7 +1290,7 @@ function TickerDetail({ symbol, rows, summary, income, series, onClose }) {
   const chart = useMemo(() => {
     if (!path) return null;
     const pts = path.points;
-    const values = pts.flatMap(p => [p.you, p.sp]);
+    const values = pts.flatMap(p => [p.you, p.sp, p.infl].filter(Number.isFinite));
     const hi = Math.max(...values) * 1.06;
     const lo = Math.min(Math.min(...values) * 0.94, 0);
     const tMin = pts[0].t;
@@ -1282,10 +1298,14 @@ function TickerDetail({ symbol, rows, summary, income, series, onClose }) {
     const x = (t) => pad.left + ((t - tMin) / tSpan) * innerW;
     const y = (v) => pad.top + (1 - (v - lo) / (hi - lo)) * innerH;
     const line = (key) => pts.map(p => `${x(p.t)} ${y(p[key])}`).join(' L ');
+    const inflPts = pts.filter(p => Number.isFinite(p.infl));
     return {
       x, y, tMin, ticks: ticksFor(lo, hi, 5),
       youPath: `M ${line('you')}`,
       spPath: `M ${line('sp')}`,
+      inflPath: inflPts.length >= 2
+        ? `M ${inflPts.map(p => `${x(p.t)} ${y(p.infl)}`).join(' L ')}`
+        : null,
       years: (() => {
         const out = [];
         const from = new Date(tMin).getUTCFullYear();
@@ -1313,7 +1333,9 @@ function TickerDetail({ symbol, rows, summary, income, series, onClose }) {
             the position line can sit slightly above the market value in the table for payers.
           </div>
         </div>
-        <button type="button" className={styles.ghostBtn} onClick={onClose}>Close</button>
+        {onClose && (
+          <button type="button" className={styles.ghostBtn} onClick={onClose}>Close</button>
+        )}
       </div>
 
       {summary && (
@@ -1399,6 +1421,10 @@ function TickerDetail({ symbol, rows, summary, income, series, onClose }) {
                 stroke="var(--color-secondary)" strokeOpacity={0.13} strokeWidth={1} />
             ))}
 
+            {chart.inflPath && (
+              <path d={chart.inflPath} fill="none" stroke="var(--color-warning)"
+                strokeWidth={1.75} strokeDasharray="2 3" strokeOpacity={0.9} />
+            )}
             <path d={chart.spPath} fill="none" stroke="var(--color-text-secondary)"
               strokeWidth={1.75} strokeDasharray="5 4" strokeOpacity={0.75} />
             <path d={chart.youPath} fill="none"
@@ -1413,6 +1439,12 @@ function TickerDetail({ symbol, rows, summary, income, series, onClose }) {
               {symbol} — {last ? fmt(last.you) : '—'}
             </span>
             <span><span className={styles.legendDash} /> Same money in the S&amp;P — {last ? fmt(last.sp) : '—'}</span>
+            {chart.inflPath && (
+              <span>
+                <span className={styles.legendDash} style={{ borderTopColor: 'var(--color-warning)' }} />
+                Just keeping pace with inflation — {last && Number.isFinite(last.infl) ? fmt(last.infl) : '—'}
+              </span>
+            )}
             <span className={styles.muted}>Vertical lines mark your purchases</span>
           </div>
         </>
@@ -1894,6 +1926,39 @@ function usePortfolio(series) {
   };
 }
 
+// ── Real-return heat scale ──────────────────────────────────────────────
+// The site's own status tokens, so the shading matches every other red and
+// green on the page rather than introducing a third palette.
+const TINT_LOSS = [186, 26, 26];   // --color-error
+const TINT_FLAT = [232, 163, 23];  // --color-warning
+const TINT_GAIN = [0, 150, 104];   // --color-success
+
+/**
+ * Background tint for a real return, on a red → amber → green ramp.
+ *
+ * Anchored at zero, not at the middle of the range. Zero real return is a
+ * real thing — you exactly kept pace with inflation — and it is the only
+ * defensible place to put the neutral colour. Scaling the ramp across the
+ * range instead would paint the weakest position red however well it did,
+ * which is colouring by rank rather than by value.
+ *
+ * The extremes on screen set how fast the colour saturates, so a portfolio
+ * whose spread is narrow still uses the whole ramp.
+ */
+function realReturnTint(value, worst, best) {
+  if (value == null || !Number.isFinite(value)) return undefined;
+  const up = value >= 0;
+  const extreme = up ? best : worst;
+  const t = !Number.isFinite(extreme) || extreme === 0
+    ? 0
+    : Math.min(1, Math.abs(value / extreme));
+  const to = up ? TINT_GAIN : TINT_LOSS;
+  const rgb = TINT_FLAT.map((c, i) => Math.round(c + (to[i] - c) * t));
+  // A tint, not a fill — the figure sits on top of this and has to stay
+  // comfortably readable, which caps the alpha well below solid.
+  return `rgba(${rgb.join(', ')}, ${(0.18 + 0.42 * t).toFixed(3)})`;
+}
+
 function TradesTab({ series, meta, cpi }) {
   const { setRobinhoodTrades } = useDataActions();
   const [showLots, setShowLots] = useState(false);
@@ -1923,6 +1988,32 @@ function TradesTab({ series, meta, cpi }) {
     const map = new Map();
     for (const s of infl?.symbols || []) map.set(s.symbol, s);
     return map;
+  }, [infl]);
+
+  // Ranked best to worst on what the money actually bought. Positions with no
+  // CPI cover keep their benchmark ordering and sink to the bottom rather than
+  // being ranked on a number that doesn't exist.
+  const rankedSymbols = useMemo(() => {
+    const rows = [...(result?.symbols || [])];
+    return rows.sort((a, b) => {
+      const ra = inflBySymbol.get(a.symbol)?.realRet;
+      const rb = inflBySymbol.get(b.symbol)?.realRet;
+      const aOk = ra != null && Number.isFinite(ra);
+      const bOk = rb != null && Number.isFinite(rb);
+      if (!aOk && !bOk) return b.alpha - a.alpha;
+      if (!aOk) return 1;
+      if (!bOk) return -1;
+      return rb - ra;
+    });
+  }, [result, inflBySymbol]);
+
+  // The ends of the ramp, taken from what's on screen.
+  const realRange = useMemo(() => {
+    const vals = (infl?.symbols || [])
+      .map(s => s.realRet)
+      .filter(v => v != null && Number.isFinite(v));
+    if (!vals.length) return { worst: null, best: null };
+    return { worst: Math.min(...vals, 0), best: Math.max(...vals, 0) };
   }, [infl]);
 
   const handleCommit = useCallback((payload) => {
@@ -2168,10 +2259,21 @@ function TradesTab({ series, meta, cpi }) {
         <div className={styles.card}>
           <div className={styles.cardTitle}>By ticker</div>
           <div className={styles.cardSub}>
-            Sorted by dollars gained or lost against the benchmark. "S&amp;P" is what the same
-            money would have done over the exact same holding periods, and "Inflation" is what it
-            would have taken merely to stand still — anything left over in the last column is real
-            purchasing power. Click a row to chart it against the index.
+            Ranked best to worst on <strong>real return</strong> — what each position returned
+            after inflation, which is the only version of the number you can spend. "S&amp;P" is
+            what the same money would have done over the exact same holding periods, and
+            "Inflation" is what it would have taken merely to stand still. Click a row to chart it
+            against the index.
+          </div>
+          <div className={styles.cardSub} style={{ marginTop: 6 }}>
+            The real return column is shaded{' '}
+            <span className={styles.swatchInline} style={{ background: realReturnTint(-1, -1, 1) }} />
+            red where purchasing power was destroyed,{' '}
+            <span className={styles.swatchInline} style={{ background: realReturnTint(0, -1, 1) }} />
+            amber where the money merely kept pace with prices, and{' '}
+            <span className={styles.swatchInline} style={{ background: realReturnTint(1, -1, 1) }} />
+            green where it genuinely got ahead. The shade is set by the figure itself, not by where
+            a position places in the ranking.
           </div>
           <div className={styles.tableWrap}>
             <table className={styles.table}>
@@ -2191,7 +2293,7 @@ function TradesTab({ series, meta, cpi }) {
                 </tr>
               </thead>
               <tbody>
-                {result.symbols.map(s => {
+                {rankedSymbols.map(s => {
                   const real = inflBySymbol.get(s.symbol) || null;
                   return (
                     <tr key={s.symbol}
@@ -2220,7 +2322,8 @@ function TradesTab({ series, meta, cpi }) {
                         title={real ? `${fmt(s.invested)} needed to be ${fmt(real.inflValue)} just to stand still` : undefined}>
                         {real ? fmtPlain(real.inflRet) : '—'}
                       </td>
-                      <td className={`${styles.num} ${real == null ? '' : real.realRet >= 0 ? styles.up : styles.down}`}>
+                      <td className={`${styles.num} ${styles.heat}`}
+                        style={{ background: realReturnTint(real?.realRet, realRange.worst, realRange.best) }}>
                         {real ? fmtPct(real.realRet) : '—'}
                       </td>
                       <td className={`${styles.num} ${real == null ? '' : real.realGain >= 0 ? styles.up : styles.down}`}>
@@ -2251,7 +2354,8 @@ function TradesTab({ series, meta, cpi }) {
                   <td className={`${styles.num} ${styles.muted}`}>
                     <strong>{infl ? fmtPlain(infl.totals.inflRet) : '—'}</strong>
                   </td>
-                  <td className={`${styles.num} ${infl && infl.totals.realRet >= 0 ? styles.up : styles.down}`}>
+                  <td className={`${styles.num} ${styles.heat}`}
+                    style={{ background: realReturnTint(infl?.totals?.realRet, realRange.worst, realRange.best) }}>
                     <strong>{infl ? fmtPct(infl.totals.realRet) : '—'}</strong>
                   </td>
                   <td className={`${styles.num} ${infl && infl.totals.realGain >= 0 ? styles.up : styles.down}`}>
@@ -2893,6 +2997,85 @@ function saveTaxPrefs(prefs) {
   catch { /* private mode — the inputs just won't persist */ }
 }
 
+/**
+ * The tax situation, shared by every tab that needs it.
+ *
+ * One store and one hook, so the single-stock tab and the whole-portfolio tab
+ * can never be quoting bills computed from different incomes.
+ */
+function useTaxPrefs() {
+  const [prefs, setPrefsState] = useState(loadTaxPrefs);
+
+  const setPrefs = useCallback((patch) => {
+    setPrefsState(prev => {
+      const next = { ...prev, ...patch };
+      saveTaxPrefs(next);
+      return next;
+    });
+  }, []);
+
+  const num = (v, strip) => Number(String(v ?? '').replace(strip, '')) || 0;
+
+  return {
+    prefs,
+    setPrefs,
+    status: prefs.status || 'single',
+    otherIncome: Math.max(0, num(prefs.income, /[$,\s]/g)),
+    // Capped at 20% — above every US state rate, and a typo of "50" for a
+    // percentage shouldn't silently produce an absurd bill.
+    stateRate: Math.max(0, Math.min(0.2, num(prefs.stateRate, /[%\s]/g) / 100)),
+    includeNiit: prefs.includeNiit !== false,
+    includeRealized: prefs.includeRealized !== false,
+  };
+}
+
+function TaxSituationInputs({ prefs, setPrefs, status, children }) {
+  return (
+    <>
+      <div className={styles.inputRow}>
+        <label className={styles.inputField}>
+          <span>Filing status</span>
+          <select className={styles.select} value={status}
+            onChange={e => setPrefs({ status: e.target.value })}>
+            {FILING_STATUSES.map(f => (
+              <option key={f.id} value={f.id}>{f.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className={styles.inputField}>
+          <span>Other taxable income</span>
+          <input type="text" inputMode="numeric" placeholder="0"
+            value={prefs.income ?? ''}
+            onChange={e => setPrefs({ income: e.target.value })} />
+        </label>
+        <label className={styles.inputField}>
+          <span>State rate on gains</span>
+          <input type="text" inputMode="decimal" placeholder="0"
+            value={prefs.stateRate ?? ''}
+            onChange={e => setPrefs({ stateRate: e.target.value })} />
+        </label>
+      </div>
+      <div className={styles.cardSub} style={{ marginTop: 10 }}>
+        <strong>Other taxable income</strong> means the figure after your deductions — line 15 of
+        a 1040, excluding these gains. If you only know your gross pay, subtract the{' '}
+        {TAX_YEAR} standard deduction of {fmt(STANDARD_DEDUCTION[status])} for{' '}
+        {FILING_STATUSES.find(f => f.id === status)?.label.toLowerCase()}. <strong>State rate</strong> is
+        a percentage — enter 5 for 5%, or leave it blank for a state with no income tax.
+      </div>
+      <label className={styles.checkbox}>
+        <input type="checkbox" checked={prefs.includeNiit !== false}
+          onChange={e => setPrefs({ includeNiit: e.target.checked })} />
+        <span>
+          Apply the {fmtPlain(NIIT_RATE)} net investment income tax above{' '}
+          {fmt(NIIT_THRESHOLD[status])} of modified AGI. Leave this on unless you know it
+          doesn&apos;t apply to you.
+        </span>
+      </label>
+      {children}
+    </>
+  );
+}
+
 const SCOPES = [
   { id: 'all', label: 'Sell everything', hint: 'Every open lot, today' },
   { id: 'long', label: 'Long-term only', hint: 'Only lots past the one-year line' },
@@ -2927,21 +3110,12 @@ function realizedThisYear(rows, taxYear) {
 function TaxTab({ series }) {
   const { trades, result, awaitingQuotes } = usePortfolio(series);
 
-  const [status, setStatus] = useState(() => loadTaxPrefs().status || 'single');
-  const [incomeText, setIncomeText] = useState(() => loadTaxPrefs().income ?? '');
-  const [stateText, setStateText] = useState(() => loadTaxPrefs().stateRate ?? '');
-  const [includeNiit, setIncludeNiit] = useState(() => loadTaxPrefs().includeNiit !== false);
-  const [includeRealized, setIncludeRealized] = useState(() => loadTaxPrefs().includeRealized !== false);
+  const {
+    prefs, setPrefs, status, otherIncome, stateRate, includeNiit, includeRealized,
+  } = useTaxPrefs();
   const [scope, setScope] = useState('all');
   const [chosen, setChosen] = useState(() => new Set());
   const [showLots, setShowLots] = useState(false);
-
-  const otherIncome = Math.max(0, Number(String(incomeText).replace(/[$,\s]/g, '')) || 0);
-  const stateRate = Math.max(0, Math.min(0.2, (Number(String(stateText).replace(/[%\s]/g, '')) || 0) / 100));
-
-  useEffect(() => {
-    saveTaxPrefs({ status, income: incomeText, stateRate: stateText, includeNiit, includeRealized });
-  }, [status, incomeText, stateText, includeNiit, includeRealized]);
 
   const nowT = series.lastT;
   const taxYear = new Date(nowT).getUTCFullYear();
@@ -3116,55 +3290,20 @@ function TaxTab({ series }) {
           three answers change the number more than anything about the stocks does. They stay in
           this browser and are never sent anywhere.
         </div>
-        <div className={styles.inputRow}>
-          <label className={styles.inputField}>
-            <span>Filing status</span>
-            <select className={styles.select} value={status} onChange={e => setStatus(e.target.value)}>
-              {FILING_STATUSES.map(f => (
-                <option key={f.id} value={f.id}>{f.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className={styles.inputField}>
-            <span>Other taxable income</span>
-            <input type="text" inputMode="numeric" value={incomeText}
-              placeholder="0"
-              onChange={e => setIncomeText(e.target.value)} />
-          </label>
-          <label className={styles.inputField}>
-            <span>State rate on gains</span>
-            <input type="text" inputMode="decimal" value={stateText}
-              placeholder="0"
-              onChange={e => setStateText(e.target.value)} />
-          </label>
-        </div>
-        <div className={styles.cardSub} style={{ marginTop: 10 }}>
-          <strong>Other taxable income</strong> means the figure after your deductions — line 15 of
-          a 1040, excluding these gains. If you only know your gross pay, subtract the{' '}
-          {TAX_YEAR} standard deduction of {fmt(STANDARD_DEDUCTION[status])} for{' '}
-          {FILING_STATUSES.find(f => f.id === status)?.label.toLowerCase()}. <strong>State rate</strong> is
-          a percentage — enter 5 for 5%, or leave it blank for a state with no income tax.
-        </div>
-        <label className={styles.checkbox}>
-          <input type="checkbox" checked={includeNiit} onChange={e => setIncludeNiit(e.target.checked)} />
-          <span>
-            Apply the {fmtPlain(NIIT_RATE)} net investment income tax above{' '}
-            {fmt(NIIT_THRESHOLD[status])} of modified AGI. Leave this on unless you know it
-            doesn&apos;t apply to you.
-          </span>
-        </label>
-        {realized.lots > 0 && (
-          <label className={styles.checkbox}>
-            <input type="checkbox" checked={includeRealized}
-              onChange={e => setIncludeRealized(e.target.checked)} />
-            <span>
-              Stack this on the {fmtSigned(realized.shortTermGain + realized.longTermGain)} you
-              already realized across {realized.lots} lot{realized.lots === 1 ? '' : 's'} in{' '}
-              {taxYear}. Those gains fill your lower brackets first, so leaving them out
-              understates what a further sale costs.
-            </span>
-          </label>
-        )}
+        <TaxSituationInputs prefs={prefs} setPrefs={setPrefs} status={status}>
+          {realized.lots > 0 && (
+            <label className={styles.checkbox}>
+              <input type="checkbox" checked={includeRealized}
+                onChange={e => setPrefs({ includeRealized: e.target.checked })} />
+              <span>
+                Stack this on the {fmtSigned(realized.shortTermGain + realized.longTermGain)} you
+                already realized across {realized.lots} lot{realized.lots === 1 ? '' : 's'} in{' '}
+                {taxYear}. Those gains fill your lower brackets first, so leaving them out
+                understates what a further sale costs.
+              </span>
+            </label>
+          )}
+        </TaxSituationInputs>
       </div>
 
       <div className={styles.controls}>
@@ -3624,12 +3763,489 @@ function TaxTab({ series }) {
   );
 }
 
+// ── Single stock tab ────────────────────────────────────────────────────
+
+const HORIZONS = [1, 3, 5, 10, 20];
+
+/**
+ * One position, end to end: what it has done, what selling it would cost, and
+ * what it has to earn from here for keeping it to have been the right call.
+ *
+ * The last of those is the part worth having. The instinct is that a holding
+ * must beat the index to justify itself, but for an appreciated position in a
+ * taxable account that is usually wrong — selling hands over a slice today and
+ * those dollars stop compounding, so keeping starts with a larger stake and
+ * can afford to trail. This works out by how much.
+ */
+function SingleStockTab({ series, cpi }) {
+  const portfolio = usePortfolio(series);
+  const { trades, income, result, awaitingQuotes } = portfolio;
+  const { prefs, setPrefs, status, otherIncome, stateRate, includeNiit, includeRealized } = useTaxPrefs();
+
+  const [symbol, setSymbol] = useState(null);
+  const [forever, setForever] = useState(false);
+  const [indexText, setIndexText] = useState('');
+
+  const nowT = series.lastT;
+  const taxYear = new Date(nowT).getUTCFullYear();
+
+  // What a typical ten-year hold in the index has actually returned — a
+  // defensible default that isn't a round number pulled from the air.
+  const defaultIndexReturn = useMemo(() => {
+    const ten = rollingReturns(series, 10);
+    return ten?.avg ?? cagr(series, series.firstT, series.lastT) ?? 0.09;
+  }, [series]);
+
+  const indexReturn = indexText.trim() === ''
+    ? defaultIndexReturn
+    : Math.max(-0.5, Math.min(0.5, (Number(indexText.replace(/[%\s]/g, '')) || 0) / 100));
+
+  const positions = useMemo(() => {
+    const map = new Map();
+    for (const r of result?.rows || []) {
+      if (!map.has(r.symbol)) map.set(r.symbol, { symbol: r.symbol, open: [], all: [], value: 0 });
+      const p = map.get(r.symbol);
+      p.all.push(r);
+      if (r.open) { p.open.push(r); p.value += r.value; }
+    }
+    return [...map.values()].sort((a, b) => b.value - a.value);
+  }, [result]);
+
+  // Default to the biggest thing you actually still hold — the position the
+  // question is most likely being asked about.
+  const active = positions.find(p => p.symbol === symbol) || positions[0] || null;
+
+  const summary = result?.symbols.find(s => s.symbol === active?.symbol) || null;
+
+  const infl = useMemo(
+    () => (result && cpi?.series ? inflationCompare(result, cpi.series) : null),
+    [result, cpi],
+  );
+  const realForSymbol = infl?.symbols.find(s => s.symbol === active?.symbol) || null;
+
+  // Shaded on the same ramp as the By ticker table, so a colour means the same
+  // thing on both screens.
+  const realRange = useMemo(() => {
+    const vals = (infl?.symbols || [])
+      .map(s => s.realRet)
+      .filter(v => v != null && Number.isFinite(v));
+    if (!vals.length) return { worst: null, best: null };
+    return { worst: Math.min(...vals, 0), best: Math.max(...vals, 0) };
+  }, [infl]);
+
+  const realized = useMemo(() => realizedThisYear(result?.rows, taxYear), [result, taxYear]);
+  const base = includeRealized
+    ? realized
+    : { shortTermGain: 0, longTermGain: 0 };
+
+  const sale = useMemo(
+    () => (active ? summarizeLots(active.open, nowT) : null),
+    [active, nowT],
+  );
+
+  // Incremental again: the bill with this position sold, less the bill without.
+  const tax = useMemo(() => {
+    if (!sale) return null;
+    const common = { otherTaxableIncome: otherIncome, status, stateRate, includeNiit };
+    const before = estimateTax({
+      shortTermGain: base.shortTermGain, longTermGain: base.longTermGain, ...common,
+    });
+    const after = estimateTax({
+      shortTermGain: base.shortTermGain + sale.shortTermGain,
+      longTermGain: base.longTermGain + sale.longTermGain,
+      ...common,
+    });
+    const net = (after.total - before.total) - (after.lossRelief - before.lossRelief);
+    return { before, after, cost: net, proceeds: sale.proceeds - net };
+  }, [sale, base.shortTermGain, base.longTermGain, otherIncome, status, stateRate, includeNiit]);
+
+  const futureTaxRate = tax && sale
+    ? impliedTaxRate(tax.cost, sale.proceeds, sale.basis)
+    : 0.15;
+
+  const table = useMemo(() => {
+    if (!sale || !tax || !(sale.proceeds > 0)) return [];
+    return breakEvenTable({
+      value: sale.proceeds,
+      basis: sale.basis,
+      taxToSell: tax.cost,
+      indexReturn,
+      futureTaxRate,
+      horizons: HORIZONS,
+    });
+  }, [sale, tax, indexReturn, futureTaxRate]);
+
+  const tenYear = table.find(r => r.years === 10);
+  const headline = tenYear ? (forever ? tenYear.forever : tenYear.liquidate) : null;
+
+  if (!trades.length) {
+    return (
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Nothing to analyse yet</div>
+        <div className={styles.cardSub}>
+          Import your trades on the <strong>My Trades</strong> tab and each position can be taken
+          apart here — how it has done, what selling it would cost, and what it needs to earn to
+          be worth keeping.
+        </div>
+      </div>
+    );
+  }
+
+  if (!result || awaitingQuotes) {
+    return <div className={styles.emptyState}>Pricing your positions…</div>;
+  }
+
+  if (!active) {
+    return <div className={styles.emptyState}>No positions could be priced.</div>;
+  }
+
+  return (
+    <>
+      <div className={styles.controls}>
+        <div className={styles.pillGroup} style={{ flexWrap: 'wrap' }}>
+          {positions.map(p => (
+            <button key={p.symbol} type="button"
+              className={`${styles.pill} ${active.symbol === p.symbol ? styles.pillActive : ''}`}
+              onClick={() => setSymbol(p.symbol)}
+              title={p.open.length ? `${fmt(p.value)} still held` : 'fully sold'}>
+              {p.symbol}
+              {!p.open.length && <span className={styles.muted}> ·sold</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className={styles.hero}>
+        <div className={styles.heroLabel}>
+          {active.symbol} · keep it, or sell and buy the index?
+        </div>
+        {!active.open.length ? (
+          <>
+            <div className={styles.heroTitle}>You no longer hold {active.symbol}</div>
+            <div className={styles.heroSubtitle}>
+              Every lot has been sold, so there is nothing to decide. The history below still
+              shows how it did against the index and against inflation while you held it.
+            </div>
+          </>
+        ) : !headline ? (
+          <div className={styles.heroValue}>…</div>
+        ) : (
+          <>
+            <div className={styles.heroValue}>
+              {fmtPlain(headline.required, 1)}
+              <span className={styles.heroUnit}>/yr needed to keep it</span>
+            </div>
+            <div className={styles.heroChange}>
+              <span className={headline.hurdle <= 0 ? styles.changeUp : styles.changeDown}>
+                {headline.hurdle <= 0
+                  ? `it may trail the S&P by ${fmtPlain(-headline.hurdle, 2)}/yr and still win`
+                  : `it must beat the S&P by ${fmtPlain(headline.hurdle, 2)}/yr`}
+              </span>
+              <span className={styles.changeRange}>
+                · over 10 years · S&amp;P assumed at {fmtPlain(indexReturn, 1)}/yr
+              </span>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── What it has done ── */}
+      <div className={styles.sectionHead}>
+        The record
+        <span> — against the index, and against the cost of living</span>
+      </div>
+
+      {realForSymbol && (
+        <div className={styles.statGrid}>
+          <div className={styles.statCard}>
+            <div className={styles.statLabel}>Invested</div>
+            <div className={styles.statValue}>{fmt(realForSymbol.invested)}</div>
+            <div className={styles.statSub}>{realForSymbol.lots} lots</div>
+          </div>
+          <div className={styles.statCard}>
+            <div className={styles.statLabel}>Now worth</div>
+            <div className={styles.statValue}>{fmt(realForSymbol.totalValue)}</div>
+            <div className={styles.statSub}>
+              {summary?.income > 0 ? `includes ${fmt(summary.income)} of dividends` : 'dividends included'}
+            </div>
+          </div>
+          <div className={styles.statCard}>
+            <div className={styles.statLabel}>Your return</div>
+            <div className={`${styles.statValue} ${realForSymbol.ret >= 0 ? styles.up : styles.down}`}>
+              {fmtPct(realForSymbol.ret)}
+            </div>
+            <div className={styles.statSub}>
+              S&amp;P {summary ? fmtPct(summary.benchRet) : '—'} over the same dates
+            </div>
+          </div>
+          <div className={styles.statCard}>
+            <div className={styles.statLabel}>Beat the S&amp;P by</div>
+            <div className={`${styles.statValue} ${summary && summary.alpha >= 0 ? styles.up : styles.down}`}>
+              {summary ? fmtSigned(summary.alpha) : '—'}
+            </div>
+            <div className={styles.statSub}>same money, same holding periods</div>
+          </div>
+          <div className={styles.statCard}>
+            <div className={styles.statLabel}>Real return</div>
+            <div className={`${styles.statValue} ${styles.heatChip}`}
+              style={{ background: realReturnTint(realForSymbol.realRet, realRange.worst, realRange.best) }}>
+              {fmtPct(realForSymbol.realRet)}
+            </div>
+            <div className={styles.statSub}>
+              after {fmtPlain(realForSymbol.inflRet)} of inflation over the same period
+            </div>
+          </div>
+          <div className={styles.statCard}>
+            <div className={styles.statLabel}>Beat inflation by</div>
+            <div className={`${styles.statValue} ${realForSymbol.realGain >= 0 ? styles.up : styles.down}`}>
+              {fmtSigned(realForSymbol.realGain)}
+            </div>
+            <div className={styles.statSub}>real purchasing power created</div>
+          </div>
+        </div>
+      )}
+
+      <TickerDetail
+        symbol={active.symbol}
+        rows={active.all}
+        summary={summary}
+        income={(income || []).filter(d => active.symbol.split(' + ').includes(d.symbol))}
+        series={series}
+        cpi={cpi?.series || null}
+      />
+
+      {active.open.length > 0 && sale && tax && (
+        <>
+          {/* ── What selling costs ── */}
+          <div className={styles.sectionHead}>
+            The cost of switching
+            <span> — what the taxman takes on the way out</span>
+          </div>
+
+          <div className={styles.card}>
+            <div className={styles.cardTitle}>Your situation</div>
+            <div className={styles.cardSub}>
+              Shared with the <strong>Tax on Selling</strong> tab — change it in either place.
+            </div>
+            <TaxSituationInputs prefs={prefs} setPrefs={setPrefs} status={status} />
+          </div>
+
+          <div className={styles.statGrid}>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>You&apos;d receive</div>
+              <div className={styles.statValue}>{fmt(sale.proceeds)}</div>
+              <div className={styles.statSub}>
+                {sale.longLots} long-term, {sale.shortLots} short-term lots
+              </div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>Taxable gain</div>
+              <div className={`${styles.statValue} ${sale.gain >= 0 ? styles.up : styles.down}`}>
+                {fmtSigned(sale.gain)}
+              </div>
+              <div className={styles.statSub}>
+                {fmtSigned(sale.longTermGain)} long · {fmtSigned(sale.shortTermGain)} short
+              </div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>Tax to switch</div>
+              <div className={`${styles.statValue} ${tax.cost > 0 ? styles.down : styles.up}`}>
+                {tax.cost < 0 ? `−${fmt(-tax.cost)}` : fmt(tax.cost)}
+              </div>
+              <div className={styles.statSub}>
+                {sale.gain > 0 ? `${fmtPlain(tax.cost / sale.gain)} of the gain` : 'a loss — it cuts your bill'}
+              </div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>Reaches the index</div>
+              <div className={styles.statValue}>{fmt(tax.proceeds)}</div>
+              <div className={styles.statSub}>
+                {fmtPlain(1 - tax.proceeds / sale.proceeds)} smaller than the stake you hold now
+              </div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>That tax, compounded</div>
+              <div className={styles.statValue}>
+                {fmt(taxOpportunityCost(tax.cost, indexReturn, 10))}
+              </div>
+              <div className={styles.statSub}>
+                what the tax dollars alone would be worth in 10 years at {fmtPlain(indexReturn, 1)}
+              </div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>Rate assumed later</div>
+              <div className={styles.statValue}>{fmtPlain(futureTaxRate)}</div>
+              <div className={styles.statSub}>on gains taxed at the horizon</div>
+            </div>
+          </div>
+
+          {/* ── The break-even ── */}
+          <div className={styles.sectionHead}>
+            The break-even
+            <span> — what {active.symbol} must earn for keeping it to have been right</span>
+          </div>
+
+          <div className={styles.card}>
+            <div className={styles.cardTitle}>Assumptions</div>
+            <div className={styles.cardSub}>
+              The whole answer turns on what you think the index will do and whether this money
+              is ever sold again, so both are yours to set.
+            </div>
+            <div className={styles.inputRow}>
+              <label className={styles.inputField}>
+                <span>S&amp;P return a year</span>
+                <input type="text" inputMode="decimal"
+                  placeholder={(defaultIndexReturn * 100).toFixed(1)}
+                  value={indexText}
+                  onChange={e => setIndexText(e.target.value)} />
+              </label>
+            </div>
+            <div className={styles.cardSub} style={{ marginTop: 10 }}>
+              Blank uses {fmtPlain(defaultIndexReturn, 1)} — what a typical ten-year hold in this
+              index has actually averaged across every start month in the series, which is a
+              fairer figure than any single stretch of history.
+            </div>
+            <div className={styles.modeRow} style={{ marginTop: 12 }}>
+              {[
+                { id: false, label: 'I\'ll sell eventually', hint: 'Both sides are taxed at the horizon' },
+                { id: true, label: 'I\'ll never sell', hint: 'Held to a step-up in basis, or donated' },
+              ].map(o => (
+                <button key={String(o.id)} type="button" title={o.hint}
+                  className={`${styles.pill} ${forever === o.id ? styles.pillActive : ''}`}
+                  onClick={() => setForever(o.id)}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            <div className={styles.cardSub} style={{ marginTop: 10 }}>
+              {forever
+                ? 'Neither the gain you hold now nor the one you\'d build in the index is ever taxed — '
+                  + 'heirs take the shares at a stepped-up basis, or a charity does. Deferring is worth '
+                  + 'the most in this case, so the hurdle is at its lowest.'
+                : 'Both paths are taxed when they finally sell, so deferring buys time rather than '
+                  + 'forgiveness — which is the honest default unless you know you\'ll never sell.'}
+            </div>
+          </div>
+
+          <div className={styles.card}>
+            <div className={styles.cardTitle}>
+              What {active.symbol} has to return, by how long you hold it
+            </div>
+            <div className={styles.cardSub}>
+              Selling costs {fmt(Math.abs(tax.cost))} today, so only {fmt(tax.proceeds)} of your{' '}
+              {fmt(sale.proceeds)} reaches the index. Keeping starts with the whole amount still
+              working, and that head start is what the position is allowed to give back in
+              performance. The <strong>gap</strong> column is the answer to your question: a
+              negative gap means {active.symbol} can underperform the index by that much a year
+              and you are still better off having kept it.
+            </div>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>If you hold for</th>
+                    <th className={styles.num}>S&amp;P assumed</th>
+                    <th className={styles.num}>{active.symbol} must return</th>
+                    <th className={styles.num}>Gap vs the index</th>
+                    <th>What that means</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {table.map(row => {
+                    const r = forever ? row.forever : row.liquidate;
+                    if (!r) return null;
+                    return (
+                      <tr key={row.years}>
+                        <td><strong>{row.years} year{row.years === 1 ? '' : 's'}</strong></td>
+                        <td className={`${styles.num} ${styles.muted}`}>{fmtPlain(indexReturn, 2)}</td>
+                        <td className={styles.num}><strong>{fmtPlain(r.required, 2)}</strong></td>
+                        <td className={`${styles.num} ${r.hurdle <= 0 ? styles.up : styles.down}`}>
+                          <strong>{r.hurdle > 0 ? '+' : '−'}{fmtPlain(Math.abs(r.hurdle), 2)}</strong>
+                        </td>
+                        <td className={styles.muted}>
+                          {r.hurdle <= 0
+                            ? `can lag the index and still win`
+                            : `has to beat the index outright`}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className={styles.cardSub} style={{ marginTop: 12 }}>
+              {headline && headline.hurdle <= 0 ? (
+                <>
+                  Read the ten-year row as the verdict. Switching only pays if you believe{' '}
+                  {active.symbol} will return <strong>less than {fmtPlain(headline.required, 1)}</strong> a
+                  year from here while the index makes {fmtPlain(indexReturn, 1)} — that is the bar
+                  the tax bill buys you. Notice the gap narrows as the horizon lengthens: a one-off
+                  tax hit matters less the longer the money compounds afterwards, so deferring is
+                  worth most to someone about to sell again soon.
+                </>
+              ) : (
+                <>
+                  This position has no meaningful embedded gain to defer — selling costs little or
+                  nothing — so keeping it has to be justified on the merits: {active.symbol} must
+                  outright beat the index by {headline ? fmtPlain(headline.hurdle, 2) : '—'} a year.
+                  There is no tax argument for holding on here.
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className={styles.noteCard}>
+            <div className={styles.noteTitle}>
+              <span className="material-symbols-outlined" style={{ fontSize: 17 }}>balance</span>
+              What this comparison is, and what it is not
+            </div>
+            <ul className={styles.noteList}>
+              <li>
+                <strong>This is a tax-drag calculation, not investment advice.</strong> It answers
+                one narrow question — how much performance the deferred tax is worth — and says
+                nothing about whether {active.symbol} is a good business at this price.
+              </li>
+              <li>
+                It ignores risk entirely. A single stock and a 500-company index earning the same
+                return are not the same outcome, and a concentrated position can lose far more than
+                the hurdle here is worth. If {active.symbol} is a large share of your net worth,
+                that is a stronger argument to sell than anything in this table.
+              </li>
+              <li>
+                Future tax is assumed at {fmtPlain(futureTaxRate)} — the rate implied by selling
+                today. Your bracket, the law, and the {fmtPlain(NIIT_RATE)} investment surtax
+                thresholds will all move over a ten- or twenty-year horizon.
+              </li>
+              <li>
+                Both sides are modelled as a single lump growing at a steady rate. Real returns
+                arrive unevenly, and selling in a year with other gains — or other losses — changes
+                the bill materially. The <strong>Tax on Selling</strong> tab models a whole year at
+                once if you want to net this against something else.
+              </li>
+              <li>
+                Dividends the position pays are inside its historical return above but are not
+                projected forward; the required return here is a total return, so compare it against
+                what you expect {active.symbol} to deliver including any yield.
+              </li>
+              <li>
+                Selling in pieces across tax years, or selling only the long-term lots, can cut the
+                bill well below the figure shown here. This models selling the whole position at once.
+              </li>
+            </ul>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 // ── Page ────────────────────────────────────────────────────────────────
 const TABS = [
   { id: 'benchmark', label: 'S&P Benchmark' },
   { id: 'trades', label: 'My Trades' },
   { id: 'inflation', label: 'vs Inflation' },
   { id: 'tax', label: 'Tax on Selling' },
+  { id: 'stock', label: 'Keep or Switch' },
 ];
 
 /**
@@ -3728,6 +4344,7 @@ export function StockPerformancePage() {
       {tab === 'trades' && <TradesTab series={series} meta={meta} cpi={cpi} />}
       {tab === 'inflation' && <InflationTab series={series} cpi={cpi} />}
       {tab === 'tax' && <TaxTab series={series} />}
+      {tab === 'stock' && <SingleStockTab series={series} cpi={cpi} />}
     </div>
   );
 }
