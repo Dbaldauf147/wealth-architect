@@ -3015,12 +3015,26 @@ function useTaxPrefs() {
   }, []);
 
   const num = (v, strip) => Number(String(v ?? '').replace(strip, '')) || 0;
+  const status = prefs.status || 'single';
+
+  // Ask for the number people actually know. "Taxable income after deductions"
+  // is the figure the brackets need, but almost nobody has it to hand, and a
+  // question that can't be answered gets left blank — which lands the whole
+  // gain in the 0% band and quotes a bill of nothing.
+  const incomeIsGross = prefs.incomeIsGross !== false;
+  const enteredIncome = Math.max(0, num(prefs.income, /[$,\s]/g));
+  const deduction = STANDARD_DEDUCTION[status] || 0;
 
   return {
     prefs,
     setPrefs,
-    status: prefs.status || 'single',
-    otherIncome: Math.max(0, num(prefs.income, /[$,\s]/g)),
+    status,
+    incomeIsGross,
+    enteredIncome,
+    deduction,
+    otherIncome: incomeIsGross
+      ? Math.max(0, enteredIncome - deduction)
+      : enteredIncome,
     // Capped at 20% — above every US state rate, and a typo of "50" for a
     // percentage shouldn't silently produce an absurd bill.
     stateRate: Math.max(0, Math.min(0.2, num(prefs.stateRate, /[%\s]/g) / 100)),
@@ -3029,7 +3043,9 @@ function useTaxPrefs() {
   };
 }
 
-function TaxSituationInputs({ prefs, setPrefs, status, otherIncome, children }) {
+function TaxSituationInputs({
+  prefs, setPrefs, status, otherIncome, incomeIsGross, enteredIncome, deduction, children,
+}) {
   // Long-term gains stack on top of ordinary income, so with nothing under
   // them they land in the 0% band and every bill on the page comes out near
   // zero. That reads as good news rather than as a missing input, which is
@@ -3049,7 +3065,7 @@ function TaxSituationInputs({ prefs, setPrefs, status, otherIncome, children }) 
           </select>
         </label>
         <label className={styles.inputField}>
-          <span>Other taxable income</span>
+          <span>{incomeIsGross ? 'Your pay, before tax' : 'Taxable income'}</span>
           <input type="text" inputMode="numeric" placeholder="0"
             value={prefs.income ?? ''}
             onChange={e => setPrefs({ income: e.target.value })} />
@@ -3061,12 +3077,44 @@ function TaxSituationInputs({ prefs, setPrefs, status, otherIncome, children }) 
             onChange={e => setPrefs({ stateRate: e.target.value })} />
         </label>
       </div>
+
+      <div className={styles.modeRow} style={{ marginTop: 12 }}>
+        {[
+          { gross: true, label: 'That\'s my gross pay', hint: 'The deduction is taken off for you' },
+          { gross: false, label: 'That\'s my taxable income', hint: '1040 line 15 — already net of deductions' },
+        ].map(o => (
+          <button key={String(o.gross)} type="button" title={o.hint}
+            className={`${styles.pill} ${incomeIsGross === o.gross ? styles.pillActive : ''}`}
+            onClick={() => setPrefs({ incomeIsGross: o.gross })}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+
       <div className={styles.cardSub} style={{ marginTop: 10 }}>
-        <strong>Other taxable income</strong> means the figure after your deductions — line 15 of
-        a 1040, excluding these gains. If you only know your gross pay, subtract the{' '}
-        {TAX_YEAR} standard deduction of {fmt(STANDARD_DEDUCTION[status])} for{' '}
-        {FILING_STATUSES.find(f => f.id === status)?.label.toLowerCase()}. <strong>State rate</strong> is
-        a percentage — enter 5 for 5%, or leave it blank for a state with no income tax.
+        {incomeIsGross ? (
+          <>
+            The brackets apply to income <em>after</em> deductions, so the{' '}
+            {TAX_YEAR} standard deduction of {fmt(deduction)} for{' '}
+            {FILING_STATUSES.find(f => f.id === status)?.label.toLowerCase()} comes off what you
+            enter{enteredIncome > 0 && (
+              <>
+                : <strong>{fmt(enteredIncome)} − {fmt(deduction)} = {fmt(otherIncome)}</strong> of
+                taxable income
+              </>
+            )}. That is an approximation — a 401(k) or HSA contribution lowers it further, and
+            itemising or income beyond your salary moves it either way. If you know the real
+            figure, switch to <strong>taxable income</strong> and enter it directly.
+          </>
+        ) : (
+          <>
+            Line 15 of a 1040 — your income after deductions, excluding these gains. Switch to{' '}
+            <strong>gross pay</strong> if you would rather give your salary and have the{' '}
+            {fmt(deduction)} standard deduction taken off for you.
+          </>
+        )}{' '}
+        <strong>State rate</strong> is a percentage — enter 5 for 5%, or leave it blank for a
+        state with no income tax.
       </div>
       <label className={styles.checkbox}>
         <input type="checkbox" checked={prefs.includeNiit !== false}
@@ -3138,6 +3186,7 @@ function TaxTab({ series }) {
 
   const {
     prefs, setPrefs, status, otherIncome, stateRate, includeNiit, includeRealized,
+    incomeIsGross, enteredIncome, deduction,
   } = useTaxPrefs();
   const [scope, setScope] = useState('all');
   const [chosen, setChosen] = useState(() => new Set());
@@ -3317,7 +3366,8 @@ function TaxTab({ series }) {
           this browser and are never sent anywhere.
         </div>
         <TaxSituationInputs prefs={prefs} setPrefs={setPrefs} status={status}
-          otherIncome={otherIncome}>
+          otherIncome={otherIncome} incomeIsGross={incomeIsGross}
+          enteredIncome={enteredIncome} deduction={deduction}>
           {realized.lots > 0 && (
             <label className={styles.checkbox}>
               <input type="checkbox" checked={includeRealized}
@@ -3807,11 +3857,15 @@ const HORIZONS = [1, 3, 5, 10, 20];
 function SingleStockTab({ series, cpi }) {
   const portfolio = usePortfolio(series);
   const { trades, income, result, awaitingQuotes } = portfolio;
-  const { prefs, setPrefs, status, otherIncome, stateRate, includeNiit, includeRealized } = useTaxPrefs();
+  const {
+    prefs, setPrefs, status, otherIncome, stateRate, includeNiit, includeRealized,
+    incomeIsGross, enteredIncome, deduction,
+  } = useTaxPrefs();
 
   const [symbol, setSymbol] = useState(null);
   const [forever, setForever] = useState(false);
   const [indexText, setIndexText] = useState('');
+  const [futureRateText, setFutureRateText] = useState('');
 
   const nowT = series.lastT;
   const taxYear = new Date(nowT).getUTCFullYear();
@@ -3886,9 +3940,17 @@ function SingleStockTab({ series, cpi }) {
     return { before, after, cost: net, proceeds: sale.proceeds - net };
   }, [sale, base.shortTermGain, base.longTermGain, otherIncome, status, stateRate, includeNiit]);
 
-  const futureTaxRate = tax && sale
+  // The rate on gains taxed at the horizon. Defaulted to the one selling today
+  // implies, but overridable — this is the single input a bracket calculation
+  // genuinely cannot supply, because it depends on an income twenty years out.
+  // Someone planning to sell in retirement should say so.
+  const impliedRate = tax && sale
     ? impliedTaxRate(tax.cost, sale.proceeds, sale.basis)
     : 0.15;
+  const futureRateOverridden = futureRateText.trim() !== '';
+  const futureTaxRate = futureRateOverridden
+    ? Math.max(0, Math.min(0.9, (Number(futureRateText.replace(/[%\s]/g, '')) || 0) / 100))
+    : impliedRate;
 
   const table = useMemo(() => {
     if (!sale || !tax || !(sale.proceeds > 0)) return [];
@@ -4055,7 +4117,8 @@ function SingleStockTab({ series, cpi }) {
               Shared with the <strong>Tax on Selling</strong> tab — change it in either place.
             </div>
             <TaxSituationInputs prefs={prefs} setPrefs={setPrefs} status={status}
-              otherIncome={otherIncome} />
+              otherIncome={otherIncome} incomeIsGross={incomeIsGross}
+              enteredIncome={enteredIncome} deduction={deduction} />
           </div>
 
           <div className={styles.statGrid}>
@@ -4103,7 +4166,11 @@ function SingleStockTab({ series, cpi }) {
             <div className={styles.statCard}>
               <div className={styles.statLabel}>Rate assumed later</div>
               <div className={styles.statValue}>{fmtPlain(futureTaxRate)}</div>
-              <div className={styles.statSub}>on gains taxed at the horizon</div>
+              <div className={styles.statSub}>
+                {futureRateOverridden
+                  ? 'your figure, on gains taxed at the horizon'
+                  : 'implied by selling today — override it below'}
+              </div>
             </div>
           </div>
 
@@ -4127,11 +4194,26 @@ function SingleStockTab({ series, cpi }) {
                   value={indexText}
                   onChange={e => setIndexText(e.target.value)} />
               </label>
+              <label className={styles.inputField}>
+                <span>Tax rate when you sell</span>
+                <input type="text" inputMode="decimal"
+                  placeholder={(impliedRate * 100).toFixed(1)}
+                  value={futureRateText}
+                  onChange={e => setFutureRateText(e.target.value)} />
+              </label>
             </div>
             <div className={styles.cardSub} style={{ marginTop: 10 }}>
-              Blank uses {fmtPlain(defaultIndexReturn, 1)} — what a typical ten-year hold in this
-              index has actually averaged across every start month in the series, which is a
-              fairer figure than any single stretch of history.
+              Blank uses {fmtPlain(defaultIndexReturn, 1)} for the index — what a typical ten-year
+              hold has actually averaged across every start month in the series, which is a fairer
+              figure than any single stretch of history.
+            </div>
+            <div className={styles.cardSub} style={{ marginTop: 6 }}>
+              The <strong>tax rate when you sell</strong> is the one number a bracket calculation
+              can&apos;t work out for you — it depends on your income in the year you finally sell,
+              which may be decades away. Blank uses {fmtPlain(impliedRate, 1)}, the rate selling
+              today would cost. Override it if you expect to sell in a different situation: a low
+              income in early retirement can put a long-term gain back in the 0% band, and a large
+              sale in a working year can push it to 23.8%.
             </div>
             <div className={styles.modeRow} style={{ marginTop: 12 }}>
               {[
