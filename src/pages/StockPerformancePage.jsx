@@ -3305,7 +3305,9 @@ function AnalysisSetupDialog({
           <div className={styles.stepHint}>
             Holding until death passes the shares on at a stepped-up basis and the embedded gain is
             never taxed at all, which is the strongest possible argument for keeping. If you intend
-            to spend the money one day, say so — it is the honest default.
+            to spend the money one day, say so — it is the honest default. This one only changes
+            the projection on <strong>Keep or Switch</strong>; it has no bearing on this year&apos;s
+            bill.
           </div>
           <div className={styles.pillGroup} style={{ flexWrap: 'wrap' }}>
             {[
@@ -3390,11 +3392,12 @@ function TaxTab({ series }) {
 
   const {
     prefs, setPrefs, status, otherIncome, stateRate, includeNiit, includeRealized,
-    incomeIsGross, enteredIncome, deduction,
+    incomeIsGross, enteredIncome, deduction, forever, setupDone,
   } = useTaxPrefs();
   const [scope, setScope] = useState('all');
   const [chosen, setChosen] = useState(() => new Set());
   const [showLots, setShowLots] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(!setupDone);
 
   const nowT = series.lastT;
   const taxYear = new Date(nowT).getUTCFullYear();
@@ -3539,6 +3542,33 @@ function TaxTab({ series }) {
 
   return (
     <>
+      {setupOpen && (
+        <AnalysisSetupDialog
+          prefs={prefs} setPrefs={setPrefs} status={status}
+          otherIncome={otherIncome} incomeIsGross={incomeIsGross}
+          enteredIncome={enteredIncome} deduction={deduction}
+          stateRate={stateRate} forever={forever}
+          onClose={() => setSetupOpen(false)}
+        />
+      )}
+
+      <div className={styles.controls}>
+        <div className={styles.sectionHead} style={{ marginTop: 0 }}>
+          {setupDone && otherIncome > 0
+            ? <>Based on {fmt(otherIncome)} of taxable income
+              <span> · {FILING_STATUSES.find(f => f.id === status)?.label.toLowerCase()}
+                {stateRate > 0 ? ` · ${fmtPlain(stateRate)} state` : ' · no state tax'}</span></>
+            : <>Your answers are missing
+              <span> — every figure below depends on them</span></>}
+        </div>
+        <button type="button"
+          className={setupDone && otherIncome > 0 ? styles.ghostBtn : styles.primaryBtn}
+          style={{ marginTop: 0 }}
+          onClick={() => setSetupOpen(true)}>
+          {setupDone && otherIncome > 0 ? 'Change my answers' : 'Answer the questions'}
+        </button>
+      </div>
+
       <div className={styles.hero}>
         <div className={styles.heroLabel}>
           Estimated tax · {taxYear} rules · {FILING_STATUSES.find(f => f.id === status)?.label}
