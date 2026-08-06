@@ -81,12 +81,17 @@ const StockPerformancePage = lazy(() => import('./pages/StockPerformancePage').t
 class PageBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { errored: false };
+    this.state = { errored: false, error: null, stack: null };
   }
-  static getDerivedStateFromError() {
-    return { errored: true };
+  static getDerivedStateFromError(error) {
+    return { errored: true, error };
   }
-  componentDidCatch(error) {
+  componentDidCatch(error, info) {
+    // A boundary that swallows the error leaves a blank page and nothing to
+    // debug from, which is worse than the crash. Log it, and keep it for the
+    // fallback to show — a stale-chunk reload is the only case worth hiding.
+    console.error('Page crashed:', error, info?.componentStack);
+    this.setState({ stack: info?.componentStack || null });
     const msg = (error && (error.message || '')) + ' ' + (error && error.name || '');
     const isChunk = /chunk|importing|dynamically imported module|failed to fetch/i.test(msg);
     if (isChunk && !sessionStorage.getItem('chunkReloaded')) {
@@ -96,12 +101,32 @@ class PageBoundary extends Component {
   }
   render() {
     if (this.state.errored) {
+      const { error, stack } = this.state;
+      const detail = [
+        error && (error.stack || `${error.name}: ${error.message}`),
+        stack && `\nComponent stack:${stack}`,
+      ].filter(Boolean).join('\n');
       return (
-        <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
-          <p>Something went wrong loading this page.</p>
-          <button onClick={() => { sessionStorage.removeItem('chunkReloaded'); window.location.reload(); }}>
-            Reload
-          </button>
+        <div style={{ padding: 40, color: 'var(--color-text-tertiary)' }}>
+          <p style={{ textAlign: 'center' }}>Something went wrong loading this page.</p>
+          <p style={{ textAlign: 'center' }}>
+            <button onClick={() => { sessionStorage.removeItem('chunkReloaded'); window.location.reload(); }}>
+              Reload
+            </button>
+          </p>
+          {detail && (
+            <details style={{ marginTop: 20, fontSize: 12 }}>
+              <summary style={{ cursor: 'pointer', textAlign: 'center' }}>Show the error</summary>
+              <pre style={{
+                marginTop: 10, padding: 12, overflow: 'auto', maxHeight: 320,
+                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                background: 'var(--color-surface-alt)', borderRadius: 8,
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+              }}>
+                {detail}
+              </pre>
+            </details>
+          )}
         </div>
       );
     }

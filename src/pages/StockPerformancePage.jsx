@@ -2838,7 +2838,7 @@ function InflationTab({ series, cpi }) {
         </div>
         <ul className={styles.noteList}>
           <li>
-            {cpi.label || 'CPI-U'} from the Bureau of Labor Statistics, series {cpi.series}. Not
+            {cpi.label || 'CPI-U'} from the Bureau of Labor Statistics, series {cpi.seriesId}. Not
             seasonally adjusted, because the question is what a dollar from a given month buys,
             not what forecasters need smoothed.
           </li>
@@ -3648,7 +3648,10 @@ function useCpi() {
     const accept = (payload) => {
       if (cancelled) return;
       setState({
+        // `series` is the lookup structure the math wants; the BLS identifier
+        // is kept apart under its own name so it can't be rendered by mistake.
         series: makeCpiSeries(payload.points),
+        seriesId: payload.series,
         label: payload.label,
         latest: payload.latest,
         missingMonths: payload.missingMonths || 0,
