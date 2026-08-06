@@ -636,6 +636,111 @@
   flex-wrap: wrap;
 }
 
+/* ── Setup dialog ── */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px 16px;
+  overflow-y: auto;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(2px);
+}
+
+.modal {
+  width: min(700px, 100%);
+  margin: auto;
+  padding: 26px 28px 22px;
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+}
+
+.modalHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.modalTitle {
+  font-family: var(--font-headline);
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  color: var(--color-text-primary);
+}
+
+.step {
+  padding: 16px 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.stepLabel {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-headline);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: 4px;
+}
+
+.stepNum {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--color-secondary);
+  border-radius: 50%;
+}
+
+.stepHint {
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--color-text-tertiary);
+  max-width: 62ch;
+}
+
+.answer {
+  padding: 14px 16px;
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-lg);
+}
+
+.answer strong { color: var(--color-text-primary); }
+
+.modalFoot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.modalFoot .primaryBtn { margin-top: 0; }
+
+@media (max-width: 560px) {
+  .modal { padding: 20px 18px 18px; }
+  .modalTitle { font-size: 17px; }
+}
+
 /* ── Notes / errors ── */
 .noteCard {
   padding: 16px 18px;

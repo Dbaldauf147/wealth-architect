@@ -3040,6 +3040,11 @@ function useTaxPrefs() {
     stateRate: Math.max(0, Math.min(0.2, num(prefs.stateRate, /[%\s]/g) / 100)),
     includeNiit: prefs.includeNiit !== false,
     includeRealized: prefs.includeRealized !== false,
+    // Whether this money is ever sold again. Stored rather than held in a
+    // component so the setup dialog can answer it once and the projection
+    // still remembers on the next visit.
+    forever: prefs.forever === true,
+    setupDone: prefs.setupDone === true,
   };
 }
 
@@ -3158,6 +3163,194 @@ function TaxSituationInputs({
 
       {children}
     </>
+  );
+}
+
+/**
+ * The four answers the analysis cannot be honest without.
+ *
+ * Everything else on the tab has a defensible default drawn from your own
+ * history or the index's. These four cannot be: the tax on a sale depends
+ * entirely on the income it lands on, and getting them silently wrong doesn't
+ * produce a visibly broken page — it produces a confident, plausible number
+ * that happens to be nonsense. So they are asked once, up front, plainly.
+ */
+function AnalysisSetupDialog({
+  prefs, setPrefs, status, otherIncome, incomeIsGross, enteredIncome, deduction,
+  stateRate, forever, onClose,
+}) {
+  const firstRef = useRef(null);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    firstRef.current?.focus();
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose]);
+
+  const zeroCeiling = LTCG_BRACKETS[status]?.[0]?.[0] ?? 0;
+  const upperCeiling = LTCG_BRACKETS[status]?.[1]?.[0] ?? 0;
+  const zeroRoom = Math.max(0, zeroCeiling - otherIncome);
+
+  return (
+    <div className={styles.backdrop} role="presentation"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className={styles.modal} role="dialog" aria-modal="true"
+        aria-labelledby="setup-title">
+        <div className={styles.modalHead}>
+          <div>
+            <div className={styles.modalTitle} id="setup-title">
+              Four questions before the numbers mean anything
+            </div>
+            <div className={styles.cardSub} style={{ marginTop: 4 }}>
+              What selling costs depends far more on your own situation than on the stock. These
+              stay in this browser, are never sent anywhere, and you can change them at any time.
+            </div>
+          </div>
+          <button type="button" className={styles.ghostBtn} onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        </div>
+
+        {/* 1 — filing status */}
+        <div className={styles.step}>
+          <div className={styles.stepLabel}>
+            <span className={styles.stepNum}>1</span> How do you file?
+          </div>
+          <div className={styles.stepHint}>
+            It sets every bracket. The tax-free band for a couple is twice a single filer&apos;s.
+          </div>
+          <div className={styles.pillGroup} style={{ flexWrap: 'wrap' }}>
+            {FILING_STATUSES.map((f, i) => (
+              <button key={f.id} type="button" ref={i === 0 ? firstRef : undefined}
+                className={`${styles.pill} ${status === f.id ? styles.pillActive : ''}`}
+                onClick={() => setPrefs({ status: f.id })}>
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 2 — income */}
+        <div className={styles.step}>
+          <div className={styles.stepLabel}>
+            <span className={styles.stepNum}>2</span> What do you earn a year?
+          </div>
+          <div className={styles.stepHint}>
+            The single biggest lever. Capital gains stack on top of your income, so the same sale
+            can cost nothing or a fifth of the gain depending on what sits underneath it. Leave
+            this blank and every estimate reads as free.
+          </div>
+          <div className={styles.pillGroup} style={{ marginBottom: 10 }}>
+            {[
+              { gross: true, label: 'I\'ll give my gross pay' },
+              { gross: false, label: 'I know my taxable income' },
+            ].map(o => (
+              <button key={String(o.gross)} type="button"
+                className={`${styles.pill} ${incomeIsGross === o.gross ? styles.pillActive : ''}`}
+                onClick={() => setPrefs({ incomeIsGross: o.gross })}>
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <div className={styles.inputRow}>
+            <label className={styles.inputField}>
+              <span>{incomeIsGross ? 'Pay before tax' : 'Taxable income'}</span>
+              <input type="text" inputMode="numeric" placeholder="0"
+                value={prefs.income ?? ''}
+                onChange={e => setPrefs({ income: e.target.value })} />
+            </label>
+          </div>
+          {incomeIsGross && enteredIncome > 0 && (
+            <div className={styles.stepHint} style={{ marginTop: 8, marginBottom: 0 }}>
+              {fmt(enteredIncome)} − {fmt(deduction)} standard deduction ={' '}
+              <strong>{fmt(otherIncome)}</strong> of taxable income.
+            </div>
+          )}
+        </div>
+
+        {/* 3 — state */}
+        <div className={styles.step}>
+          <div className={styles.stepLabel}>
+            <span className={styles.stepNum}>3</span> Does your state tax capital gains?
+          </div>
+          <div className={styles.stepHint}>
+            A percentage — most states apply their ordinary income rate to gains. Nine states take
+            nothing.
+          </div>
+          <div className={styles.inputRow} style={{ alignItems: 'flex-end' }}>
+            <label className={styles.inputField}>
+              <span>State rate</span>
+              <input type="text" inputMode="decimal" placeholder="0"
+                value={prefs.stateRate ?? ''}
+                onChange={e => setPrefs({ stateRate: e.target.value })} />
+            </label>
+            <button type="button" className={styles.ghostBtn} style={{ marginBottom: 1 }}
+              onClick={() => setPrefs({ stateRate: '0' })}>
+              My state takes nothing
+            </button>
+          </div>
+        </div>
+
+        {/* 4 — exit assumption */}
+        <div className={styles.step}>
+          <div className={styles.stepLabel}>
+            <span className={styles.stepNum}>4</span> Will you sell this money eventually?
+          </div>
+          <div className={styles.stepHint}>
+            Holding until death passes the shares on at a stepped-up basis and the embedded gain is
+            never taxed at all, which is the strongest possible argument for keeping. If you intend
+            to spend the money one day, say so — it is the honest default.
+          </div>
+          <div className={styles.pillGroup} style={{ flexWrap: 'wrap' }}>
+            {[
+              { id: false, label: 'Yes — I\'ll sell one day' },
+              { id: true, label: 'No — I\'ll hold it for life' },
+            ].map(o => (
+              <button key={String(o.id)} type="button"
+                className={`${styles.pill} ${forever === o.id ? styles.pillActive : ''}`}
+                onClick={() => setPrefs({ forever: o.id })}>
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className={styles.answer}>
+          {otherIncome > 0 ? (
+            <>
+              On {fmt(otherIncome)} of taxable income, the first{' '}
+              <strong>{fmt(zeroRoom)}</strong> of long-term gain you realise this year is{' '}
+              <strong>federally tax-free</strong>. Above that you pay 15%, rising to 20% once your
+              total taxable income passes {fmt(upperCeiling)}
+              {stateRate > 0 && <>, plus {fmtPlain(stateRate)} to your state</>}. Gains on anything
+              held a year or less are taxed as ordinary income instead.
+            </>
+          ) : (
+            <>
+              <strong>No income entered yet.</strong> With nothing underneath them, the first{' '}
+              {fmt(zeroCeiling)} of long-term gain is tax-free and every estimate on this page will
+              read as costing nothing. That may well be right — but it is worth being sure.
+            </>
+          )}
+        </div>
+
+        <div className={styles.modalFoot}>
+          <button type="button" className={styles.ghostBtn} onClick={onClose}>
+            Skip for now
+          </button>
+          <button type="button" className={styles.primaryBtn}
+            onClick={() => { setPrefs({ setupDone: true }); onClose(); }}>
+            Use these answers
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -4173,13 +4366,14 @@ function SingleStockTab({ series, cpi }) {
   const { trades, income, result, awaitingQuotes } = portfolio;
   const {
     prefs, setPrefs, status, otherIncome, stateRate, includeNiit, includeRealized,
-    incomeIsGross, enteredIncome, deduction,
+    incomeIsGross, enteredIncome, deduction, forever, setupDone,
   } = useTaxPrefs();
 
   const [symbol, setSymbol] = useState(null);
   const [view, setView] = useState('one');
   const [horizon, setHorizon] = useState(10);
-  const [forever, setForever] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(!setupDone);
+  const setForever = useCallback((v) => setPrefs({ forever: v }), [setPrefs]);
   const [indexText, setIndexText] = useState('');
   const [futureRateText, setFutureRateText] = useState('');
   const [stockText, setStockText] = useState('');
@@ -4443,6 +4637,33 @@ function SingleStockTab({ series, cpi }) {
 
   return (
     <>
+      {setupOpen && (
+        <AnalysisSetupDialog
+          prefs={prefs} setPrefs={setPrefs} status={status}
+          otherIncome={otherIncome} incomeIsGross={incomeIsGross}
+          enteredIncome={enteredIncome} deduction={deduction}
+          stateRate={stateRate} forever={forever}
+          onClose={() => setSetupOpen(false)}
+        />
+      )}
+
+      <div className={styles.controls}>
+        <div className={styles.sectionHead} style={{ marginTop: 0 }}>
+          {setupDone && otherIncome > 0
+            ? <>Based on {fmt(otherIncome)} of taxable income
+              <span> · {FILING_STATUSES.find(f => f.id === status)?.label.toLowerCase()}
+                {stateRate > 0 ? ` · ${fmtPlain(stateRate)} state` : ' · no state tax'}</span></>
+            : <>Your answers are missing
+              <span> — the tax on every sale below depends on them</span></>}
+        </div>
+        <button type="button"
+          className={setupDone && otherIncome > 0 ? styles.ghostBtn : styles.primaryBtn}
+          style={{ marginTop: 0 }}
+          onClick={() => setSetupOpen(true)}>
+          {setupDone && otherIncome > 0 ? 'Change my answers' : 'Answer the questions'}
+        </button>
+      </div>
+
       <div className={styles.subTabBar}>
         {[
           { id: 'one', label: 'One position' },
