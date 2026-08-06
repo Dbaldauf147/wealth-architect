@@ -15,7 +15,7 @@ import {
 } from '../lib/switchAnalysis';
 import {
   FILING_STATUSES, TAX_YEAR, TAX_SOURCE, STANDARD_DEDUCTION, NIIT_RATE,
-  NIIT_THRESHOLD, MAX_LOSS_OFFSET, LONG_TERM_DAYS,
+  NIIT_THRESHOLD, MAX_LOSS_OFFSET, LONG_TERM_DAYS, LTCG_BRACKETS,
   estimateTax, summarizeLots, isLongTerm, longTermDate, heldDays,
 } from '../lib/taxes';
 import {
@@ -3029,7 +3029,13 @@ function useTaxPrefs() {
   };
 }
 
-function TaxSituationInputs({ prefs, setPrefs, status, children }) {
+function TaxSituationInputs({ prefs, setPrefs, status, otherIncome, children }) {
+  // Long-term gains stack on top of ordinary income, so with nothing under
+  // them they land in the 0% band and every bill on the page comes out near
+  // zero. That reads as good news rather than as a missing input, which is
+  // exactly the kind of quiet wrong answer worth interrupting for.
+  const zeroBandCeiling = LTCG_BRACKETS[status]?.[0]?.[0];
+
   return (
     <>
       <div className={styles.inputRow}>
@@ -3071,6 +3077,26 @@ function TaxSituationInputs({ prefs, setPrefs, status, children }) {
           doesn&apos;t apply to you.
         </span>
       </label>
+
+      {!(otherIncome > 0) && (
+        <div className={styles.noteCard} style={{ marginTop: 14 }}>
+          <div className={styles.noteTitle}>
+            <span className="material-symbols-outlined" style={{ fontSize: 17 }}>warning</span>
+            No income entered — that is why the tax looks so small
+          </div>
+          <div className={styles.cardSub} style={{ marginTop: 2 }}>
+            Long-term gains are stacked <em>on top of</em> your ordinary income, and the bottom
+            band is taxed at nothing at all. With no income underneath them, the first{' '}
+            <strong>{fmt(zeroBandCeiling)}</strong> of long-term gain is federally tax-free for{' '}
+            {FILING_STATUSES.find(f => f.id === status)?.label.toLowerCase()} — so every figure
+            below comes out near zero by construction, not because the sale is cheap.
+            {' '}<strong>If you have a salary, put your taxable income in the box above.</strong>{' '}
+            It typically moves the bill from nothing to 15% of the gain, and to 18.8% once the
+            investment surtax starts.
+          </div>
+        </div>
+      )}
+
       {children}
     </>
   );
@@ -3290,7 +3316,8 @@ function TaxTab({ series }) {
           three answers change the number more than anything about the stocks does. They stay in
           this browser and are never sent anywhere.
         </div>
-        <TaxSituationInputs prefs={prefs} setPrefs={setPrefs} status={status}>
+        <TaxSituationInputs prefs={prefs} setPrefs={setPrefs} status={status}
+          otherIncome={otherIncome}>
           {realized.lots > 0 && (
             <label className={styles.checkbox}>
               <input type="checkbox" checked={includeRealized}
@@ -4027,7 +4054,8 @@ function SingleStockTab({ series, cpi }) {
             <div className={styles.cardSub}>
               Shared with the <strong>Tax on Selling</strong> tab — change it in either place.
             </div>
-            <TaxSituationInputs prefs={prefs} setPrefs={setPrefs} status={status} />
+            <TaxSituationInputs prefs={prefs} setPrefs={setPrefs} status={status}
+              otherIncome={otherIncome} />
           </div>
 
           <div className={styles.statGrid}>
