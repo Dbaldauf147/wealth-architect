@@ -13,6 +13,7 @@ import {
 import {
   breakEvenTable, requiredReturn, projectPaths, taxOpportunityCost, impliedTaxRate,
 } from '../lib/switchAnalysis';
+import { STATES, findState, STATE_TAX_AS_OF } from '../lib/stateTax';
 import {
   FILING_STATUSES, TAX_YEAR, TAX_SOURCE, STANDARD_DEDUCTION, NIIT_RATE,
   NIIT_THRESHOLD, MAX_LOSS_OFFSET, LONG_TERM_DAYS, LTCG_BRACKETS,
@@ -39,6 +40,10 @@ const SERIES_START = '1999-12-31';
 // CPI is pulled from the year before the index series begins, so the first
 // trading day already has a price level behind it to measure from.
 const CPI_START_YEAR = 1999;
+
+// Horizons the projection is reported over, and the choices offered when
+// asked how long the money is being held.
+const HORIZONS = [1, 3, 5, 10, 20];
 
 const RANGE_OPTIONS = [
   { id: '5y', label: '5Y', years: 5 },
@@ -3045,11 +3050,66 @@ function useTaxPrefs() {
     // still remembers on the next visit.
     forever: prefs.forever === true,
     setupDone: prefs.setupDone === true,
+    stateCode: prefs.stateCode || '',
+    // How long the money is expected to be held before it is sold. Drives the
+    // headline break-even and the comparison table, so the projection is
+    // reported over the horizon you actually have rather than a stock ten.
+    sellYears: HORIZONS.includes(prefs.sellYears) ? prefs.sellYears : 10,
   };
 }
 
+/**
+ * Pick a state and prefill its rate, or type one directly.
+ *
+ * The prefilled figure is the state's top marginal income rate, which is what
+ * most states apply to gains — but a graduated state's top bracket is not most
+ * people's rate, and a dozen states treat capital gains specially. Both facts
+ * are said next to the number rather than buried, and the box stays editable.
+ */
+function StatePicker({ prefs, setPrefs, stateCode }) {
+  const picked = findState(stateCode);
+  return (
+    <>
+      <div className={styles.inputRow}>
+        <label className={styles.inputField} style={{ flex: '1 1 220px' }}>
+          <span>Your state</span>
+          <select className={styles.select} value={stateCode}
+            onChange={(e) => {
+              const next = findState(e.target.value);
+              setPrefs({
+                stateCode: e.target.value,
+                stateRate: next ? String(+(next.rate * 100).toFixed(2)) : '',
+              });
+            }}>
+            <option value="">— choose a state —</option>
+            {STATES.map(s => (
+              <option key={s.code} value={s.code}>{s.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className={styles.inputField}>
+          <span>Rate on gains</span>
+          <input type="text" inputMode="decimal" placeholder="0"
+            value={prefs.stateRate ?? ''}
+            onChange={e => setPrefs({ stateRate: e.target.value })} />
+        </label>
+      </div>
+      {picked && (
+        <div className={styles.stepHint} style={{ marginTop: 8, marginBottom: 0 }}>
+          {picked.note
+            ? <><strong>{picked.name}:</strong> {picked.note}</>
+            : <><strong>{picked.name}</strong> applies its income tax rate to capital gains.</>}
+          {' '}Figures are for the {STATE_TAX_AS_OF} and are a starting point, not your return —
+          override the rate if you know better.
+        </div>
+      )}
+    </>
+  );
+}
+
 function TaxSituationInputs({
-  prefs, setPrefs, status, otherIncome, incomeIsGross, enteredIncome, deduction, children,
+  prefs, setPrefs, status, otherIncome, incomeIsGross, enteredIncome, deduction,
+  stateCode, children,
 }) {
   // Long-term gains stack on top of ordinary income, so on a modest income a
   // large gain can land entirely in the 0% band and the estimate comes out at
@@ -3077,13 +3137,9 @@ function TaxSituationInputs({
             value={prefs.income ?? ''}
             onChange={e => setPrefs({ income: e.target.value })} />
         </label>
-        <label className={styles.inputField}>
-          <span>State rate on gains</span>
-          <input type="text" inputMode="decimal" placeholder="0"
-            value={prefs.stateRate ?? ''}
-            onChange={e => setPrefs({ stateRate: e.target.value })} />
-        </label>
       </div>
+
+      <StatePicker prefs={prefs} setPrefs={setPrefs} stateCode={stateCode} />
 
       {/* pillGroup, not modeRow — modeRow's track is the same white as a card,
           so on this surface the control would be invisible. */}
@@ -3121,9 +3177,7 @@ function TaxSituationInputs({
             <strong>gross pay</strong> if you would rather give your salary and have the{' '}
             {fmt(deduction)} standard deduction taken off for you.
           </>
-        )}{' '}
-        <strong>State rate</strong> is a percentage — enter 5 for 5%, or leave it blank for a
-        state with no income tax.
+        )}
       </div>
       <label className={styles.checkbox}>
         <input type="checkbox" checked={prefs.includeNiit !== false}
@@ -3177,7 +3231,7 @@ function TaxSituationInputs({
  */
 function AnalysisSetupDialog({
   prefs, setPrefs, status, otherIncome, incomeIsGross, enteredIncome, deduction,
-  stateRate, forever, onClose,
+  stateRate, forever, stateCode, sellYears, onClose,
 }) {
   const firstRef = useRef(null);
 
@@ -3280,21 +3334,10 @@ function AnalysisSetupDialog({
             <span className={styles.stepNum}>3</span> Does your state tax capital gains?
           </div>
           <div className={styles.stepHint}>
-            A percentage — most states apply their ordinary income rate to gains. Nine states take
-            nothing.
+            Pick your state and the rate fills in. Most states apply their ordinary income rate to
+            gains; eight take nothing at all, and about a dozen treat gains differently from wages.
           </div>
-          <div className={styles.inputRow} style={{ alignItems: 'flex-end' }}>
-            <label className={styles.inputField}>
-              <span>State rate</span>
-              <input type="text" inputMode="decimal" placeholder="0"
-                value={prefs.stateRate ?? ''}
-                onChange={e => setPrefs({ stateRate: e.target.value })} />
-            </label>
-            <button type="button" className={styles.ghostBtn} style={{ marginBottom: 1 }}
-              onClick={() => setPrefs({ stateRate: '0' })}>
-              My state takes nothing
-            </button>
-          </div>
+          <StatePicker prefs={prefs} setPrefs={setPrefs} stateCode={stateCode} />
         </div>
 
         {/* 4 — exit assumption */}
@@ -3321,6 +3364,28 @@ function AnalysisSetupDialog({
               </button>
             ))}
           </div>
+
+          {!forever && (
+            <div style={{ marginTop: 14 }}>
+              <div className={styles.stepLabel} style={{ fontSize: 13 }}>
+                In roughly how many years?
+              </div>
+              <div className={styles.stepHint}>
+                It decides which row of the break-even is the headline. The tax you defer matters
+                most over a short hold and washes out over a long one, so a five-year answer and a
+                twenty-year answer are genuinely different decisions. A rough guess is fine.
+              </div>
+              <div className={styles.pillGroup} style={{ flexWrap: 'wrap' }}>
+                {HORIZONS.map(y => (
+                  <button key={y} type="button"
+                    className={`${styles.pill} ${sellYears === y ? styles.pillActive : ''}`}
+                    onClick={() => setPrefs({ sellYears: y })}>
+                    {y === 1 ? 'about a year' : `about ${y} years`}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className={styles.answer}>
@@ -3392,7 +3457,7 @@ function TaxTab({ series }) {
 
   const {
     prefs, setPrefs, status, otherIncome, stateRate, includeNiit, includeRealized,
-    incomeIsGross, enteredIncome, deduction, forever, setupDone,
+    incomeIsGross, enteredIncome, deduction, forever, setupDone, stateCode, sellYears,
   } = useTaxPrefs();
   const [scope, setScope] = useState('all');
   const [chosen, setChosen] = useState(() => new Set());
@@ -3548,6 +3613,7 @@ function TaxTab({ series }) {
           otherIncome={otherIncome} incomeIsGross={incomeIsGross}
           enteredIncome={enteredIncome} deduction={deduction}
           stateRate={stateRate} forever={forever}
+          stateCode={stateCode} sellYears={sellYears}
           onClose={() => setSetupOpen(false)}
         />
       )}
@@ -3601,7 +3667,7 @@ function TaxTab({ series }) {
         </div>
         <TaxSituationInputs prefs={prefs} setPrefs={setPrefs} status={status}
           otherIncome={otherIncome} incomeIsGross={incomeIsGross}
-          enteredIncome={enteredIncome} deduction={deduction}>
+          enteredIncome={enteredIncome} deduction={deduction} stateCode={stateCode}>
           {realized.lots > 0 && (
             <label className={styles.checkbox}>
               <input type="checkbox" checked={includeRealized}
@@ -4076,8 +4142,6 @@ function TaxTab({ series }) {
 
 // ── Single stock tab ────────────────────────────────────────────────────
 
-const HORIZONS = [1, 3, 5, 10, 20];
-
 /**
  * How much room each position has, ranked.
  *
@@ -4396,14 +4460,18 @@ function SingleStockTab({ series, cpi }) {
   const { trades, income, result, awaitingQuotes } = portfolio;
   const {
     prefs, setPrefs, status, otherIncome, stateRate, includeNiit, includeRealized,
-    incomeIsGross, enteredIncome, deduction, forever, setupDone,
+    incomeIsGross, enteredIncome, deduction, forever, setupDone, stateCode, sellYears,
   } = useTaxPrefs();
 
   const [symbol, setSymbol] = useState(null);
   const [view, setView] = useState('one');
-  const [horizon, setHorizon] = useState(10);
   const [setupOpen, setSetupOpen] = useState(!setupDone);
   const setForever = useCallback((v) => setPrefs({ forever: v }), [setPrefs]);
+  // One horizon everywhere: the answer given in the dialog, and changing the
+  // pills in the comparison view updates that answer rather than diverging
+  // from it.
+  const horizon = sellYears;
+  const setHorizon = useCallback((y) => setPrefs({ sellYears: y }), [setPrefs]);
   const [indexText, setIndexText] = useState('');
   const [futureRateText, setFutureRateText] = useState('');
   const [stockText, setStockText] = useState('');
@@ -4548,8 +4616,19 @@ function SingleStockTab({ series, cpi }) {
     });
   }, [sale, tax, indexReturn, futureTaxRate]);
 
-  const tenYear = table.find(r => r.years === 10);
-  const headline = tenYear ? (forever ? tenYear.forever : tenYear.liquidate) : null;
+  // Reported over the hold you said you had, not a stock ten years.
+  const headline = useMemo(() => {
+    if (!sale || !tax || !(sale.proceeds > 0)) return null;
+    return requiredReturn({
+      value: sale.proceeds,
+      basis: sale.basis,
+      taxToSell: tax.cost,
+      indexReturn,
+      years: horizon,
+      futureTaxRate,
+      liquidateAtEnd: !forever,
+    });
+  }, [sale, tax, indexReturn, horizon, futureTaxRate, forever]);
 
   /**
    * Every open position put through the same question at once.
@@ -4673,6 +4752,7 @@ function SingleStockTab({ series, cpi }) {
           otherIncome={otherIncome} incomeIsGross={incomeIsGross}
           enteredIncome={enteredIncome} deduction={deduction}
           stateRate={stateRate} forever={forever}
+          stateCode={stateCode} sellYears={sellYears}
           onClose={() => setSetupOpen(false)}
         />
       )}
@@ -4727,7 +4807,7 @@ function SingleStockTab({ series, cpi }) {
           taxInputs={
             <TaxSituationInputs prefs={prefs} setPrefs={setPrefs} status={status}
               otherIncome={otherIncome} incomeIsGross={incomeIsGross}
-              enteredIncome={enteredIncome} deduction={deduction} />
+              enteredIncome={enteredIncome} deduction={deduction} stateCode={stateCode} />
           }
         />
       )}
@@ -4779,7 +4859,8 @@ function SingleStockTab({ series, cpi }) {
                 {activeScenario.rate >= headline.required ? 'which clears it' : 'which falls short'}
               </span>
               <span className={styles.changeRange}>
-                · over 10 years · S&amp;P assumed at {fmtPlain(indexReturn, 1)}/yr
+                · over {forever ? `${horizon} years, never sold` : `the ${horizon} years you said`}
+                {' '}· S&amp;P assumed at {fmtPlain(indexReturn, 1)}/yr
               </span>
             </div>
           </>
@@ -4866,7 +4947,7 @@ function SingleStockTab({ series, cpi }) {
             </div>
             <TaxSituationInputs prefs={prefs} setPrefs={setPrefs} status={status}
               otherIncome={otherIncome} incomeIsGross={incomeIsGross}
-              enteredIncome={enteredIncome} deduction={deduction} />
+              enteredIncome={enteredIncome} deduction={deduction} stateCode={stateCode} />
           </div>
 
           <div className={styles.statGrid}>
@@ -5129,9 +5210,14 @@ function SingleStockTab({ series, cpi }) {
                   {table.map(row => {
                     const r = forever ? row.forever : row.liquidate;
                     if (!r) return null;
+                    const yours = row.years === horizon;
                     return (
-                      <tr key={row.years}>
-                        <td><strong>{row.years} year{row.years === 1 ? '' : 's'}</strong></td>
+                      <tr key={row.years}
+                        style={yours ? { background: 'rgba(0, 88, 190, 0.06)' } : undefined}>
+                        <td>
+                          <strong>{row.years} year{row.years === 1 ? '' : 's'}</strong>
+                          {yours && <span className={styles.tag}>your hold</span>}
+                        </td>
                         <td className={`${styles.num} ${styles.muted}`}>{fmtPlain(indexReturn, 2)}</td>
                         <td className={styles.num}><strong>{fmtPlain(r.required, 2)}</strong></td>
                         <td className={`${styles.num} ${r.hurdle <= 0 ? styles.up : styles.down}`}>
