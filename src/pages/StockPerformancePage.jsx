@@ -3078,7 +3078,9 @@ function TaxSituationInputs({
         </label>
       </div>
 
-      <div className={styles.modeRow} style={{ marginTop: 12 }}>
+      {/* pillGroup, not modeRow — modeRow's track is the same white as a card,
+          so on this surface the control would be invisible. */}
+      <div className={styles.pillGroup} style={{ marginTop: 12 }}>
         {[
           { gross: true, label: 'That\'s my gross pay', hint: 'The deduction is taken off for you' },
           { gross: false, label: 'That\'s my taxable income', hint: '1040 line 15 — already net of deductions' },
@@ -4215,7 +4217,7 @@ function SingleStockTab({ series, cpi }) {
               income in early retirement can put a long-term gain back in the 0% band, and a large
               sale in a working year can push it to 23.8%.
             </div>
-            <div className={styles.modeRow} style={{ marginTop: 12 }}>
+            <div className={styles.pillGroup} style={{ marginTop: 12 }}>
               {[
                 { id: false, label: 'I\'ll sell eventually', hint: 'Both sides are taxed at the horizon' },
                 { id: true, label: 'I\'ll never sell', hint: 'Held to a step-up in basis, or donated' },
