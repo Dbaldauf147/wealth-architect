@@ -4477,6 +4477,9 @@ function SingleStockTab({ series, cpi }) {
   const [stockText, setStockText] = useState('');
   const [spreadText, setSpreadText] = useState('');
   const [scenario, setScenario] = useState('base');
+  // The ticker's own decade by default: a projection wants what the security
+  // does, not what your entry points did.
+  const [baseline, setBaseline] = useState('market');
 
   const nowT = series.lastT;
   const taxYear = new Date(nowT).getUTCFullYear();
@@ -4530,6 +4533,53 @@ function SingleStockTab({ series, cpi }) {
     [income, active],
   );
 
+  /**
+   * The ticker's own long-run return, independent of when you happened to buy.
+   *
+   * Total return, from the adjusted series — the same basis as the index it is
+   * being compared against, so a dividend payer isn't handicapped.
+   *
+   * A basket position that came through a reorganisation has no single ticker
+   * to chart, so it has no such number and falls back to your own.
+   */
+  const isBasket = !!active?.all?.some(r => r.basket);
+  const [marketPayload, setMarketPayload] = useState(null);
+
+  useEffect(() => {
+    const sym = active?.symbol;
+    if (!sym || isBasket) return undefined;
+    let cancelled = false;
+    // A year of slack past the decade, so the ten-year window has a close
+    // sitting behind its start rather than clipping to the first one.
+    const start = toISODate(nowT - 11 * 365.25 * MS_DAY);
+    const accept = (payload) => {
+      if (!cancelled) setMarketPayload({ symbol: sym, payload });
+    };
+    fetchSeries(sym, start, { onFresh: accept })
+      .then(({ payload }) => accept(payload))
+      .catch(err => { if (!cancelled) setMarketPayload({ symbol: sym, error: err.message }); });
+    return () => { cancelled = true; };
+  }, [active?.symbol, isBasket, nowT]);
+
+  const marketSeries = useMemo(() => {
+    if (marketPayload?.symbol !== active?.symbol || !marketPayload?.payload) return null;
+    const s = makeSeries(marketPayload.payload.points);
+    return s.length ? s : null;
+  }, [marketPayload, active?.symbol]);
+
+  // Ten years where there are ten; where the ticker is younger, say how much
+  // history there actually is rather than annualizing a shorter run as though
+  // it were a decade.
+  const marketDecade = useMemo(() => {
+    if (!marketSeries) return null;
+    const wanted = marketSeries.lastT - 10 * 365.25 * MS_DAY;
+    const from = Math.max(wanted, marketSeries.firstT);
+    const years = (marketSeries.lastT - from) / (365.25 * MS_DAY);
+    if (years < 1) return null;
+    const rate = cagr(marketSeries, from, marketSeries.lastT);
+    return Number.isFinite(rate) ? { rate, years, partial: wanted < marketSeries.firstT } : null;
+  }, [marketSeries]);
+
   // What this position has actually annualized on its own cash flows. A
   // starting point for the projection, emphatically not a forecast.
   const stockHistoricAnnual = useMemo(() => {
@@ -4543,9 +4593,32 @@ function SingleStockTab({ series, cpi }) {
     return xirr(flows);
   }, [active, symbolIncome]);
 
-  const defaultStockReturn = Number.isFinite(stockHistoricAnnual)
-    ? Math.max(-0.5, Math.min(0.5, stockHistoricAnnual))
-    : defaultIndexReturn;
+  const clampRate = (r) => Math.max(-0.5, Math.min(0.5, r));
+
+  // Two honest answers to "what does this thing return", and they are not the
+  // same question. Yours is money-weighted on your own purchases, so it
+  // carries your timing — buy well and it flatters the position, buy badly and
+  // it buries it. The ticker's own decade is the security on its own terms.
+  const baselines = useMemo(() => ([
+    {
+      key: 'market',
+      label: marketDecade?.partial
+        ? `Its own ${marketDecade.years.toFixed(0)}-year record`
+        : 'Its own 10-year record',
+      rate: marketDecade ? clampRate(marketDecade.rate) : null,
+    },
+    {
+      key: 'mine',
+      label: 'What I have got from it',
+      rate: Number.isFinite(stockHistoricAnnual) ? clampRate(stockHistoricAnnual) : null,
+    },
+  ]), [marketDecade, stockHistoricAnnual]);
+
+  const chosenBaseline = baselines.find(b => b.key === baseline && b.rate != null)
+    || baselines.find(b => b.rate != null)
+    || null;
+
+  const defaultStockReturn = chosenBaseline?.rate ?? defaultIndexReturn;
   // The central case: its own history unless you say otherwise.
   const centralReturn = stockText.trim() === ''
     ? defaultStockReturn
@@ -5015,6 +5088,53 @@ function SingleStockTab({ series, cpi }) {
               The whole answer turns on what you think the index will do and whether this money
               is ever sold again, so both are yours to set.
             </div>
+
+            <div className={styles.stepLabel} style={{ fontSize: 13, marginTop: 14, marginBottom: 4 }}>
+              What should {active.symbol}&apos;s central case be based on?
+            </div>
+            <div className={styles.pillGroup} style={{ flexWrap: 'wrap' }}>
+              {baselines.map(b => (
+                <button key={b.key} type="button" disabled={b.rate == null}
+                  className={`${styles.pill} ${chosenBaseline?.key === b.key ? styles.pillActive : ''}`}
+                  style={b.rate == null ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+                  onClick={() => setBaseline(b.key)}>
+                  {b.label}{' '}
+                  <span className={styles.muted}>
+                    {b.rate == null ? 'unavailable' : fmtPlain(b.rate, 1)}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className={styles.cardSub} style={{ marginTop: 8, marginBottom: 14 }}>
+              These answer different questions.{' '}
+              <strong>Its own record</strong> is what {active.symbol} returned to anyone holding it
+              across that whole stretch — total return, dividends included, the same basis as the
+              index it is being weighed against.{' '}
+              <strong>What I have got from it</strong> is money-weighted on your own purchases, so
+              it carries your timing as well as the security&apos;s performance.
+              {marketDecade && Number.isFinite(stockHistoricAnnual) && (
+                <> The {fmtPlain(Math.abs(stockHistoricAnnual - marketDecade.rate), 1)} between them
+                  is what your entry points have been worth
+                  {stockHistoricAnnual > marketDecade.rate ? ', in your favour' : ', against you'}.
+                </>
+              )}
+              {marketDecade?.partial && (
+                <> {active.symbol} has only {marketDecade.years.toFixed(1)} years of price history,
+                  so its record is measured over that rather than a full decade.
+                </>
+              )}
+              {!marketDecade && !isBasket && (
+                <> No usable price history came back for {active.symbol}, so only your own figure
+                  is available.
+                </>
+              )}
+              {isBasket && (
+                <> This position came through a share exchange and has no single ticker to measure,
+                  so only your own figure is available.
+                </>
+              )}
+            </div>
+
             <div className={styles.inputRow}>
               <label className={styles.inputField}>
                 <span>S&amp;P return a year</span>
@@ -5048,10 +5168,10 @@ function SingleStockTab({ series, cpi }) {
               Blank uses {fmtPlain(defaultIndexReturn, 1)} for the index — what a typical ten-year
               hold has actually averaged across every start month in the series, which is a fairer
               figure than any single stretch of history. For {active.symbol} it uses{' '}
-              {fmtPlain(defaultStockReturn, 1)}, which is what your own money in it has annualized
-              so far. <strong>That is history, not a forecast</strong> — a position that has run
-              hot is the one least likely to repeat it, which is what the three cases below are
-              for. <strong>Better / worse by</strong> is in percentage points either side of the
+              {fmtPlain(defaultStockReturn, 1)} — {chosenBaseline?.label.toLowerCase() || 'its history'}.
+              {' '}<strong>That is history, not a forecast</strong> — a position that has run hot is
+              the one least likely to repeat it, which is what the three cases below are for.{' '}
+              <strong>Better / worse by</strong> is in percentage points either side of the
               central case, so 5 gives you {fmtPlain(centralReturn - spread, 1)},{' '}
               {fmtPlain(centralReturn, 1)} and {fmtPlain(centralReturn + spread, 1)}.
             </div>
