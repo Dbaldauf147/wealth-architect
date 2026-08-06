@@ -11,7 +11,7 @@ import {
   cpiLagMonths, priceRatio,
 } from '../lib/inflation';
 import {
-  breakEvenTable, taxOpportunityCost, impliedTaxRate,
+  breakEvenTable, requiredReturn, taxOpportunityCost, impliedTaxRate,
 } from '../lib/switchAnalysis';
 import {
   FILING_STATUSES, TAX_YEAR, TAX_SOURCE, STANDARD_DEDUCTION, NIIT_RATE,
@@ -3046,11 +3046,13 @@ function useTaxPrefs() {
 function TaxSituationInputs({
   prefs, setPrefs, status, otherIncome, incomeIsGross, enteredIncome, deduction, children,
 }) {
-  // Long-term gains stack on top of ordinary income, so with nothing under
-  // them they land in the 0% band and every bill on the page comes out near
-  // zero. That reads as good news rather than as a missing input, which is
-  // exactly the kind of quiet wrong answer worth interrupting for.
+  // Long-term gains stack on top of ordinary income, so on a modest income a
+  // large gain can land entirely in the 0% band and the estimate comes out at
+  // nothing. That is a real answer and a genuinely useful one — but it is
+  // indistinguishable from a broken calculator unless the headroom is stated,
+  // so state it.
   const zeroBandCeiling = LTCG_BRACKETS[status]?.[0]?.[0];
+  const zeroRoom = Math.max(0, (zeroBandCeiling ?? 0) - (otherIncome || 0));
 
   return (
     <>
@@ -3128,21 +3130,28 @@ function TaxSituationInputs({
         </span>
       </label>
 
-      {!(otherIncome > 0) && (
-        <div className={styles.noteCard} style={{ marginTop: 14 }}>
+      {zeroRoom > 0 && (
+        <div className={styles.infoCard} style={{ marginTop: 14 }}>
           <div className={styles.noteTitle}>
-            <span className="material-symbols-outlined" style={{ fontSize: 17 }}>warning</span>
-            No income entered — that is why the tax looks so small
+            <span className="material-symbols-outlined" style={{ fontSize: 17 }}>savings</span>
+            {fmt(zeroRoom)} of long-term gain is tax-free at this income
           </div>
           <div className={styles.cardSub} style={{ marginTop: 2 }}>
-            Long-term gains are stacked <em>on top of</em> your ordinary income, and the bottom
-            band is taxed at nothing at all. With no income underneath them, the first{' '}
-            <strong>{fmt(zeroBandCeiling)}</strong> of long-term gain is federally tax-free for{' '}
-            {FILING_STATUSES.find(f => f.id === status)?.label.toLowerCase()} — so every figure
-            below comes out near zero by construction, not because the sale is cheap.
-            {' '}<strong>If you have a salary, put your taxable income in the box above.</strong>{' '}
-            It typically moves the bill from nothing to 15% of the gain, and to 18.8% once the
-            investment surtax starts.
+            Long-term gains stack <em>on top of</em> your ordinary income, and the bottom band is
+            taxed at nothing. The 0% band runs to {fmt(zeroBandCeiling)} of total taxable income
+            for {FILING_STATUSES.find(f => f.id === status)?.label.toLowerCase()}, and you are
+            using {fmt(otherIncome)} of it — so a long-term gain up to{' '}
+            <strong>{fmt(zeroRoom)}</strong> costs no federal tax at all this year.{' '}
+            <strong>An estimate of zero below is a real answer, not a missing input.</strong>
+            {!(otherIncome > 0) && (
+              <>
+                {' '}You have entered no income, which is what makes the room this large — if you
+                have a salary, put it in the box above and watch this shrink dollar for dollar.
+              </>
+            )}
+            {' '}This is worth knowing in its own right: realising gains up to that line, or
+            spreading a sale across tax years to stay under it, is the cheapest selling you will
+            ever do.
           </div>
         </div>
       )}
@@ -3847,6 +3856,89 @@ function TaxTab({ series }) {
 const HORIZONS = [1, 3, 5, 10, 20];
 
 /**
+ * How much room each position has, ranked.
+ *
+ * One bar per holding: what it has actually returned, less what it must return
+ * for keeping it to beat switching to the index. Bars to the right are
+ * clearing their own bar; bars to the left are not. Bar thickness carries the
+ * size of the position, because a thin miss on a large holding is worth more
+ * attention than a wide one on a rounding error.
+ */
+function MarginBars({ rows, onSelect, selected }) {
+  const usable = (rows || []).filter(r => Number.isFinite(r.margin));
+  const W = 880;
+  const rowH = 30;
+  const pad = { top: 12, right: 96, bottom: 30, left: 66 };
+  const H = pad.top + pad.bottom + usable.length * rowH;
+  const innerW = W - pad.left - pad.right;
+
+  if (!usable.length) {
+    return (
+      <div className={styles.emptyState}>
+        None of these positions has enough history to annualize a return from.
+      </div>
+    );
+  }
+
+  const maxAbs = Math.max(...usable.map(r => Math.abs(r.margin)), 0.01);
+  const maxValue = Math.max(...usable.map(r => r.sale.proceeds), 1);
+  const zeroX = pad.left + innerW / 2;
+  const scale = (innerW / 2) / maxAbs;
+
+  return (
+    <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet"
+      style={{ display: 'block' }}>
+      {ticksFor(-maxAbs, maxAbs, 5).map((t, i) => (
+        <g key={i}>
+          <line x1={zeroX + t * scale} y1={pad.top} x2={zeroX + t * scale} y2={H - pad.bottom}
+            stroke="var(--color-text-tertiary)" strokeOpacity={Math.abs(t) < 1e-9 ? 0.45 : 0.12}
+            strokeWidth={1} />
+          <text x={zeroX + t * scale} y={H - pad.bottom + 16} textAnchor="middle" fontSize={10}
+            fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">
+            {fmtPlain(t, 0)}
+          </text>
+        </g>
+      ))}
+
+      {usable.map((r, i) => {
+        const cy = pad.top + i * rowH + rowH / 2;
+        const w = Math.abs(r.margin) * scale;
+        const ahead = r.margin >= 0;
+        // Thickness by position size, floored so a small holding is still a bar.
+        const h = 8 + 12 * Math.sqrt(r.sale.proceeds / maxValue);
+        return (
+          <g key={r.symbol} onClick={() => onSelect?.(r.symbol)}
+            style={{ cursor: onSelect ? 'pointer' : 'default' }}>
+            <rect x={0} y={cy - rowH / 2} width={W} height={rowH}
+              fill={selected === r.symbol ? 'var(--color-secondary)' : 'transparent'}
+              fillOpacity={selected === r.symbol ? 0.07 : 0} />
+            <text x={pad.left - 10} y={cy + 4} textAnchor="end" fontSize={11.5} fontWeight={700}
+              fill={selected === r.symbol ? 'var(--color-secondary)' : 'var(--color-text-primary)'}
+              fontFamily="var(--font-headline)">
+              {r.symbol}
+            </text>
+            <rect x={ahead ? zeroX : zeroX - w} y={cy - h / 2} width={Math.max(w, 1)} height={h}
+              rx={2} fill={ahead ? WIN : LOSE} fillOpacity={0.82}>
+              <title>
+                {`${r.symbol} — ${fmt(r.sale.proceeds)} held`}
+                {`\nHas returned ${fmtPlain(r.historic, 1)}/yr · needs ${fmtPlain(r.required, 1)}/yr to justify keeping`}
+                {`\n${ahead ? 'Clears its bar by' : 'Short of its bar by'} ${fmtPlain(Math.abs(r.margin), 1)}`}
+                {`\nSelling it alone would cost ${fmt(Math.abs(r.taxCost))} in tax`}
+              </title>
+            </rect>
+            <text x={ahead ? zeroX + w + 8 : zeroX - w - 8} y={cy + 4}
+              textAnchor={ahead ? 'start' : 'end'} fontSize={11}
+              fill={ahead ? WIN : LOSE} fontFamily="var(--font-headline)" fontWeight={600}>
+              {r.margin > 0 ? '+' : '−'}{fmtPlain(Math.abs(r.margin), 1)}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+/**
  * The two futures, drawn against each other.
  *
  * Both lines are the same quantity the break-even table solves on — what you
@@ -4051,6 +4143,8 @@ function SingleStockTab({ series, cpi }) {
   } = useTaxPrefs();
 
   const [symbol, setSymbol] = useState(null);
+  const [view, setView] = useState('one');
+  const [horizon, setHorizon] = useState(10);
   const [forever, setForever] = useState(false);
   const [indexText, setIndexText] = useState('');
   const [futureRateText, setFutureRateText] = useState('');
@@ -4181,6 +4275,99 @@ function SingleStockTab({ series, cpi }) {
   const tenYear = table.find(r => r.years === 10);
   const headline = tenYear ? (forever ? tenYear.forever : tenYear.liquidate) : null;
 
+  /**
+   * Every open position put through the same question at once.
+   *
+   * Each position's tax is priced *on its own*, as though it were the only
+   * thing sold — that keeps the rows comparable, which is the point of the
+   * view, but it means the column does not add up. Gains stack, so selling
+   * several together pushes the later ones into higher bands. The real
+   * whole-portfolio bill is computed separately below and the two are shown
+   * against each other rather than one being quietly presented as the other.
+   */
+  const comparison = useMemo(() => {
+    if (!result) return [];
+    const common = { otherTaxableIncome: otherIncome, status, stateRate, includeNiit };
+    const before = estimateTax({
+      shortTermGain: base.shortTermGain, longTermGain: base.longTermGain, ...common,
+    });
+
+    const incomeBySymbol = new Map();
+    for (const d of income || []) {
+      if (!incomeBySymbol.has(d.symbol)) incomeBySymbol.set(d.symbol, []);
+      incomeBySymbol.get(d.symbol).push(d);
+    }
+
+    return positions
+      .filter(p => p.open.length)
+      .map(p => {
+        const s = summarizeLots(p.open, nowT);
+        const after = estimateTax({
+          shortTermGain: base.shortTermGain + s.shortTermGain,
+          longTermGain: base.longTermGain + s.longTermGain,
+          ...common,
+        });
+        const taxCost = (after.total - before.total) - (after.lossRelief - before.lossRelief);
+        const rate = impliedTaxRate(taxCost, s.proceeds, s.basis);
+        const req = requiredReturn({
+          value: s.proceeds,
+          basis: s.basis,
+          taxToSell: taxCost,
+          indexReturn,
+          years: horizon,
+          futureTaxRate: futureRateOverridden ? futureTaxRate : rate,
+          liquidateAtEnd: !forever,
+        });
+
+        const flows = [];
+        for (const r of p.all) {
+          flows.push({ t: r.buyT, amount: -r.costBasis });
+          flows.push({ t: r.exitT, amount: r.value });
+        }
+        for (const part of p.symbol.split(' + ')) {
+          for (const d of incomeBySymbol.get(part) || []) flows.push({ t: d.t, amount: d.amount });
+        }
+        const historic = xirr(flows);
+
+        return {
+          symbol: p.symbol,
+          sale: s,
+          taxCost,
+          netProceeds: s.proceeds - taxCost,
+          required: req?.required ?? null,
+          hurdle: req?.hurdle ?? null,
+          historic,
+          margin: (Number.isFinite(historic) && req) ? historic - req.required : null,
+        };
+      })
+      .sort((a, b) => (b.margin ?? -Infinity) - (a.margin ?? -Infinity));
+  }, [result, positions, income, nowT, base.shortTermGain, base.longTermGain,
+    otherIncome, status, stateRate, includeNiit, indexReturn, horizon,
+    futureRateOverridden, futureTaxRate, forever]);
+
+  // What selling the lot of them together would actually cost, which is more
+  // than the sum of the rows above once the gains stack into higher bands.
+  const sellEverything = useMemo(() => {
+    if (!result) return null;
+    const openAll = (result.rows || []).filter(r => r.open);
+    if (!openAll.length) return null;
+    const s = summarizeLots(openAll, nowT);
+    const common = { otherTaxableIncome: otherIncome, status, stateRate, includeNiit };
+    const before = estimateTax({
+      shortTermGain: base.shortTermGain, longTermGain: base.longTermGain, ...common,
+    });
+    const after = estimateTax({
+      shortTermGain: base.shortTermGain + s.shortTermGain,
+      longTermGain: base.longTermGain + s.longTermGain,
+      ...common,
+    });
+    const cost = (after.total - before.total) - (after.lossRelief - before.lossRelief);
+    return { sale: s, cost, proceeds: s.proceeds - cost };
+  }, [result, nowT, base.shortTermGain, base.longTermGain,
+    otherIncome, status, stateRate, includeNiit]);
+
+  const summedTax = comparison.reduce((t, r) => t + r.taxCost, 0);
+
   if (!trades.length) {
     return (
       <div className={styles.card}>
@@ -4204,6 +4391,46 @@ function SingleStockTab({ series, cpi }) {
 
   return (
     <>
+      <div className={styles.subTabBar}>
+        {[
+          { id: 'one', label: 'One position' },
+          { id: 'all', label: 'Compare all' },
+        ].map(t => (
+          <button key={t.id} type="button"
+            className={`${styles.tab} ${view === t.id ? styles.tabActive : ''}`}
+            onClick={() => setView(t.id)}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {view === 'all' && (
+        <CompareAllPositions
+          rows={comparison}
+          horizon={horizon}
+          setHorizon={setHorizon}
+          indexReturn={indexReturn}
+          indexText={indexText}
+          setIndexText={setIndexText}
+          defaultIndexReturn={defaultIndexReturn}
+          futureRateText={futureRateText}
+          setFutureRateText={setFutureRateText}
+          forever={forever}
+          setForever={setForever}
+          sellEverything={sellEverything}
+          summedTax={summedTax}
+          selected={active.symbol}
+          onSelect={(sym) => { setSymbol(sym); setView('one'); }}
+          taxInputs={
+            <TaxSituationInputs prefs={prefs} setPrefs={setPrefs} status={status}
+              otherIncome={otherIncome} incomeIsGross={incomeIsGross}
+              enteredIncome={enteredIncome} deduction={deduction} />
+          }
+        />
+      )}
+
+      {view === 'one' && (
+      <>
       <div className={styles.controls}>
         <div className={styles.pillGroup} style={{ flexWrap: 'wrap' }}>
           {positions.map(p => (
@@ -4607,6 +4834,224 @@ function SingleStockTab({ series, cpi }) {
           </div>
         </>
       )}
+      </>
+      )}
+    </>
+  );
+}
+
+/**
+ * Every holding against the same bar, ranked.
+ *
+ * The per-position view answers "should I keep this one". This answers the
+ * question you actually have, which is "of the things I own, which are hardest
+ * to justify keeping" — and that only shows up when they are side by side.
+ */
+function CompareAllPositions({
+  rows, horizon, setHorizon, indexReturn, indexText, setIndexText, defaultIndexReturn,
+  futureRateText, setFutureRateText, forever, setForever, sellEverything, summedTax,
+  selected, onSelect, taxInputs,
+}) {
+  if (!rows.length) {
+    return (
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>No open positions to compare</div>
+        <div className={styles.cardSub}>
+          Everything in your imported history has been sold, so there is nothing to weigh up.
+        </div>
+      </div>
+    );
+  }
+
+  const clearing = rows.filter(r => r.margin != null && r.margin >= 0);
+  const failing = rows.filter(r => r.margin != null && r.margin < 0);
+  const totalValue = rows.reduce((s, r) => s + r.sale.proceeds, 0);
+  const failingValue = failing.reduce((s, r) => s + r.sale.proceeds, 0);
+
+  return (
+    <>
+      <div className={styles.hero}>
+        <div className={styles.heroLabel}>Every position against the same bar</div>
+        <div className={styles.heroValue}>
+          {failing.length}
+          <span className={styles.heroUnit}>
+            {failing.length === 1 ? ' position is not clearing it' : ' positions are not clearing it'}
+          </span>
+        </div>
+        <div className={styles.heroChange}>
+          <span className={failing.length ? styles.changeDown : styles.changeUp}>
+            {fmt(failingValue)} of {fmt(totalValue)} held
+          </span>
+          <span className={styles.changeRange}>
+            · on {horizon}-year holds · S&amp;P assumed at {fmtPlain(indexReturn, 1)}/yr
+            · measured on each position&apos;s own past return
+          </span>
+        </div>
+      </div>
+
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Your situation</div>
+        <div className={styles.cardSub}>
+          Shared with the <strong>Tax on Selling</strong> tab — change it in either place.
+        </div>
+        {taxInputs}
+      </div>
+
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Assumptions</div>
+        <div className={styles.cardSub}>
+          Every row is priced against the same index return and the same horizon, which is what
+          makes them comparable.
+        </div>
+        <div className={styles.inputRow}>
+          <label className={styles.inputField}>
+            <span>S&amp;P return a year</span>
+            <input type="text" inputMode="decimal"
+              placeholder={(defaultIndexReturn * 100).toFixed(1)}
+              value={indexText} onChange={e => setIndexText(e.target.value)} />
+          </label>
+          <label className={styles.inputField}>
+            <span>Tax rate when you sell</span>
+            <input type="text" inputMode="decimal" placeholder="implied by each position"
+              value={futureRateText} onChange={e => setFutureRateText(e.target.value)} />
+          </label>
+        </div>
+        <div className={styles.pillGroup} style={{ marginTop: 12, marginRight: 8 }}>
+          {HORIZONS.map(h => (
+            <button key={h} type="button"
+              className={`${styles.pill} ${horizon === h ? styles.pillActive : ''}`}
+              onClick={() => setHorizon(h)}>
+              {h}y
+            </button>
+          ))}
+        </div>
+        <div className={styles.pillGroup} style={{ marginTop: 12 }}>
+          {[
+            { id: false, label: 'I\'ll sell eventually' },
+            { id: true, label: 'I\'ll never sell' },
+          ].map(o => (
+            <button key={String(o.id)} type="button"
+              className={`${styles.pill} ${forever === o.id ? styles.pillActive : ''}`}
+              onClick={() => setForever(o.id)}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className={styles.chartCard}>
+        <div className={styles.chartHeader}>
+          <div>
+            <div className={styles.cardTitle}>How much room each one has</div>
+            <div className={styles.cardSub}>
+              What each position has actually returned a year, less what it must return over the
+              next {horizon} years for keeping it to beat switching to the index. Bars to the right
+              are clearing their own bar; bars to the left are not. Thickness is the size of the
+              holding — a narrow miss on a large position is worth more of your attention than a
+              wide one on a rounding error. Click any bar to open it in full.
+            </div>
+          </div>
+          <div className={styles.legend}>
+            <span><span className={styles.legendDot} style={{ background: WIN }} /> Clearing ({clearing.length})</span>
+            <span><span className={styles.legendDot} style={{ background: LOSE }} /> Not ({failing.length})</span>
+          </div>
+        </div>
+        <MarginBars rows={rows} onSelect={onSelect} selected={selected} />
+      </div>
+
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Position by position</div>
+        <div className={styles.cardSub}>
+          <strong>Needs</strong> is the return that would make keeping the position exactly as good
+          as selling it and buying the index. <strong>Has done</strong> is what your own money in it
+          has actually annualized. Where "has done" is the larger, the position has been clearing
+          its bar — which is a record, not a promise.
+        </div>
+        <div className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th className={styles.num}>Value</th>
+                <th className={styles.num}>Gain</th>
+                <th className={styles.num}>Tax to sell</th>
+                <th className={styles.num}>Reaches the index</th>
+                <th className={styles.num}>Needs</th>
+                <th className={styles.num}>Has done</th>
+                <th className={styles.num}>Margin</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.symbol}
+                  className={`${styles.clickRow} ${selected === r.symbol ? styles.clickRowActive : ''}`}
+                  onClick={() => onSelect?.(r.symbol)}>
+                  <td><strong>{r.symbol}</strong></td>
+                  <td className={styles.num}>{fmt(r.sale.proceeds)}</td>
+                  <td className={`${styles.num} ${r.sale.gain >= 0 ? styles.up : styles.down}`}>
+                    {fmtSigned(r.sale.gain)}
+                  </td>
+                  <td className={styles.num}>
+                    {r.taxCost < 0 ? `−${fmt(-r.taxCost)}` : fmt(r.taxCost)}
+                  </td>
+                  <td className={`${styles.num} ${styles.muted}`}>{fmt(r.netProceeds)}</td>
+                  <td className={styles.num}>{fmtPlain(r.required, 1)}</td>
+                  <td className={styles.num}>{fmtPlain(r.historic, 1)}</td>
+                  <td className={`${styles.num} ${r.margin == null ? styles.muted : r.margin >= 0 ? styles.up : styles.down}`}>
+                    <strong>
+                      {r.margin == null
+                        ? '—'
+                        : `${r.margin > 0 ? '+' : '−'}${fmtPlain(Math.abs(r.margin), 1)}`}
+                    </strong>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td><strong>{rows.length} positions</strong></td>
+                <td className={styles.num}><strong>{fmt(totalValue)}</strong></td>
+                <td className={styles.num}>
+                  <strong>{fmtSigned(rows.reduce((s, r) => s + r.sale.gain, 0))}</strong>
+                </td>
+                <td className={styles.num}><strong>{fmt(summedTax)}</strong></td>
+                <td className={`${styles.num} ${styles.muted}`}>
+                  <strong>{fmt(totalValue - summedTax)}</strong>
+                </td>
+                <td className={styles.num} colSpan={3} />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        {sellEverything && (
+          <div className={styles.noteCard} style={{ marginTop: 14 }}>
+            <div className={styles.noteTitle}>
+              <span className="material-symbols-outlined" style={{ fontSize: 17 }}>functions</span>
+              The tax column does not add up — and that is not a rounding error
+            </div>
+            <div className={styles.cardSub} style={{ marginTop: 2 }}>
+              Each row is priced as though it were the only thing you sold, which is what makes the
+              rows comparable. But gains stack: sell several together and the later ones are pushed
+              into higher bands. Selling every position one-at-a-time in separate years comes to{' '}
+              <strong>{fmt(summedTax)}</strong>; selling the lot of them in one year costs{' '}
+              <strong>{fmt(sellEverything.cost)}</strong>
+              {sellEverything.cost > summedTax + 1 && (
+                <> — <strong>{fmt(sellEverything.cost - summedTax)}</strong> more, which is the
+                  price of doing it all at once</>
+              )}. The <strong>Tax on Selling</strong> tab models any combination properly.
+            </div>
+          </div>
+        )}
+
+        <div className={styles.cardSub} style={{ marginTop: 12 }}>
+          <strong>Past return is not a forecast.</strong> Ranking on what a position has done
+          assumes it keeps doing it, and the holdings at the top of this list are the ones that
+          have run hottest — historically the least likely to repeat. Read it as a list of which
+          positions have the least room, not as a list of what to sell. Concentration, and whether
+          you still want to own the business, belong in the decision and are nowhere in this table.
+        </div>
+      </div>
     </>
   );
 }
