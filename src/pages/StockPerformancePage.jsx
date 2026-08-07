@@ -2992,6 +2992,16 @@ function InflationTab({ series, cpi }) {
 // about a tax return, and nothing else on the site needs them.
 const TAX_PREFS_KEY = 'stockTaxPrefs:v1';
 
+// Where this is used from, so the state question starts answered rather than
+// blank. Anything picked afterwards overrides it and is remembered.
+const DEFAULT_STATE_CODE = 'NY';
+
+/** A state's prefilled rate, as the text the input holds. */
+function defaultStateRateText(code) {
+  const s = findState(code);
+  return s ? String(+(s.rate * 100).toFixed(2)) : '';
+}
+
 function loadTaxPrefs() {
   try { return JSON.parse(localStorage.getItem(TAX_PREFS_KEY)) || {}; }
   catch { return {}; }
@@ -3022,6 +3032,12 @@ function useTaxPrefs() {
   const num = (v, strip) => Number(String(v ?? '').replace(strip, '')) || 0;
   const status = prefs.status || 'single';
 
+  // New York unless told otherwise — where this is being used from. `??` not
+  // `||`, so clearing the picker back to "no state" is an answer that sticks
+  // rather than something that springs back to the default.
+  const stateCode = prefs.stateCode ?? DEFAULT_STATE_CODE;
+  const stateRateText = prefs.stateRate ?? defaultStateRateText(stateCode);
+
   // Ask for the number people actually know. "Taxable income after deductions"
   // is the figure the brackets need, but almost nobody has it to hand, and a
   // question that can't be answered gets left blank — which lands the whole
@@ -3042,7 +3058,8 @@ function useTaxPrefs() {
       : enteredIncome,
     // Capped at 20% — above every US state rate, and a typo of "50" for a
     // percentage shouldn't silently produce an absurd bill.
-    stateRate: Math.max(0, Math.min(0.2, num(prefs.stateRate, /[%\s]/g) / 100)),
+    stateRate: Math.max(0, Math.min(0.2, num(stateRateText, /[%\s]/g) / 100)),
+    stateRateText,
     includeNiit: prefs.includeNiit !== false,
     includeRealized: prefs.includeRealized !== false,
     // Whether this money is ever sold again. Stored rather than held in a
@@ -3050,7 +3067,7 @@ function useTaxPrefs() {
     // still remembers on the next visit.
     forever: prefs.forever === true,
     setupDone: prefs.setupDone === true,
-    stateCode: prefs.stateCode || '',
+    stateCode,
     // How long the money is expected to be held before it is sold. Drives the
     // headline break-even and the comparison table, so the projection is
     // reported over the horizon you actually have rather than a stock ten.
@@ -3066,7 +3083,7 @@ function useTaxPrefs() {
  * people's rate, and a dozen states treat capital gains specially. Both facts
  * are said next to the number rather than buried, and the box stays editable.
  */
-function StatePicker({ prefs, setPrefs, stateCode }) {
+function StatePicker({ setPrefs, stateCode, stateRateText }) {
   const picked = findState(stateCode);
   return (
     <>
@@ -3090,7 +3107,7 @@ function StatePicker({ prefs, setPrefs, stateCode }) {
         <label className={styles.inputField}>
           <span>Rate on gains</span>
           <input type="text" inputMode="decimal" placeholder="0"
-            value={prefs.stateRate ?? ''}
+            value={stateRateText}
             onChange={e => setPrefs({ stateRate: e.target.value })} />
         </label>
       </div>
@@ -3109,7 +3126,7 @@ function StatePicker({ prefs, setPrefs, stateCode }) {
 
 function TaxSituationInputs({
   prefs, setPrefs, status, otherIncome, incomeIsGross, enteredIncome, deduction,
-  stateCode, children,
+  stateCode, stateRateText, children,
 }) {
   // Long-term gains stack on top of ordinary income, so on a modest income a
   // large gain can land entirely in the 0% band and the estimate comes out at
@@ -3139,7 +3156,7 @@ function TaxSituationInputs({
         </label>
       </div>
 
-      <StatePicker prefs={prefs} setPrefs={setPrefs} stateCode={stateCode} />
+      <StatePicker setPrefs={setPrefs} stateCode={stateCode} stateRateText={stateRateText} />
 
       {/* pillGroup, not modeRow — modeRow's track is the same white as a card,
           so on this surface the control would be invisible. */}
@@ -3231,7 +3248,7 @@ function TaxSituationInputs({
  */
 function AnalysisSetupDialog({
   prefs, setPrefs, status, otherIncome, incomeIsGross, enteredIncome, deduction,
-  stateRate, forever, stateCode, sellYears, onClose,
+  stateRate, forever, stateCode, stateRateText, sellYears, onClose,
 }) {
   const firstRef = useRef(null);
 
@@ -3337,7 +3354,7 @@ function AnalysisSetupDialog({
             Pick your state and the rate fills in. Most states apply their ordinary income rate to
             gains; eight take nothing at all, and about a dozen treat gains differently from wages.
           </div>
-          <StatePicker prefs={prefs} setPrefs={setPrefs} stateCode={stateCode} />
+          <StatePicker setPrefs={setPrefs} stateCode={stateCode} stateRateText={stateRateText} />
         </div>
 
         {/* 4 — exit assumption */}
@@ -3457,7 +3474,7 @@ function TaxTab({ series }) {
 
   const {
     prefs, setPrefs, status, otherIncome, stateRate, includeNiit, includeRealized,
-    incomeIsGross, enteredIncome, deduction, forever, setupDone, stateCode, sellYears,
+    incomeIsGross, enteredIncome, deduction, forever, setupDone, stateCode, stateRateText, sellYears,
   } = useTaxPrefs();
   const [scope, setScope] = useState('all');
   const [chosen, setChosen] = useState(() => new Set());
@@ -3613,7 +3630,7 @@ function TaxTab({ series }) {
           otherIncome={otherIncome} incomeIsGross={incomeIsGross}
           enteredIncome={enteredIncome} deduction={deduction}
           stateRate={stateRate} forever={forever}
-          stateCode={stateCode} sellYears={sellYears}
+          stateCode={stateCode} stateRateText={stateRateText} sellYears={sellYears}
           onClose={() => setSetupOpen(false)}
         />
       )}
@@ -3667,7 +3684,7 @@ function TaxTab({ series }) {
         </div>
         <TaxSituationInputs prefs={prefs} setPrefs={setPrefs} status={status}
           otherIncome={otherIncome} incomeIsGross={incomeIsGross}
-          enteredIncome={enteredIncome} deduction={deduction} stateCode={stateCode}>
+          enteredIncome={enteredIncome} deduction={deduction} stateCode={stateCode} stateRateText={stateRateText}>
           {realized.lots > 0 && (
             <label className={styles.checkbox}>
               <input type="checkbox" checked={includeRealized}
@@ -4460,7 +4477,7 @@ function SingleStockTab({ series, cpi }) {
   const { trades, income, result, awaitingQuotes } = portfolio;
   const {
     prefs, setPrefs, status, otherIncome, stateRate, includeNiit, includeRealized,
-    incomeIsGross, enteredIncome, deduction, forever, setupDone, stateCode, sellYears,
+    incomeIsGross, enteredIncome, deduction, forever, setupDone, stateCode, stateRateText, sellYears,
   } = useTaxPrefs();
 
   const [symbol, setSymbol] = useState(null);
@@ -4825,7 +4842,7 @@ function SingleStockTab({ series, cpi }) {
           otherIncome={otherIncome} incomeIsGross={incomeIsGross}
           enteredIncome={enteredIncome} deduction={deduction}
           stateRate={stateRate} forever={forever}
-          stateCode={stateCode} sellYears={sellYears}
+          stateCode={stateCode} stateRateText={stateRateText} sellYears={sellYears}
           onClose={() => setSetupOpen(false)}
         />
       )}
@@ -4880,7 +4897,7 @@ function SingleStockTab({ series, cpi }) {
           taxInputs={
             <TaxSituationInputs prefs={prefs} setPrefs={setPrefs} status={status}
               otherIncome={otherIncome} incomeIsGross={incomeIsGross}
-              enteredIncome={enteredIncome} deduction={deduction} stateCode={stateCode} />
+              enteredIncome={enteredIncome} deduction={deduction} stateCode={stateCode} stateRateText={stateRateText} />
           }
         />
       )}
@@ -5020,7 +5037,7 @@ function SingleStockTab({ series, cpi }) {
             </div>
             <TaxSituationInputs prefs={prefs} setPrefs={setPrefs} status={status}
               otherIncome={otherIncome} incomeIsGross={incomeIsGross}
-              enteredIncome={enteredIncome} deduction={deduction} stateCode={stateCode} />
+              enteredIncome={enteredIncome} deduction={deduction} stateCode={stateCode} stateRateText={stateRateText} />
           </div>
 
           <div className={styles.statGrid}>
