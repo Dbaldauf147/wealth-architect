@@ -12,13 +12,20 @@
 // the factor from a percentage, and reading an absolute number tells them
 // nothing about the real one.
 //
+// Identifying text is replaced rather than mangled. Accounts take plausible
+// stand-ins, because a screen full of "Account 3" stops reading as a real
+// financial app. Tickers and merchants take numbered ones — "Stock 1",
+// "Transaction 1" — since a plausible-looking fake ticker is worse than an
+// obviously fake one: someone could take it for a real holding.
+//
 // The honest limits, which the UI states rather than hides:
 //   • It defends against someone reading the screen, not someone opening
 //     devtools or localStorage — the factor is on the machine.
-//   • Ticker symbols stay real. Position *sizes* are hidden, but that someone
-//     holds NVDA is visible. Names of merchants and accounts are replaced.
 //   • Relative information survives by design: that one holding dwarfs another
 //     is exactly what makes the demo worth showing.
+//   • Prices are left true, so a determined viewer could match a per-share
+//     price against the market and recover which stock it is. Sizes stay
+//     hidden either way, which is the part worth protecting.
 
 // Deterministic 32-bit hash, so the same input always yields the same alias
 // within a session and the screen stays stable while someone looks at it.
@@ -43,15 +50,24 @@ const ACCOUNT_NAMES = [
   'Auto Loan', 'Home Loan', 'Student Loan', 'Line of Credit',
 ];
 
-const MERCHANTS = [
-  'Corner Cafe', 'Metro Grocery', 'Riverside Market', 'Union Pharmacy',
-  'Fleet Fuel', 'City Transit', 'Northside Utilities', 'Harbour Insurance',
-  'Bright Fitness', 'Parkview Dental', 'Lakeside Hardware', 'Orchard Bakery',
-  'Summit Outfitters', 'Crescent Diner', 'Willow Books', 'Anchor Supply',
-  'Pinewood Vet', 'Granite Telecom', 'Beacon Streaming', 'Copperfield Deli',
-  'Stonebridge Cleaners', 'Maple Garden Centre', 'Ridgeway Autocare',
-  'Elmwood Pizza', 'Tidewater Coffee', 'Foxglove Florist',
-];
+/**
+ * A numbered stand-in, handed out in the order things are first seen.
+ *
+ * Hashing into a pool would be simpler, but two tickers can hash to the same
+ * bucket — and two positions sharing a name on screen is a worse lie than any
+ * of the numbers. A counter cannot collide, and the map keeps it stable: the
+ * same input gets the same label for as long as the scrambler lives, so the
+ * screen doesn't renumber itself while someone is looking at it.
+ */
+function counterAlias(forward, reverse, prefix, key) {
+  let alias = forward.get(key);
+  if (!alias) {
+    alias = `${prefix} ${forward.size + 1}`;
+    forward.set(key, alias);
+    reverse.set(alias, key);
+  }
+  return alias;
+}
 
 /**
  * Build the transformer for a session.
@@ -90,12 +106,39 @@ export function makeScrambler(seed) {
     return String(1000 + (hash(`digits:${seed}:${num}`) % 9000));
   };
 
+  const descAliases = new Map();
+  const descReal = new Map();
   const description = (desc) => {
     if (!desc) return desc;
-    return pick(MERCHANTS, String(desc).trim().toLowerCase(), seed);
+    return counterAlias(descAliases, descReal, 'Transaction',
+      String(desc).trim().toLowerCase());
   };
 
-  return { factor, money, accountName, accountNumber, description };
+  // Tickers are the one thing here that has to survive the round trip: the
+  // page fetches prices with whatever symbol the data carries, so the alias
+  // has to be reversible at the network boundary. Everything else is
+  // one-way on purpose.
+  const tickerAliases = new Map();
+  const tickerReal = new Map();
+
+  const ticker = (sym) => {
+    if (!sym) return sym;
+    const key = String(sym).trim().toUpperCase();
+    if (!key) return sym;
+    // A position that came through a reorganisation is several tickers joined;
+    // alias each so the parts stay recognisable as parts.
+    if (key.includes(' + ')) return key.split(' + ').map(ticker).join(' + ');
+    return counterAlias(tickerAliases, tickerReal, 'Stock', key);
+  };
+
+  const realTicker = (alias) => {
+    if (!alias) return alias;
+    const key = String(alias).trim();
+    if (key.includes(' + ')) return key.split(' + ').map(realTicker).join(' + ');
+    return tickerReal.get(key) || key;
+  };
+
+  return { factor, money, accountName, accountNumber, description, ticker, realTicker };
 }
 
 const mapValues = (obj, fn) => {
@@ -121,8 +164,10 @@ export function scrambleTransactions(transactions, s) {
     accountNum: s.accountNumber(t.accountNum),
     description: s.description(t.description),
     // `fullDescription` and `notes` are free text the user typed or the bank
-    // supplied; both can name a person or a place.
-    fullDescription: t.fullDescription ? s.description(t.fullDescription) : t.fullDescription,
+    // supplied; both can name a person or a place. It takes the description's
+    // own label rather than a second one, so a row doesn't show two different
+    // numbers for the same transaction.
+    fullDescription: t.fullDescription ? s.description(t.description) : t.fullDescription,
     note: t.note ? '' : t.note,
   }));
 }
@@ -154,20 +199,32 @@ export function scrambleBalanceHistory(history, s) {
  * Share counts move with the same factor as the money, so quantity × the real
  * market price still equals the scaled position value. Leaving prices alone
  * keeps them checkable against the outside world without exposing size.
+ *
+ * Ticker symbols are aliased too. That has one consequence worth knowing: the
+ * page prices positions by fetching whatever symbol the data carries, so those
+ * calls have to translate back through `realTicker` first. Doing it that way
+ * round — scrambling the data, unscrambling at the network — means a page that
+ * forgets shows a broken chart rather than a real ticker.
  */
 export function scrambleRobinhood(stored, s) {
   if (!stored) return stored;
-  const cash = (rows) => (rows || []).map(r => ({ ...r, amount: s.money(r.amount) }));
+  const cash = (rows) => (rows || []).map(r => ({
+    ...r,
+    amount: s.money(r.amount),
+    symbol: r.symbol ? s.ticker(r.symbol) : r.symbol,
+  }));
   return {
     ...stored,
     trades: (stored.trades || []).map(t => ({
       ...t,
+      symbol: s.ticker(t.symbol),
       quantity: s.money(t.quantity),
       amount: s.money(t.amount),
       // price deliberately untouched
     })),
     corporateActions: (stored.corporateActions || []).map(a => ({
       ...a,
+      symbol: a.symbol ? s.ticker(a.symbol) : a.symbol,
       quantity: Number.isFinite(a.quantity) ? s.money(a.quantity) : a.quantity,
       // The trailing-'S' marker carries direction, so rebuild it rather than
       // leaving a raw string that no longer matches the scaled quantity.

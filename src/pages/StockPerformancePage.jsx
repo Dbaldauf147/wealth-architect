@@ -1177,6 +1177,7 @@ function LotTable({ rows, symbol }) {
 }
 
 function TickerDetail({ symbol, rows, summary, income, series, cpi, onClose }) {
+  const { revealTicker } = useData();
   const [loaded, setLoaded] = useState(null);
   // A position that came through a reorganisation spans several tickers whose
   // price histories don't line up — the ticker was renamed mid-life — so there
@@ -1210,13 +1211,15 @@ function TickerDetail({ symbol, rows, summary, income, series, cpi, onClose }) {
   useEffect(() => {
     if (basket) return undefined;
     let cancelled = false;
-    fetchSeries(symbol, startISO, {
+    // Fetched under the real ticker; kept in state under the shown one, which
+    // is what the guard below and every label compare against.
+    fetchSeries(revealTicker(symbol), startISO, {
       onFresh: (fresh) => { if (!cancelled) setLoaded({ symbol, payload: fresh }); },
     })
       .then(({ payload }) => { if (!cancelled) setLoaded({ symbol, payload }); })
       .catch(err => { if (!cancelled) setLoaded({ symbol, error: err.message }); });
     return () => { cancelled = true; };
-  }, [symbol, startISO, basket]);
+  }, [symbol, startISO, basket, revealTicker]);
 
   // Only trust a payload fetched for the ticker currently on screen.
   const ready = loaded?.symbol === symbol ? loaded : null;
@@ -1841,7 +1844,7 @@ function ImportWizard({ existingTrades, existingActions, existingIncome, existin
  * work in practice.
  */
 function usePortfolio(series) {
-  const { robinhoodTrades } = useData();
+  const { robinhoodTrades, revealTicker } = useData();
   const [quoteResult, setQuoteResult] = useState(null);
 
   // Stored trades come back without their derived `t` timestamp — restore it
@@ -1873,14 +1876,22 @@ function usePortfolio(series) {
   useEffect(() => {
     if (!quoteKey) return undefined;
     let cancelled = false;
-    fetchQuotes(quoteKey.split(','), earliestTrade)
+    // In demo mode the symbols in the data are aliases, so the request goes
+    // out under the real ones and the reply is keyed back to the aliases
+    // everything downstream looks up by.
+    const shown = quoteKey.split(',');
+    const backToShown = new Map(shown.map(sym => [revealTicker(sym), sym]));
+    fetchQuotes([...backToShown.keys()], earliestTrade)
+      .then(q => Object.fromEntries(
+        Object.entries(q).map(([sym, quote]) => [backToShown.get(sym) ?? sym, quote]),
+      ))
       // Per-symbol failures come back inside the result, so a rejection here
       // means the whole request died — record an empty set and let the
       // caveats panel report the unpriced lots.
       .catch(() => ({}))
       .then(q => { if (!cancelled) setQuoteResult({ key: quoteKey, quotes: q }); });
     return () => { cancelled = true; };
-  }, [quoteKey, earliestTrade]);
+  }, [quoteKey, earliestTrade, revealTicker]);
 
   // Only trust quotes fetched for the current symbol list — otherwise a fresh
   // import would briefly be priced with the previous import's quotes.
@@ -1927,7 +1938,7 @@ function usePortfolio(series) {
 
   return {
     robinhoodTrades, trades, corporateActions, income, cashRows,
-    quotes, awaitingQuotes, apiSplits, lots, result, external,
+    quotes, awaitingQuotes, apiSplits, lots, result, external, revealTicker,
   };
 }
 
@@ -4474,7 +4485,7 @@ function SwitchCrossoverChart({
  */
 function SingleStockTab({ series, cpi }) {
   const portfolio = usePortfolio(series);
-  const { trades, income, result, awaitingQuotes } = portfolio;
+  const { trades, income, result, awaitingQuotes, revealTicker } = portfolio;
   const {
     prefs, setPrefs, status, otherIncome, stateRate, includeNiit, includeRealized,
     incomeIsGross, enteredIncome, deduction, forever, setupDone, stateCode, stateRateText, sellYears,
@@ -4572,11 +4583,11 @@ function SingleStockTab({ series, cpi }) {
     const accept = (payload) => {
       if (!cancelled) setMarketPayload({ symbol: sym, payload });
     };
-    fetchSeries(sym, start, { onFresh: accept })
+    fetchSeries(revealTicker(sym), start, { onFresh: accept })
       .then(({ payload }) => accept(payload))
       .catch(err => { if (!cancelled) setMarketPayload({ symbol: sym, error: err.message }); });
     return () => { cancelled = true; };
-  }, [active?.symbol, isBasket, nowT]);
+  }, [active?.symbol, isBasket, nowT, revealTicker]);
 
   const marketSeries = useMemo(() => {
     if (marketPayload?.symbol !== active?.symbol || !marketPayload?.payload) return null;

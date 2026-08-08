@@ -846,6 +846,11 @@ export function DataProvider({ children }) {
     [privacyMode, privacySeed],
   );
 
+  const revealTicker = useCallback(
+    (sym) => (scrambler ? scrambler.realTicker(sym) : sym),
+    [scrambler],
+  );
+
   const transactions = useMemo(
     () => (scrambler ? scrambleTransactions(visibleTransactions, scrambler) : visibleTransactions),
     [visibleTransactions, scrambler],
@@ -1886,6 +1891,10 @@ export function DataProvider({ children }) {
     weeklyEmailDay,
     hiddenTransactions: shownHiddenTransactions,
     privacyMode,
+    // Demo mode aliases ticker symbols, so anything fetching prices has to
+    // turn a displayed symbol back into the real one first. Identity when
+    // demo mode is off, which keeps the call sites free of conditionals.
+    revealTicker,
     hiddenCount: hiddenIds.size,
   }), [
     transactions,
@@ -1917,6 +1926,7 @@ export function DataProvider({ children }) {
     weeklyEmailDay,
     hiddenIds,
     privacyMode,
+    revealTicker,
     shownBalanceHistory,
     shownRobinhood,
     shownCustomAssets,
