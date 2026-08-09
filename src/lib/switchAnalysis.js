@@ -74,14 +74,21 @@ export function requiredReturn({
  */
 export function projectPaths({
   value, basis, taxToSell, indexReturn, stockReturn,
-  futureTaxRate = 0.15, forever = false, years = 20,
+  futureTaxRate = 0.15, forever = false, years = 20, gross = false,
 }) {
   const proceeds = value - taxToSell;
   if (!(value > 0) || !(proceeds > 0) || !(years > 0)) return null;
   if (!Number.isFinite(stockReturn) || !Number.isFinite(indexReturn)) return null;
 
   const tau = Math.min(Math.max(futureTaxRate, 0), 0.9);
-  const afterTax = (gross, costBasis) => (forever ? gross : gross - tau * (gross - costBasis));
+  // `gross` reports the balance actually compounding rather than what it would
+  // net if cashed out. That makes the tax paid to switch visible as a drop at
+  // year zero, which the after-tax view hides — both paths owe that tax
+  // eventually, so after tax they start level. It is the honest picture of the
+  // money at work and a flattering one for keeping, since the gain the keep
+  // side is still carrying goes untaxed here. Both facts belong on screen.
+  const untaxed = forever || gross;
+  const afterTax = (raw, costBasis) => (untaxed ? raw : raw - tau * (raw - costBasis));
 
   const pts = [];
   for (let n = 0; n <= years; n++) {

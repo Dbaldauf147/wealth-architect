@@ -4267,7 +4267,7 @@ function MarginBars({ rows, onSelect, selected }) {
  */
 function SwitchCrossoverChart({
   symbol, value, basis, taxToSell, indexReturn, scenarios, activeKey,
-  futureTaxRate, forever, years = 20,
+  futureTaxRate, forever, years = 20, showGross = false,
 }) {
   const W = 880, H = 340;
   const pad = { top: 18, right: 156, bottom: 40, left: 72 };
@@ -4280,13 +4280,14 @@ function SwitchCrossoverChart({
         ...sc,
         path: projectPaths({
           value, basis, taxToSell, indexReturn, stockReturn: sc.rate,
-          futureTaxRate, forever, years,
+          futureTaxRate, forever, years, gross: showGross,
         }),
       }))
       .filter(r => r.path);
     if (!runs.length) return null;
     return { runs, active: runs.find(r => r.key === activeKey) || runs[0] };
-  }, [scenarios, activeKey, value, basis, taxToSell, indexReturn, futureTaxRate, forever, years]);
+  }, [scenarios, activeKey, value, basis, taxToSell, indexReturn, futureTaxRate,
+    forever, years, showGross]);
 
   if (!model) return <div className={styles.emptyState}>Nothing to project.</div>;
 
@@ -4418,6 +4419,21 @@ function SwitchCrossoverChart({
         <path d={line('keep')} fill="none" stroke="var(--color-secondary)"
           strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" />
 
+        {/* The money handed over to switch, drawn where it happens. Only shows
+            where the two lines genuinely start apart — after tax they start
+            level, because both paths owe that bill eventually. */}
+        {Math.abs(pts[0].keep - pts[0].sell) > Math.abs(value) * 0.002 && (
+          <g>
+            <line x1={x(0)} y1={y(pts[0].keep)} x2={x(0)} y2={y(pts[0].sell)}
+              stroke={LOSE} strokeWidth={2.5} strokeLinecap="round" />
+            <circle cx={x(0)} cy={y(pts[0].sell)} r={3.5} fill={LOSE} />
+            <text x={x(0) + 9} y={(y(pts[0].keep) + y(pts[0].sell)) / 2 + 4}
+              fontSize={11} fontWeight={700} fill={LOSE} fontFamily="var(--font-headline)">
+              −{fmtAxis(Math.abs(pts[0].keep - pts[0].sell))} paid in tax
+            </text>
+          </g>
+        )}
+
         {crossN != null && (
           <g>
             <line x1={x(crossN)} y1={pad.top} x2={x(crossN)} y2={H - pad.bottom}
@@ -4508,6 +4524,9 @@ function SingleStockTab({ series, cpi }) {
   // The ticker's own decade by default: a projection wants what the security
   // does, not what your entry points did.
   const [baseline, setBaseline] = useState('market');
+  // Default to the view that shows the tax being paid; the after-tax view is
+  // the rigorous one but its whole point is that nothing visible happens today.
+  const [chartBasis, setChartBasis] = useState('invested');
 
   const nowT = series.lastT;
   const taxYear = new Date(nowT).getUTCFullYear();
@@ -5251,13 +5270,45 @@ function SingleStockTab({ series, cpi }) {
                   The two futures, side by side
                 </div>
                 <div className={styles.cardSub}>
-                  Both lines are what you would actually have <strong>after tax</strong> if you
-                  cashed out in that year, which is the same measure the table below solves on.
-                  Selling costs {fmt(Math.abs(tax.cost))} up front, so the dashed line starts from
-                  a smaller stake — the shaded band is how far apart the two choices are, and where
-                  the lines cross is the moment the index has made that tax back.
+                  The shaded band is how far apart the two choices are, and where the lines cross
+                  is the moment the index has made the tax back. What the lines <em>measure</em> is
+                  yours to pick, and the two answers look different on purpose.
                 </div>
               </div>
+            </div>
+
+            <div className={styles.pillGroup} style={{ flexWrap: 'wrap', marginBottom: 12 }}>
+              {[
+                { id: 'invested', label: 'The stake actually invested' },
+                { id: 'afterTax', label: 'After tax, if you cashed out' },
+              ].map(o => (
+                <button key={o.id} type="button"
+                  className={`${styles.pill} ${chartBasis === o.id ? styles.pillActive : ''}`}
+                  onClick={() => setChartBasis(o.id)}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+
+            <div className={styles.cardSub} style={{ marginBottom: 14 }}>
+              {chartBasis === 'invested' ? (
+                <>
+                  <strong>The money at work.</strong> Selling hands over{' '}
+                  {fmt(Math.abs(tax.cost))} today, so the dashed line starts that much lower and
+                  compounds from a smaller base — the drop is marked at the left edge. Read this
+                  one to see what the tax costs you. It does flatter keeping, because the gain{' '}
+                  {active.symbol} is still carrying is untaxed here and would be owed on the way
+                  out; the other view settles that.
+                </>
+              ) : (
+                <>
+                  <strong>What you could spend.</strong> Both paths pay tax when they finally
+                  sell, so they start level and no drop is visible — that is the honest point:
+                  selling today costs you nothing today, it costs you the compounding on the{' '}
+                  {fmt(Math.abs(tax.cost))} that leaves years before it had to. This is the
+                  measure the break-even table below solves on, so the two agree.
+                </>
+              )}
             </div>
             <SwitchCrossoverChart
               symbol={active.symbol}
@@ -5270,6 +5321,7 @@ function SingleStockTab({ series, cpi }) {
               futureTaxRate={futureTaxRate}
               forever={forever}
               years={20}
+              showGross={chartBasis === 'invested'}
             />
 
             <div className={styles.tableWrap} style={{ marginTop: 16 }}>
@@ -5321,13 +5373,14 @@ function SingleStockTab({ series, cpi }) {
               </table>
             </div>
             <div className={styles.cardSub} style={{ marginTop: 12 }}>
-              {forever
-                ? `Because this money is never sold again, the gap you see at year zero is the tax `
-                  + `itself — ${fmt(Math.abs(tax.cost))} that leaves and never compounds for you again.`
-                : `Both paths pay tax when they finally sell, so at year zero they are worth the `
-                  + `same and no gap is visible. That is the point: selling today costs you nothing `
-                  + `today — it costs you the compounding on the ${fmt(Math.abs(tax.cost))} that `
-                  + `goes to tax years before it had to.`}
+              {chartBasis === 'invested' || forever
+                ? `The gap at year zero is the tax itself — ${fmt(Math.abs(tax.cost))} that leaves `
+                  + `today and never compounds for you again. Everything after it is that smaller `
+                  + `stake growing at the index's rate against the whole one growing at `
+                  + `${active.symbol}'s.`
+                : `At year zero the two are worth the same, because both paths owe that tax `
+                  + `whenever they sell. Switch to the other view to see the `
+                  + `${fmt(Math.abs(tax.cost))} leave.`}
             </div>
           </div>
 
