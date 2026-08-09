@@ -1159,7 +1159,13 @@ const TransactionRow = memo(function TransactionRow({
       {visibleColumns.has('date') && <td className={styles.dateCell}>
         {(() => {
           const isoVal = toIsoDate(t.date);
-          const fallbackKey = `${t.date || ''}|${(t.description || '').trim()}|${t.amount}`;
+          // The shared helper rather than a second copy of the format, and off
+          // the *original* date where one exists: a row already carrying an
+          // override shows its new date, but the raw row this is looked up
+          // against still has the old one. Building the key from what's on
+          // screen would file the second edit under a key nothing reads, so
+          // moving a date twice would silently stop working after the first.
+          const overrideKey = txnKey(t);
           const isOverridden = !!t.originalDate && t.originalDate !== t.date;
           const tooltip = isOverridden
             ? `Original: ${formatDate(t.originalDate)}\nClick to edit (current: ${formatDate(t.date)})`
@@ -1190,7 +1196,7 @@ const TransactionRow = memo(function TransactionRow({
                 value={isoVal}
                 onChange={e => {
                   if (!e.target.value) return;
-                  updateTransactionDate(t.transactionId, e.target.value, fallbackKey);
+                  updateTransactionDate(t.transactionId, e.target.value, overrideKey);
                   flashSaved();
                 }}
                 style={{
