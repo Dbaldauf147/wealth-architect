@@ -1,9 +1,25 @@
 import { useState, useMemo, useRef, useEffect, useCallback, useDeferredValue, memo } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { normalizeDesc } from '../lib/categorize';
+import { findRentCollisions, txnKey } from '../lib/rentDuplicates';
 import styles from './TransactionsPage.module.css';
 
 const PAGE_SIZE = 50;
+
+// Collisions the user has looked at and decided are real — two tenants, or a
+// tenant catching up. Kept on the device rather than in the synced settings:
+// it is a record of having read a warning, not a fact about the finances.
+const RENT_DISMISS_KEY = 'rentDupeDismissed:v1';
+
+function loadRentDismissed() {
+  try { return new Set(JSON.parse(localStorage.getItem(RENT_DISMISS_KEY)) || []); }
+  catch { return new Set(); }
+}
+
+function saveRentDismissed(set) {
+  try { localStorage.setItem(RENT_DISMISS_KEY, JSON.stringify([...set])); }
+  catch { /* private mode — the warning simply comes back */ }
+}
 
 // Stable empty array so non-editing rows receive a referentially constant prop
 // (lets the memoized TransactionRow skip re-rendering on unrelated edits).
@@ -1228,9 +1244,126 @@ const TransactionRow = memo(function TransactionRow({
   );
 });
 
+/**
+ * Two rent payments credited to one month.
+ *
+ * Shown rather than fixed, because the same data has two readings: a payment
+ * that drifted across a month boundary wants moving, and two tenants — or a
+ * tenant clearing arrears — is genuinely two payments and must be left alone.
+ * Both payments are laid out with their dates and amounts so the difference is
+ * visible before anything is changed.
+ */
+function RentCollisionNotice({ collisions, onMove, onDismiss }) {
+  if (!collisions.length) return null;
+
+  const money = (n) => new Intl.NumberFormat('en-US', {
+    style: 'currency', currency: 'USD', maximumFractionDigits: 0,
+  }).format(Number(n) || 0);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
+      {collisions.map(c => (
+        <div key={c.key} style={{
+          padding: '14px 16px',
+          background: 'rgba(232, 163, 23, 0.07)',
+          border: '1px solid rgba(232, 163, 23, 0.3)',
+          borderRadius: 'var(--radius-xl)',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6,
+            fontFamily: 'var(--font-headline)', fontSize: 13, fontWeight: 700,
+            color: 'var(--color-text-primary)',
+          }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 17 }}>event_repeat</span>
+            {c.payments.length} rent payments land in {c.month}
+          </div>
+
+          <div style={{
+            fontSize: 12.5, lineHeight: 1.55, color: 'var(--color-text-secondary)',
+            maxWidth: '78ch', marginBottom: 10,
+          }}>
+            {money(c.total)} of rent is credited to {c.month}, which doubles that month
+            and leaves a hole in another. Moving the later one forward puts it in{' '}
+            <strong>{c.suggestedMonth}</strong>, keeping the same day of the month.
+            {' '}If instead the <em>earlier</em> one is last month&apos;s rent arriving late, edit
+            its date in the table below — and if these really are two separate payments,
+            dismiss this.
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
+            {c.payments.map((p) => {
+              const isLater = p === c.later;
+              return (
+                <div key={txnKey(p)} style={{
+                  display: 'flex', alignItems: 'baseline', gap: 10,
+                  fontSize: 12.5, color: 'var(--color-text-secondary)',
+                }}>
+                  <span style={{
+                    fontFamily: 'var(--font-headline)', fontWeight: 700, minWidth: 92,
+                    color: isLater ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
+                  }}>
+                    {formatDate(p.date)}
+                  </span>
+                  <span style={{ fontWeight: 600 }}>{money(p.amount)}</span>
+                  <span style={{ color: 'var(--color-text-tertiary)' }}>
+                    {p.description || '—'}
+                  </span>
+                  {isLater && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
+                      textTransform: 'uppercase', color: 'var(--color-warning, #e8a317)',
+                    }}>
+                      the later one
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => onMove(c)}
+              disabled={!c.suggestedDate}
+              style={{
+                padding: '7px 14px', fontFamily: 'var(--font-headline)', fontSize: 12,
+                fontWeight: 600, color: '#fff', background: 'var(--color-secondary)',
+                border: '1px solid var(--color-secondary)', borderRadius: 'var(--radius-lg)',
+                cursor: c.suggestedDate ? 'pointer' : 'not-allowed',
+              }}
+            >
+              Move {formatDate(c.later.date)} → {formatDate(c.suggestedDate)}
+            </button>
+            <button
+              type="button"
+              onClick={() => onDismiss(c.key)}
+              style={{
+                padding: '7px 14px', fontFamily: 'var(--font-headline)', fontSize: 12,
+                fontWeight: 600, color: 'var(--color-text-secondary)',
+                background: 'var(--color-surface)', border: 'var(--border-medium)',
+                borderRadius: 'var(--radius-lg)', cursor: 'pointer',
+              }}
+            >
+              These are both real
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function TransactionsPage() {
   const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View } = useData();
   const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns, setActiveTxnView, setShowAccounts, setPareto8020View } = useDataActions();
+  const [rentDismissed, setRentDismissed] = useState(loadRentDismissed);
+  // Run over every transaction, not the filtered view — a rent clash is a fact
+  // about the ledger and shouldn't disappear because the search box is narrow.
+  const rentCollisions = useMemo(
+    () => findRentCollisions(transactions, (k) => rentDismissed.has(k)),
+    [transactions, rentDismissed],
+  );
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
   const subDropdownRef = useRef(null);
@@ -2332,6 +2465,21 @@ export function TransactionsPage() {
           </button>
         </div>
       </div>
+
+      <RentCollisionNotice
+        collisions={rentCollisions}
+        onMove={(c) => {
+          // The same key the date cell writes, so a move made here and one made
+          // by hand in the table are the same override rather than two.
+          updateTransactionDate(c.later.transactionId, c.suggestedDate, txnKey(c.later));
+        }}
+        onDismiss={(key) => setRentDismissed(prev => {
+          const next = new Set(prev);
+          next.add(key);
+          saveRentDismissed(next);
+          return next;
+        })}
+      />
 
       {/* Filter Bar */}
       {showAccounts && (
