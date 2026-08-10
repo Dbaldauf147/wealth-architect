@@ -4267,7 +4267,7 @@ function MarginBars({ rows, onSelect, selected }) {
  */
 function SwitchCrossoverChart({
   symbol, value, basis, taxToSell, indexReturn, scenarios, activeKey,
-  futureTaxRate, forever, years = 20, showGross = false,
+  futureTaxRate, forever, years = 20, showGross = false, holdYears = null,
 }) {
   const W = 880, H = 340;
   const pad = { top: 18, right: 156, bottom: 40, left: 72 };
@@ -4310,11 +4310,14 @@ function SwitchCrossoverChart({
   // by who is actually ahead across it rather than by an assumption about
   // which way the crossing runs — with a higher future rate entered, the
   // switch can start ahead and fall behind, which is the reverse of the usual.
+  // Searched rather than indexed: the projection samples more finely over a
+  // short horizon, so a point's position in the array is no longer its year.
   const at = (n) => {
-    const i = Math.min(Math.floor(n), pts.length - 2);
-    const f = n - i;
-    const a = pts[i];
-    const b = pts[i + 1];
+    let i = pts.findIndex(p => p.n >= n);
+    if (i <= 0) i = 1;
+    const a = pts[i - 1];
+    const b = pts[i];
+    const f = b.n === a.n ? 0 : (n - a.n) / (b.n - a.n);
     return { n, keep: a.keep + (b.keep - a.keep) * f, sell: a.sell + (b.sell - a.sell) * f };
   };
 
@@ -4333,7 +4336,24 @@ function SwitchCrossoverChart({
   };
 
   const last = pts[pts.length - 1];
-  const tickYears = [0, 5, 10, 15, 20].filter(t => t <= years);
+  // Ticks that suit the span on screen: months across a single year, whole
+  // years across a few, five-year marks across two decades.
+  const tickYears = (
+    years <= 1 ? [0, 0.25, 0.5, 0.75, 1]
+      : years <= 3 ? [0, 1, 2, 3]
+        : years <= 5 ? [0, 1, 2, 3, 4, 5]
+          : years <= 10 ? [0, 2, 4, 6, 8, 10]
+            : [0, 5, 10, 15, 20]
+  ).filter(t => t <= years);
+
+  // One hit target per sample, as wide as the gap between them.
+  const hoverW = innerW / Math.max(pts.length - 1, 1);
+
+  const tickLabel = (t) => {
+    if (t === 0) return 'today';
+    if (t < 1) return `${Math.round(t * 12)}m`;
+    return `${t}y`;
+  };
 
   // Clamp each end label into the frame, then walk them in vertical order
   // pushing apart anything closer than a line height.
@@ -4390,7 +4410,7 @@ function SwitchCrossoverChart({
         {tickYears.map(t => (
           <text key={t} x={x(t)} y={H - 14} textAnchor="middle" fontSize={10.5}
             fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)">
-            {t === 0 ? 'today' : `${t}y`}
+            {tickLabel(t)}
           </text>
         ))}
 
@@ -4434,6 +4454,21 @@ function SwitchCrossoverChart({
           </g>
         )}
 
+        {/* Where the hold you told us about lands, so a wider view still shows
+            which part of the line is the part you asked about. */}
+        {holdYears != null && holdYears > 0 && holdYears < years && (
+          <g>
+            <line x1={x(holdYears)} y1={pad.top} x2={x(holdYears)} y2={H - pad.bottom}
+              stroke="var(--color-secondary)" strokeOpacity={0.3} strokeWidth={1}
+              strokeDasharray="2 4" />
+            <text x={x(holdYears) + 5} y={H - pad.bottom - 6} fontSize={10}
+              fill="var(--color-secondary)" fillOpacity={0.85}
+              fontFamily="var(--font-headline)" fontWeight={600}>
+              your {holdYears}y hold
+            </text>
+          </g>
+        )}
+
         {crossN != null && (
           <g>
             <line x1={x(crossN)} y1={pad.top} x2={x(crossN)} y2={H - pad.bottom}
@@ -4460,10 +4495,13 @@ function SwitchCrossoverChart({
 
         {/* Hover targets, one per year. */}
         {pts.map(p => (
-          <rect key={p.n} x={Math.max(pad.left, x(p.n) - innerW / years / 2)} y={pad.top}
-            width={innerW / years} height={innerH} fill="transparent">
+          <rect key={p.n} x={Math.max(pad.left, x(p.n) - hoverW / 2)} y={pad.top}
+            width={hoverW} height={innerH} fill="transparent">
             <title>
-              {`Year ${p.n}\nKeep ${symbol}: ${fmt(p.keep)}\nSell and buy the S&P: ${fmt(p.sell)}`}
+              {`${p.n === 0 ? 'Today' : p.n < 1
+                ? `${Math.round(p.n * 12)} months from now`
+                : `${p.n % 1 === 0 ? p.n : p.n.toFixed(1)} years from now`}`}
+              {`\nKeep ${symbol}: ${fmt(p.keep)}\nSell and buy the S&P: ${fmt(p.sell)}`}
               {`\n${p.sell >= p.keep ? 'switching ahead by ' : 'keeping ahead by '}${fmt(Math.abs(p.sell - p.keep))}`}
             </title>
           </rect>
@@ -4527,6 +4565,10 @@ function SingleStockTab({ series, cpi }) {
   // Default to the view that shows the tax being paid; the after-tax view is
   // the rigorous one but its whole point is that nothing visible happens today.
   const [chartBasis, setChartBasis] = useState('invested');
+  // How far out the chart draws. A view control, not an answer — it leaves the
+  // hold you stated alone, so zooming in to look at year one doesn't quietly
+  // rewrite the horizon the headline and the table are reporting on.
+  const [chartYears, setChartYears] = useState(20);
 
   const nowT = series.lastT;
   const taxYear = new Date(nowT).getUTCFullYear();
@@ -5277,17 +5319,29 @@ function SingleStockTab({ series, cpi }) {
               </div>
             </div>
 
-            <div className={styles.pillGroup} style={{ flexWrap: 'wrap', marginBottom: 12 }}>
-              {[
-                { id: 'invested', label: 'The stake actually invested' },
-                { id: 'afterTax', label: 'After tax, if you cashed out' },
-              ].map(o => (
-                <button key={o.id} type="button"
-                  className={`${styles.pill} ${chartBasis === o.id ? styles.pillActive : ''}`}
-                  onClick={() => setChartBasis(o.id)}>
-                  {o.label}
-                </button>
-              ))}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+              <div className={styles.pillGroup} style={{ flexWrap: 'wrap' }}>
+                {[
+                  { id: 'invested', label: 'The stake actually invested' },
+                  { id: 'afterTax', label: 'After tax, if you cashed out' },
+                ].map(o => (
+                  <button key={o.id} type="button"
+                    className={`${styles.pill} ${chartBasis === o.id ? styles.pillActive : ''}`}
+                    onClick={() => setChartBasis(o.id)}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              <div className={styles.pillGroup} style={{ flexWrap: 'wrap' }}>
+                {HORIZONS.map(y => (
+                  <button key={y} type="button"
+                    className={`${styles.pill} ${chartYears === y ? styles.pillActive : ''}`}
+                    onClick={() => setChartYears(y)}
+                    title={`Draw the next ${y} year${y === 1 ? '' : 's'}`}>
+                    {y}y
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className={styles.cardSub} style={{ marginBottom: 14 }}>
@@ -5320,8 +5374,9 @@ function SingleStockTab({ series, cpi }) {
               activeKey={scenario}
               futureTaxRate={futureTaxRate}
               forever={forever}
-              years={20}
+              years={chartYears}
               showGross={chartBasis === 'invested'}
+              holdYears={horizon}
             />
 
             <div className={styles.tableWrap} style={{ marginTop: 16 }}>

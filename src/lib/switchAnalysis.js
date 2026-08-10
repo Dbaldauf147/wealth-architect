@@ -90,8 +90,16 @@ export function projectPaths({
   const untaxed = forever || gross;
   const afterTax = (raw, costBasis) => (untaxed ? raw : raw - tau * (raw - costBasis));
 
+  // Yearly steps are plenty across two decades and far too coarse across one
+  // year, where they'd draw a two-point straight line through what is actually
+  // a curve — and put the crossing wherever that line happened to fall. Aim
+  // for a similar number of samples whatever the span.
+  const steps = Math.max(20, Math.min(240, Math.ceil(years * 12)));
+  const step = years / steps;
+
   const pts = [];
-  for (let n = 0; n <= years; n++) {
+  for (let i = 0; i <= steps; i++) {
+    const n = i === steps ? years : i * step;
     pts.push({
       n,
       keep: afterTax(value * Math.pow(1 + stockReturn, n), basis),
@@ -116,13 +124,16 @@ export function projectPaths({
       const b = pts[i].sell - pts[i].keep;
       if (Math.abs(b) > eps && Math.sign(b) !== firstSign) {
         const a = pts[i - 1].sell - pts[i - 1].keep;
-        crossN = pts[i - 1].n + (b - a === 0 ? 0 : (0 - a) / (b - a));
+        // Interpolated across this pair's own span, not a step of one year —
+        // the sampling changes with the horizon.
+        const span = pts[i].n - pts[i - 1].n;
+        crossN = pts[i - 1].n + (b - a === 0 ? 0 : span * ((0 - a) / (b - a)));
         break;
       }
     }
   }
 
-  return { pts, crossN, proceeds, last: pts[pts.length - 1] };
+  return { pts, crossN, proceeds, step, last: pts[pts.length - 1] };
 }
 
 /** The same question across several horizons. */
