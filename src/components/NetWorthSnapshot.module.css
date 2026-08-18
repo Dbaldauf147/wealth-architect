@@ -1,0 +1,445 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.empty {
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  line-height: 1.7;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+/* ── Month + tax bar ─────────────────────────────────────────────────── */
+
+.monthBar {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.monthPick,
+.taxPick {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.taxPick {
+  margin-left: auto;
+}
+
+.monthPickLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.select {
+  font-family: var(--font-headline);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-medium);
+  border-radius: var(--radius-lg);
+  padding: 7px 10px;
+  cursor: pointer;
+  min-width: 150px;
+}
+
+.vs {
+  color: var(--color-text-tertiary);
+  font-size: 18px;
+  padding-bottom: 9px;
+}
+
+.taxInputWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--color-surface);
+  border: var(--border-medium);
+  border-radius: var(--radius-lg);
+  padding: 7px 10px;
+}
+
+.taxInput {
+  width: 48px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: var(--font-headline);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  text-align: right;
+}
+
+.taxSuffix {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Cards ───────────────────────────────────────────────────────────── */
+
+.topGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.sideCol {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.card {
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xs);
+  padding: 18px 20px;
+}
+
+.cardTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.cardTitle {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin-bottom: 10px;
+}
+
+.cardTitleRow .cardTitle {
+  margin-bottom: 0;
+}
+
+/* ── Summary table ───────────────────────────────────────────────────── */
+
+.summaryTable,
+.miniTable,
+.accountTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.summaryTable th,
+.accountTable th {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  padding: 0 10px 8px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: var(--border-subtle);
+}
+
+.summaryTable td,
+.accountTable td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(198, 198, 205, 0.18);
+}
+
+.summaryTable td:first-child,
+.summaryTable th:first-child,
+.accountTable td:first-child,
+.accountTable th:first-child {
+  padding-left: 0;
+}
+
+.summaryTable td:last-child,
+.summaryTable th:last-child,
+.accountTable td:last-child,
+.accountTable th:last-child {
+  padding-right: 0;
+}
+
+.rowLabel {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-headline);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.center {
+  text-align: center;
+}
+
+.dim,
+td.dim {
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+}
+
+/* Memo rows break down the Liquid Assets line rather than adding to it. */
+.memoRow .rowLabel {
+  padding-left: 16px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.memoRow td {
+  background: var(--color-surface-hover);
+}
+
+.totalRow td {
+  border-top: 2px solid var(--color-text-primary);
+  border-bottom: none;
+  padding-top: 10px;
+  font-size: 15px;
+}
+
+.totalRow .rowLabel,
+.totalRow .num {
+  font-weight: 800;
+  font-family: var(--font-headline);
+}
+
+.belowRow td {
+  color: var(--color-text-secondary);
+  border-bottom: none;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.belowRow:first-of-type td {
+  padding-top: 10px;
+}
+
+.strongRow td {
+  color: var(--color-text-primary);
+}
+
+.strongRow .rowLabel,
+.strongRow .num {
+  font-weight: 800;
+}
+
+/* Declared last, and scoped to the cell, so they outrank the row-level
+   colours above — `.belowRow td` would otherwise grey out every change
+   below the Total rule. */
+.up,
+td.up { color: var(--color-success); }
+.down,
+td.down { color: var(--color-error); }
+.flat,
+td.flat { color: var(--color-text-tertiary); }
+
+.footnote {
+  margin-top: 12px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Side cards ──────────────────────────────────────────────────────── */
+
+.miniTable td {
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(198, 198, 205, 0.18);
+  color: var(--color-text-secondary);
+}
+
+.miniTable tr:last-child td {
+  border-bottom: none;
+}
+
+.miniTotal td {
+  border-top: 2px solid var(--color-text-primary);
+  border-bottom: none;
+  padding-top: 9px;
+  font-weight: 800;
+  font-size: 15px;
+  color: var(--color-text-primary);
+  font-family: var(--font-headline);
+}
+
+.earmarkRow td:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.earmarkActions {
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.earmarkRow:hover .earmarkActions {
+  opacity: 1;
+}
+
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-lg);
+  padding: 3px;
+  line-height: 1;
+}
+
+.iconBtn:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text-primary);
+}
+
+.linkBtn {
+  border: none;
+  background: transparent;
+  color: var(--color-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.earmarkForm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.earmarkInput {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-body);
+  font-size: 13px;
+  padding: 5px 8px;
+  border: var(--border-medium);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+.earmarkAmount {
+  flex: 0 0 84px;
+  text-align: right;
+  font-family: var(--font-headline);
+}
+
+.leftover {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: var(--border-subtle);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+/* ── Account table ───────────────────────────────────────────────────── */
+
+.tableScroll {
+  overflow-x: auto;
+}
+
+.accountTable {
+  min-width: 780px;
+}
+
+.accountName {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.staleTag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-alt);
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.excludedRow {
+  opacity: 0.5;
+}
+
+.cellSelect {
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  padding: 3px 4px;
+  cursor: pointer;
+  max-width: 140px;
+}
+
+.cellSelect:hover,
+.cellSelect:focus {
+  border-color: rgba(198, 198, 205, 0.5);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  outline: none;
+}
+
+.yes {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+
+.no {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-warning);
+}
+
+.accountTable tfoot td {
+  border-top: 2px solid var(--color-text-primary);
+  border-bottom: none;
+  padding-top: 10px;
+  font-weight: 800;
+  font-family: var(--font-headline);
+  color: var(--color-text-primary);
+}
+
+@media (max-width: 1000px) {
+  .topGrid { grid-template-columns: minmax(0, 1fr); }
+  .taxPick { margin-left: 0; }
+}

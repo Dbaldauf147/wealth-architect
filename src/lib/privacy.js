@@ -261,6 +261,8 @@ export function scrambleAccountMaps(maps, s) {
     accountNumbers: rekey(maps.accountNumbers, s.accountName, s.accountNumber),
     accountGroups: rekey(maps.accountGroups, s.accountName),
     assetClasses: rekey(maps.assetClasses, s.accountName),
+    netWorthCategories: rekey(maps.netWorthCategories, s.accountName),
+    netWorthLiquidCategories: rekey(maps.netWorthLiquidCategories, s.accountName),
   };
 }
 

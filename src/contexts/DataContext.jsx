@@ -68,6 +68,28 @@ const loadAccountGroups = () => loadJSON('accountGroups', {});
 const saveAccountGroups = (v) => saveJSON('accountGroups', v);
 const loadAssetClasses = () => loadJSON('assetClasses', {});
 const saveAssetClasses = (v) => saveJSON('assetClasses', v);
+// Net Worth snapshot labels. `netWorthCategories` maps an account name to
+// Retirement / Liquid Assets / Non Liquid Assets / Liabilities / Excluded;
+// `netWorthLiquidCategories` splits the liquid ones into Stocks - House /
+// Stocks / Cash. Both hold only what the user explicitly set — the page falls
+// back to a guess for anything unlisted, so an empty map still renders.
+const loadNetWorthCategories = () => loadJSON('netWorthCategories', {});
+const saveNetWorthCategories = (v) => saveJSON('netWorthCategories', v);
+const loadNetWorthLiquidCategories = () => loadJSON('netWorthLiquidCategories', {});
+const saveNetWorthLiquidCategories = (v) => saveJSON('netWorthLiquidCategories', v);
+// Snapshot settings: the tax haircut applied to the "Stocks - House" bucket,
+// and the earmarks (wedding, ring, …) charged against the investable total.
+const DEFAULT_NET_WORTH_PREFS = { saleTaxRate: 0.10, earmarks: [] };
+const loadNetWorthPrefs = () => {
+  const stored = loadJSON('netWorthPrefs', null);
+  if (!stored || typeof stored !== 'object') return { ...DEFAULT_NET_WORTH_PREFS };
+  return {
+    ...DEFAULT_NET_WORTH_PREFS,
+    ...stored,
+    earmarks: Array.isArray(stored.earmarks) ? stored.earmarks : [],
+  };
+};
+const saveNetWorthPrefs = (v) => saveJSON('netWorthPrefs', v);
 
 // Custom user-entered assets and liabilities — for things Tiller doesn't
 // see (real estate, vehicles, private holdings, etc.). The values used to
@@ -371,6 +393,8 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.accountGroups, remote.accountGroups],
     [merged.cardMap, remote.cardMap],
     [merged.assetClasses, remote.assetClasses],
+    [merged.netWorthCategories, remote.netWorthCategories],
+    [merged.netWorthLiquidCategories, remote.netWorthLiquidCategories],
     [merged.paymentReminderPrefs, remote.paymentReminderPrefs],
     [merged.calendarSyncPrefs, remote.calendarSyncPrefs],
     [merged.savedTxnViews, remote.savedTxnViews],
@@ -388,6 +412,10 @@ function mergedDiffersFromRemote(merged, remote) {
   }
   // Ordered email-section config — compare by serialized order + enabled flags.
   if (JSON.stringify(merged.weeklyEmailSections) !== JSON.stringify(Array.isArray(remote.weeklyEmailSections) ? remote.weeklyEmailSections : null)) {
+    return true;
+  }
+  // Net Worth snapshot settings — single object, compare serialized.
+  if (JSON.stringify(merged.netWorthPrefs ?? null) !== JSON.stringify(remote.netWorthPrefs ?? null)) {
     return true;
   }
   // Short-term loan — single object, compare serialized.
@@ -417,7 +445,8 @@ function mergedDiffersFromRemote(merged, remote) {
 const EMPTY_LOCALS = {
   categoryRules: [], subcategoryRules: [], categoryOverrides: {}, subcategoryOverrides: {},
   dateOverrides: {}, transactionNotes: {}, accountNicknames: {}, accountGroups: {},
-  assetClasses: {}, customAssets: [], customLiabilities: [], customAssetClasses: [],
+  assetClasses: {}, netWorthCategories: {}, netWorthLiquidCategories: {}, netWorthPrefs: null,
+  customAssets: [], customLiabilities: [], customAssetClasses: [],
   hiddenCards: [], paymentReminderPrefs: {}, calendarSyncPrefs: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
   hiddenCategories: new Set(), rangeExcludedCategories: [], shortTermLoan: null, robinhoodTrades: null,
   organizedCategories: new Set(), incomeCategories: new Set(), savedTxnViews: {},
@@ -440,6 +469,9 @@ function readLocalConfig() {
     accountGroups: loadAccountGroups(),
     cardMap: loadCardMap(),
     assetClasses: loadAssetClasses(),
+    netWorthCategories: loadNetWorthCategories(),
+    netWorthLiquidCategories: loadNetWorthLiquidCategories(),
+    netWorthPrefs: loadNetWorthPrefs(),
     customAssets: loadCustomAssets(),
     customLiabilities: loadCustomLiabilities(),
     customAssetClasses: loadCustomAssetClasses(),
@@ -483,6 +515,15 @@ function mergeConfig(remote, locals) {
     accountGroups: unionMap(locals.accountGroups, remote.accountGroups),
     cardMap: unionMap(locals.cardMap, remote.cardMap),
     assetClasses: unionMap(locals.assetClasses, remote.assetClasses),
+    netWorthCategories: unionMap(locals.netWorthCategories, remote.netWorthCategories),
+    netWorthLiquidCategories: unionMap(locals.netWorthLiquidCategories, remote.netWorthLiquidCategories),
+    netWorthPrefs: {
+      ...DEFAULT_NET_WORTH_PREFS,
+      ...(remote.netWorthPrefs || {}),
+      ...(locals.netWorthPrefs || {}),
+      earmarks: (locals.netWorthPrefs?.earmarks?.length ? locals.netWorthPrefs.earmarks
+        : (Array.isArray(remote.netWorthPrefs?.earmarks) ? remote.netWorthPrefs.earmarks : [])),
+    },
     customAssets: unionByName(locals.customAssets, Array.isArray(remote.customAssets) ? remote.customAssets : []),
     customLiabilities: unionByName(locals.customLiabilities, Array.isArray(remote.customLiabilities) ? remote.customLiabilities : []),
     customAssetClasses: unionStringArray(locals.customAssetClasses, remote.customAssetClasses),
@@ -524,6 +565,9 @@ function buildSyncPayload(v) {
     accountGroups: v.accountGroups,
     cardMap: v.cardMap,
     assetClasses: v.assetClasses,
+    netWorthCategories: v.netWorthCategories,
+    netWorthLiquidCategories: v.netWorthLiquidCategories,
+    netWorthPrefs: v.netWorthPrefs || null,
     customAssets: v.customAssets,
     customLiabilities: v.customLiabilities,
     customAssetClasses: v.customAssetClasses,
@@ -621,6 +665,9 @@ export function DataProvider({ children }) {
   const [accountGroups, setAccountGroups] = useState(loadAccountGroups);
   const [cardMap, setCardMapState] = useState(loadCardMap);
   const [assetClasses, setAssetClasses] = useState(loadAssetClasses);
+  const [netWorthCategories, setNetWorthCategories] = useState(loadNetWorthCategories);
+  const [netWorthLiquidCategories, setNetWorthLiquidCategories] = useState(loadNetWorthLiquidCategories);
+  const [netWorthPrefs, setNetWorthPrefsState] = useState(loadNetWorthPrefs);
   const [customAssets, setCustomAssets] = useState(loadCustomAssets);
   const [customLiabilities, setCustomLiabilities] = useState(loadCustomLiabilities);
   const [customAssetClasses, setCustomAssetClasses] = useState(loadCustomAssetClasses);
@@ -669,6 +716,9 @@ export function DataProvider({ children }) {
     setAccountGroups(m.accountGroups); saveAccountGroups(m.accountGroups);
     setCardMapState(m.cardMap); saveCardMap(m.cardMap);
     setAssetClasses(m.assetClasses); saveAssetClasses(m.assetClasses);
+    setNetWorthCategories(m.netWorthCategories); saveNetWorthCategories(m.netWorthCategories);
+    setNetWorthLiquidCategories(m.netWorthLiquidCategories); saveNetWorthLiquidCategories(m.netWorthLiquidCategories);
+    setNetWorthPrefsState(m.netWorthPrefs); saveNetWorthPrefs(m.netWorthPrefs);
     setCustomAssets(m.customAssets); saveCustomAssets(m.customAssets);
     setCustomLiabilities(m.customLiabilities); saveCustomLiabilities(m.customLiabilities);
     setCustomAssetClasses(m.customAssetClasses); saveCustomAssetClasses(m.customAssetClasses);
@@ -746,7 +796,8 @@ export function DataProvider({ children }) {
     if (!syncHydrated.current) return;
     const currentConfig = {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
-      transactionNotes, accountNicknames, accountGroups, cardMap, assetClasses, customAssets,
+      transactionNotes, accountNicknames, accountGroups, cardMap, assetClasses,
+      netWorthCategories, netWorthLiquidCategories, netWorthPrefs, customAssets,
       customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay,
       customCategories, hiddenCategories, rangeExcludedCategories, shortTermLoan, robinhoodTrades, organizedCategories,
       incomeCategories, savedTxnViews, chartHiddenCats, chartHiddenSubs, txnColumnWidths: columnWidths,
@@ -783,6 +834,9 @@ export function DataProvider({ children }) {
     accountGroups,
     cardMap,
     assetClasses,
+    netWorthCategories,
+    netWorthLiquidCategories,
+    netWorthPrefs,
     customAssets,
     customLiabilities,
     customAssetClasses,
@@ -1425,6 +1479,42 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  // Net Worth snapshot: label an account's category, or clear the label so
+  // the page falls back to its guess. Same shape for the liquid split.
+  const setNetWorthCategory = useCallback((accountName, category) => {
+    setNetWorthCategories(prev => {
+      const next = { ...prev };
+      const trimmed = (category || '').trim();
+      if (trimmed) next[accountName] = trimmed;
+      else delete next[accountName];
+      saveNetWorthCategories(next);
+      return next;
+    });
+  }, []);
+
+  const setNetWorthLiquidCategory = useCallback((accountName, liquidCategory) => {
+    setNetWorthLiquidCategories(prev => {
+      const next = { ...prev };
+      const trimmed = (liquidCategory || '').trim();
+      if (trimmed) next[accountName] = trimmed;
+      else delete next[accountName];
+      saveNetWorthLiquidCategories(next);
+      return next;
+    });
+  }, []);
+
+  // Patch-merge so a caller changing only the tax rate can't drop the
+  // earmarks it never mentioned.
+  const updateNetWorthPrefs = useCallback((patch) => {
+    setNetWorthPrefsState(prev => {
+      const base = prev || DEFAULT_NET_WORTH_PREFS;
+      const next = { ...base, ...(patch || {}) };
+      next.earmarks = Array.isArray(next.earmarks) ? next.earmarks : [];
+      saveNetWorthPrefs(next);
+      return next;
+    });
+  }, []);
+
   // Assign `accountName` to `groupName`, or remove from any group when null.
   const setAccountGroup = useCallback((accountName, groupName) => {
     setAccountGroups(prev => {
@@ -1684,12 +1774,12 @@ export function DataProvider({ children }) {
   );
   const shownMaps = useMemo(
     () => (scrambler
-      ? { ...scrambleAccountMaps({ accountNicknames, accountNumbers, accountGroups, assetClasses }, scrambler),
+      ? { ...scrambleAccountMaps({ accountNicknames, accountNumbers, accountGroups, assetClasses, netWorthCategories, netWorthLiquidCategories }, scrambler),
           cardMap: Object.fromEntries(
             Object.entries(cardMap || {}).map(([k, v]) => [scrambler.accountName(k), v]),
           ) }
-      : { accountNicknames, accountNumbers, accountGroups, assetClasses, cardMap }),
-    [accountNicknames, accountNumbers, accountGroups, assetClasses, cardMap, scrambler],
+      : { accountNicknames, accountNumbers, accountGroups, assetClasses, netWorthCategories, netWorthLiquidCategories, cardMap }),
+    [accountNicknames, accountNumbers, accountGroups, assetClasses, netWorthCategories, netWorthLiquidCategories, cardMap, scrambler],
   );
   const shownHiddenCards = useMemo(
     () => (scrambler ? scrambleHiddenCards(hiddenCards, scrambler) : hiddenCards),
@@ -1750,6 +1840,9 @@ export function DataProvider({ children }) {
     setCardForAccount,
     setAccountGroup,
     setAssetClass,
+    setNetWorthCategory,
+    setNetWorthLiquidCategory,
+    updateNetWorthPrefs,
     addCustomAsset,
     updateCustomAsset,
     removeCustomAsset,
@@ -1808,6 +1901,9 @@ export function DataProvider({ children }) {
     setCardForAccount,
     setAccountGroup,
     setAssetClass,
+    setNetWorthCategory,
+    setNetWorthLiquidCategory,
+    updateNetWorthPrefs,
     addCustomAsset,
     updateCustomAsset,
     removeCustomAsset,
@@ -1881,6 +1977,9 @@ export function DataProvider({ children }) {
     accountGroups: shownMaps.accountGroups,
     cardMap: shownMaps.cardMap,
     assetClasses: shownMaps.assetClasses,
+    netWorthCategories: shownMaps.netWorthCategories,
+    netWorthLiquidCategories: shownMaps.netWorthLiquidCategories,
+    netWorthPrefs,
     customAssets: shownCustomAssets,
     customLiabilities: shownCustomLiabilities,
     customAssetClasses,
@@ -1921,6 +2020,7 @@ export function DataProvider({ children }) {
     showAccounts,
     pareto8020View,
     customAssetClasses,
+    netWorthPrefs,
     calendarSyncPrefs,
     weeklyEmailSections,
     weeklyEmailDay,
