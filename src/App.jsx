@@ -73,6 +73,7 @@ const CardPromosPage = lazy(() => import('./pages/CardPromosPage').then(m => ({ 
 const TrendsPage = lazy(() => import('./pages/TrendsPage').then(m => ({ default: m.TrendsPage })));
 const NetWorthPage = lazy(() => import('./pages/NetWorthPage').then(m => ({ default: m.NetWorthPage })));
 const ShortTermLoanPage = lazy(() => import('./pages/ShortTermLoanPage').then(m => ({ default: m.ShortTermLoanPage })));
+const HomeBuyingPage = lazy(() => import('./pages/HomeBuyingPage').then(m => ({ default: m.HomeBuyingPage })));
 const StockPerformancePage = lazy(() => import('./pages/StockPerformancePage').then(m => ({ default: m.StockPerformancePage })));
 
 // Stale tabs after a deploy can throw ChunkLoadError when trying to fetch
@@ -147,6 +148,7 @@ const NAV_ITEMS = [
   { id: 'trends', label: 'Spending Trends', icon: 'trending_up' },
   { id: 'budgets', label: 'Budgets', icon: 'savings' },
   { id: 'recurring', label: 'Recurring', icon: 'autorenew' },
+  { id: 'home', label: 'Buying a Home', icon: 'home_work' },
   { id: 'assets', label: 'Assets & Liabilities', icon: 'account_balance' },
   { id: 'cards', label: 'Cards Overview', icon: 'credit_card' },
   { id: 'promos', label: 'Card Promotions', icon: 'redeem' },
@@ -198,6 +200,7 @@ export function App() {
       case 'assets': return <AssetsPage />;
       case 'cards': return <CardsPage />;
       case 'promos': return <CardPromosPage />;
+      case 'home': return <HomeBuyingPage />;
       case 'loan': return <ShortTermLoanPage />;
       case 'settings': return <SettingsPage />;
       default: return <OverviewPage />;
