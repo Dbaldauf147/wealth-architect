@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useData } from '../contexts/DataContext';
+import { NetWorthSnapshot } from '../components/NetWorthSnapshot';
 import styles from './NetWorthPage.module.css';
 
 function fmt(n) {
@@ -62,10 +63,18 @@ const VIEW_OPTIONS = [
   { id: 'breakdown', label: 'Assets vs Liabilities' },
 ];
 
+// Two ways to read the same balances: the line over time, and a
+// month-against-month table of where the money actually sits.
+const PAGE_TABS = [
+  { id: 'trend', label: 'Trend', icon: 'show_chart' },
+  { id: 'snapshot', label: 'Monthly Snapshot', icon: 'table_rows' },
+];
+
 export function NetWorthPage() {
   const { balances, balanceHistory, loading } = useData();
   const [rangeId, setRangeId] = useState('1y');
   const [viewId, setViewId] = useState('networth');
+  const [tabId, setTabId] = useState('trend');
 
   // Walk the balance history forward, maintaining the latest known balance for
   // each account. At every snapshot date emit a net-worth row using the
@@ -280,9 +289,35 @@ export function NetWorthPage() {
     );
   }
 
+  const tabBar = (
+    <div className={styles.tabBar}>
+      {PAGE_TABS.map(t => (
+        <button
+          key={t.id}
+          type="button"
+          className={`${styles.tab} ${tabId === t.id ? styles.tabActive : ''}`}
+          onClick={() => setTabId(t.id)}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{t.icon}</span>
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (tabId === 'snapshot') {
+    return (
+      <div className={styles.page}>
+        {tabBar}
+        <NetWorthSnapshot />
+      </div>
+    );
+  }
+
   if (!series.length) {
     return (
       <div className={styles.page}>
+        {tabBar}
         <div className={styles.hero}>
           <div className={styles.heroLabel}>Net Worth Over Time</div>
           <div className={styles.heroTitle}>No balance history available</div>
@@ -298,6 +333,8 @@ export function NetWorthPage() {
 
   return (
     <div className={styles.page}>
+      {tabBar}
+
       {/* Hero */}
       <div className={styles.hero}>
         <div className={styles.heroLabel}>Net Worth Over Time</div>

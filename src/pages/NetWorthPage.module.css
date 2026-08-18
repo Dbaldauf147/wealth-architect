@@ -191,3 +191,36 @@
   .hero { padding: 20px; }
   .heroValue { font-size: 32px; }
 }
+
+/* Top-level view switch: the trend line vs. the month-by-month table. */
+.tabBar {
+  display: flex;
+  gap: 4px;
+  border-bottom: var(--border-subtle);
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  margin-bottom: -1px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  font-family: var(--font-headline);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--color-text-secondary);
+}
+
+.tabActive {
+  color: var(--color-text-primary);
+  border-bottom-color: var(--color-secondary);
+}
