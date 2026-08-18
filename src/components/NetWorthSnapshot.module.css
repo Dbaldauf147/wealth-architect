@@ -23,7 +23,7 @@
   flex-wrap: wrap;
 }
 
-.monthPick,
+.control,
 .taxPick {
   display: flex;
   flex-direction: column;
@@ -34,7 +34,37 @@
   margin-left: auto;
 }
 
-.monthPickLabel {
+.pillGroup {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-lg);
+}
+
+.pill {
+  padding: 6px 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pill:hover {
+  color: var(--color-text-primary);
+}
+
+.pillActive {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-xs);
+}
+
+.controlLabel {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -53,12 +83,6 @@
   padding: 7px 10px;
   cursor: pointer;
   min-width: 150px;
-}
-
-.vs {
-  color: var(--color-text-tertiary);
-  font-size: 18px;
-  padding-bottom: 9px;
 }
 
 .taxInputWrap {
@@ -91,17 +115,11 @@
 
 /* ── Cards ───────────────────────────────────────────────────────────── */
 
-.topGrid {
+.sideGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
   align-items: start;
-}
-
-.sideCol {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
 }
 
 .card {
@@ -371,8 +389,35 @@ td.flat { color: var(--color-text-tertiary); }
   overflow-x: auto;
 }
 
+.summaryTable {
+  min-width: 620px;
+}
+
 .accountTable {
-  min-width: 780px;
+  min-width: 900px;
+}
+
+/* Account names are long ("Schneider Electric 401(k) Plan"); without a floor
+   the month columns squeeze them onto three lines. */
+.accountTable td:first-child,
+.accountTable th:first-child {
+  min-width: 190px;
+}
+
+/* The newest month is the one being read; the rest are context. */
+.latestCol {
+  background: var(--color-surface-hover);
+}
+
+/* Window change sits apart from the monthly columns. */
+.changeCol {
+  border-left: 1px solid rgba(198, 198, 205, 0.35);
+  padding-left: 12px;
+}
+
+.summaryTable th.changeCol,
+.accountTable th.changeCol {
+  padding-left: 12px;
 }
 
 .accountName {
@@ -389,6 +434,20 @@ td.flat { color: var(--color-text-tertiary); }
   color: var(--color-text-tertiary);
   font-size: 10px;
   font-weight: 600;
+  white-space: nowrap;
+}
+
+.newTag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: rgba(232, 163, 23, 0.14);
+  color: var(--color-warning);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
@@ -416,20 +475,6 @@ td.flat { color: var(--color-text-tertiary); }
   outline: none;
 }
 
-.yes {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--color-text-tertiary);
-}
-
-.no {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--color-warning);
-}
-
 .accountTable tfoot td {
   border-top: 2px solid var(--color-text-primary);
   border-bottom: none;
@@ -440,6 +485,6 @@ td.flat { color: var(--color-text-tertiary); }
 }
 
 @media (max-width: 1000px) {
-  .topGrid { grid-template-columns: minmax(0, 1fr); }
+  .sideGrid { grid-template-columns: minmax(0, 1fr); }
   .taxPick { margin-left: 0; }
 }
