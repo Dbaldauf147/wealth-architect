@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Wealth Architect categorizer">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b6fe0"/>
+      <stop offset="1" stop-color="#0043a0"/>
+    </linearGradient>
+  </defs>
+  <!-- Maskable: full bleed, artwork kept inside the 80% safe circle so a
+       platform mask (circle, squircle, teardrop) can't clip the check. -->
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <g transform="translate(256 256) scale(0.66) translate(-256 -256)">
+    <rect x="112" y="128" width="212" height="132" rx="26" fill="#ffffff" opacity="0.32"/>
+    <rect x="132" y="164" width="212" height="132" rx="26" fill="#ffffff" opacity="0.55"/>
+    <rect x="152" y="200" width="212" height="140" rx="28" fill="#ffffff"/>
+    <rect x="184" y="240" width="120" height="18" rx="9" fill="#0058be" opacity="0.28"/>
+    <rect x="184" y="282" width="76" height="18" rx="9" fill="#0058be" opacity="0.18"/>
+    <circle cx="352" cy="344" r="76" fill="#0f9d58" stroke="#ffffff" stroke-width="18"/>
+    <path d="M318 344l24 25 47-52" fill="none" stroke="#ffffff" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
