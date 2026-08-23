@@ -1,10 +1,21 @@
 import { useState, useMemo, useRef, useEffect, useCallback, useDeferredValue, memo } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { normalizeDesc } from '../lib/categorize';
+import {
+  ALL_CATEGORIES, SUBCATEGORIES, CATEGORY_ICONS, getCategoryIcon, catColor, catBg, PALETTE,
+} from '../lib/categories';
 import { findRentCollisions, txnKey } from '../lib/rentDuplicates';
 import styles from './TransactionsPage.module.css';
 
 const PAGE_SIZE = 50;
+
+function fmt(n) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+  }).format(n);
+}
 
 // Collisions the user has looked at and decided are real — two tenants, or a
 // tenant catching up. Kept on the device rather than in the synced settings:
@@ -24,53 +35,6 @@ function saveRentDismissed(set) {
 // Stable empty array so non-editing rows receive a referentially constant prop
 // (lets the memoized TransactionRow skip re-rendering on unrelated edits).
 const EMPTY_ARR = [];
-
-const CATEGORY_ICONS = {
-  'Food & Drink': 'restaurant',
-  'Shopping': 'shopping_bag',
-  'Travel': 'flight',
-  'Entertainment': 'movie',
-  'Bills & Utilities': 'receipt',
-  'Housing': 'home',
-  'Transportation': 'directions_car',
-  'Health & Wellness': 'health_and_safety',
-  'Income': 'payments',
-  'Transfer': 'swap_horiz',
-};
-
-function getCategoryIcon(cat) {
-  return CATEGORY_ICONS[cat] || 'receipt_long';
-}
-
-function fmt(n) {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-  }).format(n);
-}
-
-/* Deterministic colour from category name */
-const PALETTE = [
-  '#ba1a1a', '#009668', '#0058be', '#7c3aed', '#e8a317',
-  '#475569', '#d946ef', '#0891b2', '#dc2626', '#16a34a',
-  '#9333ea', '#ea580c', '#2563eb', '#c026d3', '#059669',
-];
-
-function catColor(name) {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return PALETTE[Math.abs(hash) % PALETTE.length];
-}
-
-function catBg(name) {
-  const c = catColor(name);
-  // convert hex to rgba 0.08
-  const r = parseInt(c.slice(1, 3), 16);
-  const g = parseInt(c.slice(3, 5), 16);
-  const b = parseInt(c.slice(5, 7), 16);
-  return `rgba(${r},${g},${b},0.08)`;
-}
 
 /* Well-spaced palette for pie slices — rotates hues widely so adjacent slices always differ */
 const PIE_PALETTE = [
@@ -684,31 +648,6 @@ function findRecurring(transactions) {
       icon: getCategoryIcon(g.category),
     }));
 }
-
-const ALL_CATEGORIES = [
-  'Food & Drink', 'Shopping', 'Travel', 'Entertainment', 'Bills & Utilities',
-  'Housing', 'Transportation', 'Health & Wellness', 'Income', 'Transfer',
-  'Education', 'Personal Care', 'Gifts & Donations', 'Investments', 'Fees & Charges',
-  'Uncategorized',
-];
-
-const SUBCATEGORIES = {
-  'Food & Drink': ['Restaurants', 'Groceries', 'Fast Food', 'Alcohol & Bars', 'Delivery'],
-  'Shopping': ['Clothing', 'Electronics', 'Home Goods', 'Online Shopping', 'Sporting Goods', 'Books'],
-  'Travel': ['Flights', 'Hotels', 'Car Rental', 'Vacation', 'Luggage & Travel Gear'],
-  'Entertainment': ['Streaming', 'Movies & TV', 'Music', 'Games', 'Events & Concerts', 'Sports'],
-  'Bills & Utilities': ['Electric', 'Gas', 'Water', 'Internet', 'Phone', 'Subscriptions', 'Insurance'],
-  'Housing': ['Rent', 'Mortgage', 'Property Tax', 'HOA', 'Maintenance & Repairs', 'Furniture'],
-  'Transportation': ['Gas & Fuel', 'Parking', 'Tolls', 'Public Transit', 'Ride Share', 'Car Payment', 'Car Insurance', 'Auto Maintenance'],
-  'Health & Wellness': ['Doctor', 'Pharmacy', 'Gym & Fitness', 'Mental Health', 'Dental', 'Vision'],
-  'Income': ['Salary', 'Freelance', 'Interest', 'Dividends', 'Refund', 'Bonus', 'Other Income'],
-  'Transfer': ['Account Transfer', 'Credit Card Payment', 'Loan Payment', 'Investment Transfer'],
-  'Education': ['Tuition', 'Books & Supplies', 'Courses', 'Student Loans'],
-  'Personal Care': ['Haircut', 'Skincare', 'Spa', 'Cosmetics'],
-  'Gifts & Donations': ['Gifts', 'Charity', 'Religious'],
-  'Investments': ['Stocks', 'Crypto', 'Real Estate', 'Retirement'],
-  'Fees & Charges': ['Bank Fees', 'ATM Fees', 'Late Fees', 'Service Charges', 'Interest Charges'],
-};
 
 // Memoized table row. Non-editing rows receive referentially stable props
 // (editing-only state is null/empty unless this row is being edited), so a

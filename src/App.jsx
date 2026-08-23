@@ -235,6 +235,14 @@ export function App() {
         </nav>
 
         <div className={styles.sidebarBottom}>
+          <div
+            className={styles.sidebarBottomItem}
+            onClick={() => { window.location.hash = 'm/review'; }}
+            title="A phone-shaped screen for clearing uncategorized transactions — installable to a home screen"
+          >
+            <span className="material-symbols-outlined">smartphone</span>
+            Categorize on Phone
+          </div>
           <div className={styles.sidebarBottomItem} onClick={() => {}}>
             <span className="material-symbols-outlined">table_chart</span>
             Connect Sheets
