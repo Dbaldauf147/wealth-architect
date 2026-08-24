@@ -49,7 +49,13 @@ npm install
 npm run dev      # http://localhost:5173  (mobile shell: /#m/review)
 npm run build
 npm run lint
+npm test         # vitest, covers the pure lib/ modules
 ```
+
+`lib/suggest.js` and `lib/reviewQueue.js` are pure and carry the logic worth
+being sure about — how a merchant is recognised, what a saved rule will
+actually match, and how a backlog is ordered and grouped. Those have tests;
+the React surfaces do not.
 
 Sheet access needs `VITE_SHEETS_API_KEY` and `VITE_SHEETS_SHEET_ID`; see
 `.env.example` for the full list.
