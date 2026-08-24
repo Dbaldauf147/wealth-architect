@@ -21,6 +21,20 @@ budgets, and the weekly email see.
 | `src/lib/reviewQueue.js` | Orders the backlog and groups charges from one merchant into a single decision. Pure |
 | `src/lib/categories.js` | The category vocabulary, shared with the desktop page so the two can't drift |
 
+Filing a card asks for the category, then the detail (subcategory) — the
+prompt is one tap to skip, and a switch on the Rules screen turns it off for a
+long triage session. Both kinds of rule are editable there, each row showing
+how many transactions it currently matches so an over-broad filter is visible
+before it mis-files a year of spending.
+
+Tapping **Split** flags a charge that other people owe a share of and hands it
+to Rally (a separate app, `Dbaldauf147/rally`) over `api/rally-expense.js`. The
+tag is written locally first and kept even when the hand-off fails, so the
+Splits tab is an outbox with a retry rather than a place tags disappear from.
+The bridge is a server route because the shared secret Rally authenticates with
+must never reach a browser bundle; it needs `RALLY_API_URL` and
+`RALLY_INGEST_SECRET`.
+
 Suggestions are drawn only from categories the user has already assigned
 themselves — there is no hard-coded merchant list — and every one shows why it
 was suggested, so a wrong guess is visible before it is tapped.
@@ -35,7 +49,13 @@ npm install
 npm run dev      # http://localhost:5173  (mobile shell: /#m/review)
 npm run build
 npm run lint
+npm test         # vitest, covers the pure lib/ modules
 ```
+
+`lib/suggest.js` and `lib/reviewQueue.js` are pure and carry the logic worth
+being sure about — how a merchant is recognised, what a saved rule will
+actually match, and how a backlog is ordered and grouped. Those have tests;
+the React surfaces do not.
 
 Sheet access needs `VITE_SHEETS_API_KEY` and `VITE_SHEETS_SHEET_ID`; see
 `.env.example` for the full list.

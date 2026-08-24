@@ -48,6 +48,12 @@ const loadDateOverrides = () => loadJSON('dateOverrides', {});
 const saveDateOverrides = (v) => saveJSON('dateOverrides', v);
 const loadNotes = () => loadJSON('transactionNotes', {});
 const saveNotes = (v) => saveJSON('transactionNotes', v);
+// Charges flagged as needing to be split with other people. Keyed by
+// transaction id; the value carries what was sent to Rally so a re-send is
+// recognisable as the same expense rather than a second one.
+// { [transactionId]: { note, event, pushedAt, rallyId, error } }
+const loadSplitTags = () => loadJSON('splitTags', {});
+const saveSplitTags = (v) => saveJSON('splitTags', v);
 const loadAccountNicknames = () => {
   // One-time migration: the Assets/Overview pages historically wrote to
   // 'wa-account-nicknames' (localStorage only, no Firestore sync). Pull any
@@ -444,7 +450,7 @@ function mergedDiffersFromRemote(merged, remote) {
 // snapshots from another device are adopted — so deletes propagate too.
 const EMPTY_LOCALS = {
   categoryRules: [], subcategoryRules: [], categoryOverrides: {}, subcategoryOverrides: {},
-  dateOverrides: {}, transactionNotes: {}, accountNicknames: {}, accountGroups: {},
+  dateOverrides: {}, transactionNotes: {}, splitTags: {}, accountNicknames: {}, accountGroups: {},
   assetClasses: {}, netWorthCategories: {}, netWorthLiquidCategories: {}, netWorthPrefs: null,
   customAssets: [], customLiabilities: [], customAssetClasses: [],
   hiddenCards: [], paymentReminderPrefs: {}, calendarSyncPrefs: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
@@ -465,6 +471,7 @@ function readLocalConfig() {
     subcategoryOverrides: loadSubcategoryOverrides(),
     dateOverrides: loadDateOverrides(),
     transactionNotes: loadNotes(),
+    splitTags: loadSplitTags(),
     accountNicknames: loadAccountNicknames(),
     accountGroups: loadAccountGroups(),
     cardMap: loadCardMap(),
@@ -511,6 +518,7 @@ function mergeConfig(remote, locals) {
     subcategoryOverrides: unionMap(locals.subcategoryOverrides, remote.subcategoryOverrides),
     dateOverrides: unionMap(locals.dateOverrides, remote.dateOverrides),
     transactionNotes: unionMap(locals.transactionNotes, remote.transactionNotes),
+    splitTags: unionMap(locals.splitTags, remote.splitTags),
     accountNicknames: unionMap(locals.accountNicknames, remote.accountNicknames),
     accountGroups: unionMap(locals.accountGroups, remote.accountGroups),
     cardMap: unionMap(locals.cardMap, remote.cardMap),
@@ -561,6 +569,7 @@ function buildSyncPayload(v) {
     subcategoryOverrides: v.subcategoryOverrides,
     dateOverrides: v.dateOverrides,
     transactionNotes: v.transactionNotes,
+    splitTags: v.splitTags,
     accountNicknames: v.accountNicknames,
     accountGroups: v.accountGroups,
     cardMap: v.cardMap,
@@ -661,6 +670,7 @@ export function DataProvider({ children }) {
   const [showAccounts, setShowAccountsState] = useState(() => loadShowAccounts() ?? true);
   const [pareto8020View, setPareto8020ViewState] = useState(() => loadPareto8020View() ?? false);
   const [transactionNotes, setTransactionNotes] = useState(loadNotes);
+  const [splitTags, setSplitTags] = useState(loadSplitTags);
   const [accountNicknames, setAccountNicknames] = useState(loadAccountNicknames);
   const [accountGroups, setAccountGroups] = useState(loadAccountGroups);
   const [cardMap, setCardMapState] = useState(loadCardMap);
@@ -712,6 +722,7 @@ export function DataProvider({ children }) {
     setSubcategoryOverrides(m.subcategoryOverrides); saveSubcategoryOverrides(m.subcategoryOverrides);
     setDateOverrides(m.dateOverrides); saveDateOverrides(m.dateOverrides);
     setTransactionNotes(m.transactionNotes); saveNotes(m.transactionNotes);
+    setSplitTags(m.splitTags); saveSplitTags(m.splitTags);
     setAccountNicknames(m.accountNicknames); saveAccountNicknames(m.accountNicknames);
     setAccountGroups(m.accountGroups); saveAccountGroups(m.accountGroups);
     setCardMapState(m.cardMap); saveCardMap(m.cardMap);
@@ -796,7 +807,7 @@ export function DataProvider({ children }) {
     if (!syncHydrated.current) return;
     const currentConfig = {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
-      transactionNotes, accountNicknames, accountGroups, cardMap, assetClasses,
+      transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, assetClasses,
       netWorthCategories, netWorthLiquidCategories, netWorthPrefs, customAssets,
       customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay,
       customCategories, hiddenCategories, rangeExcludedCategories, shortTermLoan, robinhoodTrades, organizedCategories,
@@ -830,6 +841,7 @@ export function DataProvider({ children }) {
     subcategoryOverrides,
     dateOverrides,
     transactionNotes,
+    splitTags,
     accountNicknames,
     accountGroups,
     cardMap,
@@ -1073,6 +1085,69 @@ export function DataProvider({ children }) {
       if (note) next[transactionId] = note;
       else delete next[transactionId];
       saveNotes(next);
+      return next;
+    });
+  }, []);
+
+  /* ── Split expenses ───────────────────────────────────────────────
+     Flagging a charge as "someone owes me for part of this" and handing it
+     to Rally, where the actual splitting happens.
+
+     The tag is written before the network call and kept whatever the call
+     does. A charge you have decided to split is a fact about your money; a
+     failed POST is a fact about the network, and losing the first to the
+     second would mean re-finding the charge later. A tag carrying `error`
+     is a tag that still needs sending, which is exactly what the UI shows. */
+  const tagForSplit = useCallback(async (txn, options) => {
+    const id = txn?.transactionId;
+    if (!id) return { ok: false, error: 'This transaction has no ID, so it can\'t be tracked.' };
+    const note = options?.note || '';
+
+    const stamp = (patch) => setSplitTags(prev => {
+      // A tag cleared while the request was in flight stays cleared — the
+      // later decision wins rather than being resurrected by the response.
+      if (patch.rallyId != null && !prev[id]) return prev;
+      const next = { ...prev, [id]: { ...(prev[id] || {}), ...patch } };
+      saveSplitTags(next);
+      return next;
+    });
+
+    stamp({ note, taggedAt: new Date().toISOString(), error: null, sending: true });
+
+    try {
+      const res = await fetch('/api/rally-expense', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transactionId: id,
+          description: txn.description || '',
+          fullDescription: txn.fullDescription || '',
+          amount: txn.amount,
+          date: txn.date || '',
+          account: txn.account || '',
+          category: txn.category || '',
+          subcategory: txn.subcategory || '',
+          note,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Rally returned ${res.status}`);
+      stamp({ sending: false, error: null, rallyId: body.id || null, pushedAt: new Date().toISOString() });
+      return { ok: true, id: body.id };
+    } catch (err) {
+      const message = err?.message || 'Could not reach Rally';
+      stamp({ sending: false, error: message });
+      return { ok: false, error: message };
+    }
+  }, []);
+
+  const untagSplit = useCallback((transactionId) => {
+    if (!transactionId) return;
+    setSplitTags(prev => {
+      if (!prev[transactionId]) return prev;
+      const next = { ...prev };
+      delete next[transactionId];
+      saveSplitTags(next);
       return next;
     });
   }, []);
@@ -1836,6 +1911,8 @@ export function DataProvider({ children }) {
     removeCategory,
     unhideCategory,
     updateTransactionNote,
+    tagForSplit,
+    untagSplit,
     setAccountNickname,
     setCardForAccount,
     setAccountGroup,
@@ -1897,6 +1974,8 @@ export function DataProvider({ children }) {
     removeCategory,
     unhideCategory,
     updateTransactionNote,
+    tagForSplit,
+    untagSplit,
     setAccountNickname,
     setCardForAccount,
     setAccountGroup,
@@ -1972,6 +2051,7 @@ export function DataProvider({ children }) {
     showAccounts,
     pareto8020View,
     transactionNotes: shownNotes,
+    splitTags,
     accountNicknames: shownMaps.accountNicknames,
     accountNumbers: shownMaps.accountNumbers,
     accountGroups: shownMaps.accountGroups,
@@ -2025,6 +2105,7 @@ export function DataProvider({ children }) {
     weeklyEmailSections,
     weeklyEmailDay,
     hiddenIds,
+    splitTags,
     privacyMode,
     revealTicker,
     shownBalanceHistory,
