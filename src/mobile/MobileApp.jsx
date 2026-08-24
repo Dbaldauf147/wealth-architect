@@ -4,20 +4,28 @@ import { reviewStats } from '../lib/reviewQueue';
 import { ReviewTab } from './ReviewTab';
 import { RecentTab } from './RecentTab';
 import { InsightsTab } from './InsightsTab';
+import { SplitsTab } from './SplitsTab';
+import { RulesTab } from './RulesTab';
 import styles from './MobileApp.module.css';
 
 const TABS = [
   { id: 'review', label: 'Review', icon: 'inbox' },
   { id: 'recent', label: 'Filed', icon: 'history' },
+  { id: 'splits', label: 'Splits', icon: 'call_split' },
   { id: 'insights', label: 'Month', icon: 'donut_small' },
 ];
 
+// Rules is reachable from the header rather than the tab bar: it is a screen
+// you visit to correct something, not one you move between while working.
+const ALL_VIEWS = [...TABS.map(t => t.id), 'rules'];
+
 const SORT_KEY = 'mobileReviewSort';
+const ASK_SUB_KEY = 'mobileAskSubcategory';
 
 function readHashTab() {
   const hash = window.location.hash.replace(/^#/, '');
   const [, tab] = hash.split('/');
-  return TABS.some(t => t.id === tab) ? tab : 'review';
+  return ALL_VIEWS.includes(tab) ? tab : 'review';
 }
 
 /* The mobile categorizer.
@@ -31,6 +39,9 @@ export function MobileApp() {
   const [tab, setTab] = useState(readHashTab);
   const [sort, setSort] = useState(() => {
     try { return localStorage.getItem(SORT_KEY) || 'impact'; } catch { return 'impact'; }
+  });
+  const [askSub, setAskSub] = useState(() => {
+    try { return localStorage.getItem(ASK_SUB_KEY) !== '0'; } catch { return true; }
   });
   const [installEvent, setInstallEvent] = useState(null);
   const { transactions, loading, syncing, error, lastSync } = useData();
@@ -71,6 +82,11 @@ export function MobileApp() {
     try { localStorage.setItem(SORT_KEY, next); } catch { /* private mode */ }
   }, []);
 
+  const changeAskSub = useCallback((next) => {
+    setAskSub(next);
+    try { localStorage.setItem(ASK_SUB_KEY, next ? '1' : '0'); } catch { /* private mode */ }
+  }, []);
+
   // Chrome/Edge fire this when the app is installable; iOS Safari never does,
   // and there the user installs from the share sheet, so the prompt is simply
   // absent rather than broken.
@@ -93,7 +109,7 @@ export function MobileApp() {
       <header className={styles.header}>
         <div className={styles.brand}>
           <span className={styles.brandMark}>W</span>
-          Categorize
+          {tab === 'rules' ? 'Rules' : 'Categorize'}
         </div>
         <div className={styles.headerSpacer} />
         <button
@@ -106,6 +122,15 @@ export function MobileApp() {
           <span className={`material-symbols-outlined ${busy ? styles.spin : ''}`}>
             {busy ? 'progress_activity' : 'sync'}
           </span>
+        </button>
+        <button
+          className={styles.iconBtn}
+          onClick={() => go(tab === 'rules' ? 'review' : 'rules')}
+          aria-label={tab === 'rules' ? 'Back to reviewing' : 'Rules'}
+          title={tab === 'rules' ? 'Back to reviewing' : 'Rules'}
+          style={tab === 'rules' ? { color: 'var(--color-secondary)' } : undefined}
+        >
+          <span className="material-symbols-outlined">{tab === 'rules' ? 'close' : 'rule'}</span>
         </button>
         <button
           className={styles.iconBtn}
@@ -151,9 +176,11 @@ export function MobileApp() {
           </div>
         ) : (
           <>
-            {tab === 'review' && <ReviewTab sort={sort} onSortChange={changeSort} />}
+            {tab === 'review' && <ReviewTab sort={sort} onSortChange={changeSort} askSub={askSub} />}
             {tab === 'recent' && <RecentTab />}
+            {tab === 'splits' && <SplitsTab />}
             {tab === 'insights' && <InsightsTab onGoReview={() => go('review')} />}
+            {tab === 'rules' && <RulesTab askSub={askSub} onAskSubChange={changeAskSub} />}
           </>
         )}
       </div>

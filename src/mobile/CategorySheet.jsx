@@ -109,7 +109,7 @@ export function CategorySheet({
 
 /* The subcategory sheet is the same shape with a different list — separate
    component so the caller doesn't have to thread a mode flag through. */
-export function SubcategorySheet({ category, active, onPick, onClose, extra }) {
+export function SubcategorySheet({ category, active, onPick, onClose, extra, onSkip, footer }) {
   const options = useMemo(() => {
     const base = SUBCATEGORIES[category] || [];
     const seen = new Set(base);
@@ -124,6 +124,9 @@ export function SubcategorySheet({ category, active, onPick, onClose, extra }) {
         <div className={styles.sheetGrip} />
         <div className={styles.sheetHead}>
           <div className={styles.sheetTitle}>{category} detail</div>
+          {onSkip && (
+            <button className={styles.skipBtn} onClick={onSkip}>Skip</button>
+          )}
           <button className={styles.iconBtn} onClick={onClose} aria-label="Close">
             <span className="material-symbols-outlined">close</span>
           </button>
@@ -147,6 +150,7 @@ export function SubcategorySheet({ category, active, onPick, onClose, extra }) {
             </button>
           ))}
         </div>
+        {footer}
       </div>
     </>
   );

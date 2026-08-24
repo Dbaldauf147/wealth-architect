@@ -15,20 +15,25 @@ import styles from './MobileApp.module.css';
 const SWIPE_THRESHOLD = 96;
 const UNDO_MS = 7000;
 
-export function ReviewTab({ sort, onSortChange }) {
+export function ReviewTab({ sort, onSortChange, askSub }) {
   const {
-    transactions, categoryRules, customCategories, hiddenCategories, categoryColors,
+    transactions, categoryRules, customCategories, hiddenCategories,
+    categoryColors, splitTags,
   } = useData();
   const {
     updateTransactionCategory, updateTransactionSubcategory, bulkUpdateCategoryByIds,
-    addCategoryRule, removeCategoryRule, addCustomCategory, getMatchCount,
+    addCategoryRule, removeCategoryRule, addSubcategoryRule, addCustomCategory,
+    getMatchCount, tagForSplit, untagSplit,
   } = useDataActions();
 
   const [skipped, setSkipped] = useState(() => new Set());
   const [remember, setRemember] = useState(true);
+  const [rememberSub, setRememberSub] = useState(true);
   const [catSheet, setCatSheet] = useState(false);
   const [subSheet, setSubSheet] = useState(null); // { category, ids }
   const [undo, setUndo] = useState(null);
+  const [splitBusy, setSplitBusy] = useState(false);
+  const [splitResult, setSplitResult] = useState(null);
   const [drag, setDrag] = useState(0);
   const [dragging, setDragging] = useState(false);
   const dragStart = useRef(null);
@@ -61,6 +66,17 @@ export function ReviewTab({ sort, onSortChange }) {
       if (c && c !== 'Uncategorized') counts[c] = (counts[c] || 0) + 1;
     }
     return counts;
+  }, [actionable]);
+
+  const subsInUse = useMemo(() => {
+    const byCat = new Map();
+    for (const t of actionable) {
+      if (!t.category || !t.subcategory) continue;
+      let set = byCat.get(t.category);
+      if (!set) byCat.set(t.category, (set = new Set()));
+      set.add(t.subcategory);
+    }
+    return byCat;
   }, [actionable]);
 
   const categoryOptions = useMemo(() => {
@@ -120,16 +136,24 @@ export function ReviewTab({ sort, onSortChange }) {
       return next;
     });
 
+    const hasSubs = (SUBCATEGORIES[category] || []).length > 0;
     showUndo({
       ids,
       category,
       ruleSaved,
       label: `${item.groupSize > 1 ? `${item.groupSize} transactions` : (txn.description || 'Transaction')} → ${category}`,
       // Offer the subcategory step only where there is one to pick.
-      subOptions: (SUBCATEGORIES[category] || []).length > 0,
+      subOptions: hasSubs,
     });
+    // The detail question is asked here, on the card just filed, rather than
+    // being buried behind a button on a toast that disappears in seven
+    // seconds. Skipping is one tap, and turning the prompt off entirely is a
+    // switch on the Rules screen for anyone clearing a big backlog.
+    if (hasSubs && askSub) {
+      setSubSheet({ category, ids, merchant: ruleText, offerRule: true });
+    }
     setDrag(0);
-  }, [item, txn, ruleText, categoryOptions, addCustomCategory, bulkUpdateCategoryByIds,
+  }, [item, txn, ruleText, askSub, categoryOptions, addCustomCategory, bulkUpdateCategoryByIds,
       updateTransactionCategory, addCategoryRule, showUndo]);
 
   /* Undo writes 'Uncategorized' rather than deleting the override. Deletions
@@ -148,6 +172,31 @@ export function ReviewTab({ sort, onSortChange }) {
     }
     setUndo(null);
   }, [undo, categoryRules, bulkUpdateCategoryByIds, removeCategoryRule]);
+
+  /* Commit a subcategory to the transactions just filed, and optionally
+     remember it as a rule the same way a category can be remembered. */
+  const applySubcategory = useCallback((sub) => {
+    if (!subSheet) return;
+    for (const id of subSheet.ids) updateTransactionSubcategory(id, sub);
+    if (subSheet.offerRule && subSheet.merchant && rememberSub) {
+      addSubcategoryRule(subSheet.merchant, null, sub);
+    }
+    setSubSheet(null);
+  }, [subSheet, rememberSub, updateTransactionSubcategory, addSubcategoryRule]);
+
+  /* Flag this charge as one other people owe a share of, and hand it to
+     Rally. The tag sticks even if the hand-off fails; the Splits tab is
+     where an unsent one gets retried. */
+  const doSplit = useCallback(async () => {
+    if (!txn || splitBusy) return;
+    setSplitBusy(true);
+    const res = await tagForSplit(txn, {});
+    setSplitBusy(false);
+    setSplitResult(res.ok
+      ? { ok: true, message: 'Sent to Rally to split' }
+      : { ok: false, message: res.error || 'Tagged, but not sent yet' });
+    setTimeout(() => setSplitResult(null), 5000);
+  }, [txn, splitBusy, tagForSplit]);
 
   const skip = useCallback(() => {
     if (!item) return;
@@ -226,10 +275,9 @@ export function ReviewTab({ sort, onSortChange }) {
         {subSheet && (
           <SubcategorySheet
             category={subSheet.category}
-            onPick={(sub) => {
-              for (const id of subSheet.ids) updateTransactionSubcategory(id, sub);
-              setSubSheet(null);
-            }}
+            extra={[...(subsInUse.get(subSheet.category) || [])]}
+            onPick={applySubcategory}
+            onSkip={() => setSubSheet(null)}
             onClose={() => setSubSheet(null)}
           />
         )}
@@ -240,6 +288,8 @@ export function ReviewTab({ sort, onSortChange }) {
   // ── The deck ─────────────────────────────────────────
   // A grouped card is worth what the whole group is worth — that is the number
   // the decision is actually about.
+  const splitTag = splitTags?.[txn.transactionId];
+  const isSplit = !!splitTag;
   const cardAmount = item.groupTotal;
   const income = cardAmount > 0;
   const accepting = drag >= SWIPE_THRESHOLD && canSwipeAccept;
@@ -281,6 +331,13 @@ export function ReviewTab({ sort, onSortChange }) {
           <div className={`${styles.cardAmount} ${income ? styles.amountIn : styles.amountOut}`}>
             {income ? '+' : ''}{fmt(cardAmount)}
           </div>
+
+          {isSplit && (
+            <div className={styles.groupNote} style={{ background: 'rgba(217,70,239,0.1)', color: '#a21caf' }}>
+              <span className="material-symbols-outlined">call_split</span>
+              {splitTag?.error ? 'Tagged to split — not sent to Rally yet' : 'Splitting in Rally'}
+            </div>
+          )}
 
           {item.groupSize > 1 && (
             <div className={styles.groupNote}>
@@ -357,11 +414,34 @@ export function ReviewTab({ sort, onSortChange }) {
           <span className="material-symbols-outlined" style={{ fontSize: 19 }}>redo</span>
           Skip
         </button>
+        <button
+          className={`${styles.actionBtn} ${isSplit ? styles.actionSplitOn : ''}`}
+          onClick={isSplit ? () => untagSplit(txn.transactionId) : doSplit}
+          disabled={splitBusy || txn.amount > 0}
+          title={txn.amount > 0 ? 'Only a charge can be split' : 'Someone owes me part of this'}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 19 }}>
+            {splitBusy ? 'progress_activity' : isSplit ? 'group' : 'call_split'}
+          </span>
+          {isSplit ? 'Splitting' : 'Split'}
+        </button>
         <button className={`${styles.actionBtn} ${styles.actionPrimary}`} onClick={() => setCatSheet(true)}>
           <span className="material-symbols-outlined" style={{ fontSize: 19 }}>list</span>
-          All categories
+          All
         </button>
       </div>
+
+      {splitResult && (
+        <div
+          className={styles.splitNote}
+          style={splitResult.ok ? undefined : { background: 'rgba(232,163,23,0.12)', color: '#8a6100' }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 17 }}>
+            {splitResult.ok ? 'check_circle' : 'schedule_send'}
+          </span>
+          {splitResult.message}
+        </div>
+      )}
 
       {undo && (
         <UndoToast
@@ -386,11 +466,16 @@ export function ReviewTab({ sort, onSortChange }) {
       {subSheet && (
         <SubcategorySheet
           category={subSheet.category}
-          onPick={(sub) => {
-            for (const id of subSheet.ids) updateTransactionSubcategory(id, sub);
-            setSubSheet(null);
-          }}
+          extra={[...(subsInUse.get(subSheet.category) || [])]}
+          onPick={applySubcategory}
+          onSkip={() => setSubSheet(null)}
           onClose={() => setSubSheet(null)}
+          footer={subSheet.offerRule && subSheet.merchant ? (
+            <label className={styles.rememberRow} style={{ margin: '0 var(--space-4) var(--space-3)' }}>
+              <input type="checkbox" checked={rememberSub} onChange={(e) => setRememberSub(e.target.checked)} />
+              <span>Remember this detail for <strong>“{subSheet.merchant}”</strong></span>
+            </label>
+          ) : null}
         />
       )}
     </>
