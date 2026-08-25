@@ -1699,3 +1699,174 @@
     padding: 8px 10px;
   }
 }
+
+/* ──────────────────────────────────────────────
+   Rent collision — the three surrounding months
+   ────────────────────────────────────────────── */
+
+/* A clash is only half the story. Whether to push the later payment forward or
+   drag the earlier one back is a judgement about which neighbour has the hole,
+   and the month before and after are what make that visible. */
+.rentMonths {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.rentMonth {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  background: var(--color-surface, #fff);
+  border: var(--border-medium);
+  border-radius: var(--radius-xl);
+  min-width: 0;
+}
+
+.rentMonthCollision {
+  border-color: rgba(232, 163, 23, 0.55);
+  background: rgba(232, 163, 23, 0.06);
+}
+
+.rentMonthTarget {
+  border-color: rgba(0, 88, 190, 0.45);
+  border-style: dashed;
+}
+
+.rentMonthLabel {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rentMonthTotal {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 3px;
+  font-family: var(--font-headline);
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--color-text-primary);
+}
+
+/* What the month becomes if the move is taken. The old figure stays legible
+   beside it — this is a proposal, not a done deal. */
+.rentMonthWas {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.rentMonthArrow {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.rentMonthMeta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.rentMonthList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: var(--border-ghost);
+}
+
+.rentMonthEntry {
+  min-width: 0;
+}
+
+/* One line, always — a bank description runs to eighty characters and would
+   otherwise set the width of all three boxes. */
+.rentMonthDesc {
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rentMonthRow {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  min-width: 0;
+}
+
+/* The one the button would move. Marked in place so the sentence "move this
+   one" points at a row rather than only at a date in the button label. */
+.rentMonthRowMoving {
+  font-weight: 700;
+  color: var(--color-warning, #e8a317);
+}
+
+.rentMonthDate {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.rentMonthAmount {
+  flex: none;
+  margin-left: auto;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+
+.rentMonthRowMoving .rentMonthAmount {
+  color: inherit;
+}
+
+.rentMonthEmpty {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: var(--border-ghost);
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--color-text-tertiary);
+}
+
+/* The landing slot in the month after, drawn where the payment would appear. */
+.rentMonthIncoming {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px dashed rgba(0, 88, 190, 0.45);
+  border-radius: var(--radius-lg);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--color-secondary, #0058be);
+}
+
+.rentMonthIncoming .rentMonthAmount {
+  color: inherit;
+}
+
+@media (max-width: 768px) {
+  .rentMonths {
+    grid-template-columns: 1fr;
+  }
+}

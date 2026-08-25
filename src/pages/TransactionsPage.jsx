@@ -1198,6 +1198,87 @@ const TransactionRow = memo(function TransactionRow({
  * Both payments are laid out with their dates and amounts so the difference is
  * visible before anything is changed.
  */
+/* One month of rent, as a box.
+
+   Three of these sit side by side — the month before the clash, the doubled
+   month, and the month the move would fill. Seeing all three is what makes the
+   decision possible: "two payments in December" says nothing about whether the
+   hole is in November or January, and that is exactly what decides between
+   pushing the later payment forward and dragging the earlier one back. */
+function RentMonthBox({ month, collision, money }) {
+  const isCollision = month.role === 'collision';
+  const isTarget = month.role === 'after';
+  const moved = collision.suggestedDate ? collision.moveAmount : 0;
+  // What the month is worth if the proposed move is taken. Only the two months
+  // the payment travels between change.
+  const after = isCollision ? month.total - moved : isTarget ? month.total + moved : month.total;
+  const changes = moved > 0 && (isCollision || isTarget);
+
+  return (
+    <div className={[
+      styles.rentMonth,
+      isCollision ? styles.rentMonthCollision : '',
+      isTarget && changes ? styles.rentMonthTarget : '',
+    ].filter(Boolean).join(' ')}>
+      <div className={styles.rentMonthLabel}>
+        {isCollision && (
+          <span className="material-symbols-outlined" style={{ fontSize: 13 }}>error</span>
+        )}
+        {month.label}
+      </div>
+
+      <div className={styles.rentMonthTotal}>
+        {changes ? (
+          <>
+            <span className={styles.rentMonthWas}>{money(month.total)}</span>
+            <span className={styles.rentMonthArrow}>→</span>
+            {money(after)}
+          </>
+        ) : money(month.total)}
+      </div>
+
+      <div className={styles.rentMonthMeta}>
+        {month.payments.length === 0
+          ? 'no rent credited'
+          : `${month.payments.length} payment${month.payments.length === 1 ? '' : 's'}`}
+      </div>
+
+      {month.payments.length > 0 ? (
+        <div className={styles.rentMonthList}>
+          {month.payments.map(p => {
+            const leaving = isCollision && p === collision.later && changes;
+            return (
+              <div key={txnKey(p)} className={styles.rentMonthEntry} title={p.description || ''}>
+                <div className={`${styles.rentMonthRow} ${leaving ? styles.rentMonthRowMoving : ''}`}>
+                  <span className={styles.rentMonthDate}>{formatDate(p.date)}</span>
+                  {leaving && (
+                    <span className="material-symbols-outlined" style={{ fontSize: 13 }}>east</span>
+                  )}
+                  <span className={styles.rentMonthAmount}>{money(p.amount)}</span>
+                </div>
+                {/* The description is what exposes a false positive — a parking
+                    reimbursement or a fee caught by the word "rent" is only
+                    recognisable by what it says. */}
+                <div className={styles.rentMonthDesc}>{p.description || '—'}</div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        !isTarget && <div className={styles.rentMonthEmpty}>nothing landed here</div>
+      )}
+
+      {isTarget && changes && (
+        <div className={styles.rentMonthIncoming}>
+          <span className="material-symbols-outlined" style={{ fontSize: 13 }}>south_east</span>
+          <span className={styles.rentMonthDate}>{formatDate(collision.suggestedDate)}</span>
+          <span className={styles.rentMonthAmount}>{money(moved)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RentCollisionNotice({ collisions, onMove, onDismiss }) {
   if (!collisions.length) return null;
 
@@ -1235,35 +1316,10 @@ function RentCollisionNotice({ collisions, onMove, onDismiss }) {
             dismiss this.
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
-            {c.payments.map((p) => {
-              const isLater = p === c.later;
-              return (
-                <div key={txnKey(p)} style={{
-                  display: 'flex', alignItems: 'baseline', gap: 10,
-                  fontSize: 12.5, color: 'var(--color-text-secondary)',
-                }}>
-                  <span style={{
-                    fontFamily: 'var(--font-headline)', fontWeight: 700, minWidth: 92,
-                    color: isLater ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-                  }}>
-                    {formatDate(p.date)}
-                  </span>
-                  <span style={{ fontWeight: 600 }}>{money(p.amount)}</span>
-                  <span style={{ color: 'var(--color-text-tertiary)' }}>
-                    {p.description || '—'}
-                  </span>
-                  {isLater && (
-                    <span style={{
-                      fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
-                      textTransform: 'uppercase', color: 'var(--color-warning, #e8a317)',
-                    }}>
-                      the later one
-                    </span>
-                  )}
-                </div>
-              );
-            })}
+          <div className={styles.rentMonths}>
+            {c.months.map(m => (
+              <RentMonthBox key={m.key} month={m} collision={c} money={money} />
+            ))}
           </div>
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
