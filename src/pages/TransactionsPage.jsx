@@ -654,12 +654,37 @@ function findRecurring(transactions) {
 // category edit — which only changes the edited transaction object — re-renders
 // just that one row instead of the whole visible page.
 const TransactionRow = memo(function TransactionRow({
-  t, i, selectedIds, visibleColumns, categoryRules, subcategoryRules, transactionNotes, accountNicknames, editingId, editingSubId, newCategoryText, manageCategoriesMode, renamingCategory, renameText, showHiddenCategories, subSearchText, categoryOptions, hiddenCategoryList, transactions, dropdownRef, subDropdownRef, findMatchingRules, toggleSelect, setEditingRule, setEditingId, setNewCategoryText, setManageCategoriesMode, setRenamingCategory, setRenameText, setShowHiddenCategories, handleCategorySelect, removeCategoryRule, flashSaved, updateTransactionCategory, renameCategory, removeCategory, unhideCategory, setEditingSubId, setSubSearchText, handleSubcategorySelect, removeSubcategoryRule, addSubcategoryRule, updateTransactionDate, updateTransactionNote, setAccountNickname, toggleHideTransaction,
+  t, i, selectedIds, visibleColumns, categoryRules, subcategoryRules, transactionNotes, accountNicknames, editingId, editingSubId, newCategoryText, manageCategoriesMode, renamingCategory, renameText, showHiddenCategories, subSearchText, categoryOptions, hiddenCategoryList, transactions, dropdownRef, subDropdownRef, findMatchingRules, toggleSelect, setEditingRule, setEditingId, setNewCategoryText, setManageCategoriesMode, setRenamingCategory, setRenameText, setShowHiddenCategories, handleCategorySelect, removeCategoryRule, flashSaved, updateTransactionCategory, renameCategory, removeCategory, unhideCategory, setEditingSubId, setSubSearchText, handleSubcategorySelect, removeSubcategoryRule, addSubcategoryRule, updateTransactionDate, updateTransactionNote, setAccountNickname, toggleHideTransaction, splitTag, tagForSplit, untagSplit,
 }) {
   const icon = getCategoryIcon(t.category);
   const color = catColor(t.category || 'Uncategorized');
   const bg = catBg(t.category || 'Uncategorized');
   const { catRules: rowCatRules, subRules: rowSubRules } = findMatchingRules(t);
+  // The hand-off to Rally is per-row and asynchronous, so the in-flight state
+  // lives on the row: one slow POST must not freeze the other buttons on the
+  // page, and the table shows fifty rows at a time.
+  const [splitBusy, setSplitBusy] = useState(false);
+  // Only a charge can be split — the bridge rejects income and zero outright —
+  // and a row with no transaction ID has nothing Rally could key on.
+  const canSplit = t.amount < 0 && !!t.transactionId;
+  const splitFailed = !!splitTag?.error;
+  const splitSending = splitBusy || !!splitTag?.sending;
+
+  /* A tag that reached Rally toggles back off; a tag that did not gets retried,
+     which is what the same state offers on the phone's Splits tab. Undoing an
+     unsent one is a second click: retry first, then untag. */
+  const onSplitClick = async () => {
+    if (splitSending) return;
+    if (splitTag && !splitFailed) {
+      untagSplit(t.transactionId);
+      flashSaved();
+      return;
+    }
+    setSplitBusy(true);
+    const res = await tagForSplit(t, {});
+    setSplitBusy(false);
+    if (res.ok) flashSaved();
+  };
   return (
     <tr className={selectedIds.has(t.transactionId) ? styles.selectedRow : ''}>
       <td>
@@ -1177,13 +1202,38 @@ const TransactionRow = memo(function TransactionRow({
         </div>
       </td>}
       <td>
-        <button
-          className={styles.hideBtn}
-          title="Hide from reporting"
-          onClick={() => { toggleHideTransaction(t.transactionId); flashSaved(); }}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
-        </button>
+        <div className={styles.rowActions}>
+          {canSplit && (
+            <button
+              className={[
+                styles.splitBtn,
+                splitTag && !splitFailed ? styles.splitBtnOn : '',
+                splitFailed ? styles.splitBtnFailed : '',
+              ].filter(Boolean).join(' ')}
+              title={splitFailed
+                ? 'Tagged to split — not sent to Rally yet. Click to retry.'
+                : splitTag
+                  ? 'Splitting in Rally — click to undo'
+                  : 'Split with Rally'}
+              aria-pressed={!!splitTag}
+              disabled={splitSending}
+              onClick={onSplitClick}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                {splitSending ? 'progress_activity'
+                  : splitFailed ? 'sync_problem'
+                    : splitTag ? 'group' : 'call_split'}
+              </span>
+            </button>
+          )}
+          <button
+            className={styles.hideBtn}
+            title="Hide from reporting"
+            onClick={() => { toggleHideTransaction(t.transactionId); flashSaved(); }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
+          </button>
+        </div>
       </td>
     </tr>
   );
@@ -1356,8 +1406,8 @@ function RentCollisionNotice({ collisions, onMove, onDismiss }) {
 }
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View } = useData();
-  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns, setActiveTxnView, setShowAccounts, setPareto8020View } = useDataActions();
+  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, splitTags, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View } = useData();
+  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, tagForSplit, untagSplit, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns, setActiveTxnView, setShowAccounts, setPareto8020View } = useDataActions();
   const [rentDismissed, setRentDismissed] = useState(loadRentDismissed);
   // Run over every transaction, not the filtered view — a rent clash is a fact
   // about the ledger and shouldn't disappear because the search box is narrow.
@@ -1389,6 +1439,7 @@ export function TransactionsPage() {
   const [editingAccountText, setEditingAccountText] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
+  const [bulkSplitBusy, setBulkSplitBusy] = useState(false);
   const [bulkCategorySearch, setBulkCategorySearch] = useState('');
   const [noSubOnly, setNoSubOnly] = useState(false);
   const [uncatRecentOnly, setUncatRecentOnly] = useState(false);
@@ -1399,6 +1450,10 @@ export function TransactionsPage() {
   const [bulkSubSearch, setBulkSubSearch] = useState('');
   const bulkSubRef = useRef(null);
   const [savedToast, setSavedToast] = useState(false);
+  // A bulk hand-off has a real result to report — how many went, how many
+  // didn't — and "Saved!" cannot carry that. Null keeps the old wording for
+  // every other caller.
+  const [toastMsg, setToastMsg] = useState(null);
   const [includedCategories, setIncludedCategories] = useState(new Set());
   const [includedSubcategories, setIncludedSubcategories] = useState(new Set());
   const [chartMode, setChartMode] = useState('stacked');
@@ -2121,10 +2176,12 @@ export function TransactionsPage() {
 
   /* ── Handler functions ── */
 
-  const flashSaved = useCallback(() => {
+  const flashSaved = useCallback((message, ok = true) => {
+    setToastMsg(message ? { text: message, ok } : null);
     setSavedToast(true);
     clearTimeout(savedTimer.current);
-    savedTimer.current = setTimeout(() => setSavedToast(false), 1500);
+    // A sentence needs longer on screen than a tick does.
+    savedTimer.current = setTimeout(() => setSavedToast(false), message ? 4000 : 1500);
   }, []);
 
   function handleSort(col) {
@@ -2349,6 +2406,50 @@ export function TransactionsPage() {
     setSelectedIds(new Set());
     setBulkSubOpen(false);
     setBulkSubSearch('');
+  }
+
+  /* Send every selected charge to Rally in one go.
+
+     Income and rows with no transaction ID are skipped rather than counted as
+     failures: the bridge rejects both by design, and a selection made by
+     dragging down a column will routinely catch a few. Charges already sitting
+     in Rally are skipped too, so running this again after a partial failure
+     retries only the stragglers instead of double-posting the rest. */
+  async function handleBulkSplit() {
+    if (bulkSplitBusy) return;
+    const chosen = filtered.filter(t => selectedIds.has(t.transactionId));
+    const eligible = chosen.filter(t => t.amount < 0 && t.transactionId);
+    const skipped = chosen.length - eligible.length;
+    const pending = eligible.filter(t => !splitTags[t.transactionId] || splitTags[t.transactionId].error);
+
+    if (pending.length === 0) {
+      flashSaved(
+        skipped > 0 && eligible.length === 0
+          ? `Nothing to send — ${skipped} of those can't be split`
+          : 'Those are already with Rally',
+        eligible.length > 0,
+      );
+      return;
+    }
+
+    setBulkSplitBusy(true);
+    let sent = 0;
+    let failed = 0;
+    // One at a time. A bulk tag is still a queue of individual hand-offs, and
+    // firing fifty at once is fifty ways for one flaky moment to go wrong.
+    for (const t of pending) {
+      const res = await tagForSplit(t, {});
+      if (res.ok) sent += 1;
+      else failed += 1;
+    }
+    setBulkSplitBusy(false);
+    setSelectedIds(new Set());
+
+    const parts = [];
+    if (sent > 0) parts.push(`${sent} sent to Rally`);
+    if (failed > 0) parts.push(`${failed} tagged but not sent — retry from Splits`);
+    if (skipped > 0) parts.push(`${skipped} skipped`);
+    flashSaved(parts.join(' · '), failed === 0);
   }
 
   /* Count of uncategorized transactions over $20 in the past 30 days */
@@ -2950,6 +3051,16 @@ export function TransactionsPage() {
           </button>
           <button
             className={styles.bulkBtn}
+            onClick={handleBulkSplit}
+            disabled={bulkSplitBusy}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+              {bulkSplitBusy ? 'progress_activity' : 'call_split'}
+            </span>
+            {bulkSplitBusy ? 'Sending…' : 'Split with Rally'}
+          </button>
+          <button
+            className={styles.bulkBtn}
             onClick={() => {
               selectedIds.forEach(id => toggleHideTransaction(id));
               setSelectedIds(new Set());
@@ -3362,7 +3473,7 @@ export function TransactionsPage() {
                     </th>
                   );
                 })}
-                <th style={{ width: 40 }}></th>
+                <th style={{ width: 72 }}></th>
               </tr>
               <tr className={styles.filterRow}>
                 <th></th>
@@ -3461,6 +3572,9 @@ export function TransactionsPage() {
                     updateTransactionNote={updateTransactionNote}
                     setAccountNickname={setAccountNickname}
                     toggleHideTransaction={toggleHideTransaction}
+                    splitTag={splitTags[t.transactionId]}
+                    tagForSplit={tagForSplit}
+                    untagSplit={untagSplit}
                     editingId={isCatRow ? editingId : null}
                     editingSubId={isSubRow ? editingSubId : null}
                     newCategoryText={isCatRow ? newCategoryText : ''}
@@ -4047,8 +4161,10 @@ export function TransactionsPage() {
 
       {/* Saved toast */}
       <div className={`${styles.savedToast} ${savedToast ? styles.savedToastVisible : ''}`}>
-        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check_circle</span>
-        Saved!
+        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+          {toastMsg && !toastMsg.ok ? 'error' : 'check_circle'}
+        </span>
+        {toastMsg ? toastMsg.text : 'Saved!'}
       </div>
 
       {/* Color picker popover */}

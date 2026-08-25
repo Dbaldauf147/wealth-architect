@@ -583,6 +583,64 @@
   color: #ba1a1a;
 }
 
+/* Row actions — the hide button and, on a charge, the split button.
+
+   Hide stays behind a hover because it is an affordance you go looking for.
+   A split tag is not an affordance, it is state, and state that only appears
+   under the cursor is state you cannot scan a page for — so once a row is
+   tagged its button stays lit. The magenta is the phone's split colour, so a
+   charge reads the same on both screens. */
+.rowActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.splitBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  opacity: 0.45;
+  transition: all var(--transition-fast);
+}
+
+.table tr:hover .splitBtn {
+  opacity: 1;
+}
+
+.splitBtn:hover {
+  background: rgba(217, 70, 239, 0.1);
+  color: #a21caf;
+}
+
+.splitBtn:disabled {
+  cursor: default;
+}
+
+.splitBtnOn,
+.table tr:hover .splitBtnOn {
+  opacity: 1;
+  background: rgba(217, 70, 239, 0.1);
+  color: #a21caf;
+}
+
+/* Tagged but never delivered. Amber rather than red: nothing is broken, the
+   charge is simply still queued, and the click retries it. */
+.splitBtnFailed,
+.table tr:hover .splitBtnFailed {
+  opacity: 1;
+  background: rgba(232, 163, 23, 0.14);
+  color: #a16207;
+}
+
 /* Hidden transactions toggle + panel */
 .hiddenToggle {
   display: inline-flex;
