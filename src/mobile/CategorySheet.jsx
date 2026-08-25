@@ -2,6 +2,41 @@ import { useState, useMemo, useEffect } from 'react';
 import { getCategoryIcon, catColor, catBg, SUBCATEGORIES } from '../lib/categories';
 import styles from './MobileApp.module.css';
 
+/* Where the keyboard is, so the sheet can sit on top of it.
+
+   The sheet is anchored to the bottom of the layout viewport, and opening the
+   keyboard does not shrink that viewport on iOS — so tapping the search box
+   slides the list it filters underneath the keyboard, which is exactly where
+   you cannot read it. The visual viewport does know where the keyboard ends;
+   measure the gap between the two and lift the sheet by it. */
+function useKeyboardInset() {
+  const [inset, setInset] = useState(0);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return undefined;
+    const update = () => {
+      const gap = window.innerHeight - vv.height - vv.offsetTop;
+      // A collapsing URL bar and sub-pixel rounding both land in this gap.
+      // Only something keyboard-sized is worth moving the sheet for.
+      setInset(gap > 90 ? Math.round(gap) : 0);
+    };
+    update();
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+    };
+  }, []);
+  return inset;
+}
+
+// Riding above the keyboard costs the sheet that much of its own height, or
+// the top of it would run off the screen instead.
+function sheetStyle(inset) {
+  return inset ? { bottom: inset, maxHeight: `calc(88dvh - ${inset}px)` } : undefined;
+}
+
 /* The full category list, as a bottom sheet.
 
    Used both when a suggestion is wrong and when the user wants to set a
@@ -18,6 +53,7 @@ export function CategorySheet({
   onClose,
 }) {
   const [query, setQuery] = useState('');
+  const keyboardInset = useKeyboardInset();
 
   // Callers mount the sheet only while it is open, so the search box starts
   // empty every time without an effect having to clear it.
@@ -42,7 +78,7 @@ export function CategorySheet({
   return (
     <>
       <div className={styles.sheetBackdrop} onClick={onClose} />
-      <div className={styles.sheet} role="dialog" aria-modal="true" aria-label={title}>
+      <div className={styles.sheet} style={sheetStyle(keyboardInset)} role="dialog" aria-modal="true" aria-label={title}>
         <div className={styles.sheetGrip} />
         <div className={styles.sheetHead}>
           <div className={styles.sheetTitle}>{title}</div>
@@ -110,6 +146,7 @@ export function CategorySheet({
 /* The subcategory sheet is the same shape with a different list — separate
    component so the caller doesn't have to thread a mode flag through. */
 export function SubcategorySheet({ category, active, onPick, onClose, extra, onSkip, footer }) {
+  const keyboardInset = useKeyboardInset();
   const options = useMemo(() => {
     const base = SUBCATEGORIES[category] || [];
     const seen = new Set(base);
@@ -120,7 +157,7 @@ export function SubcategorySheet({ category, active, onPick, onClose, extra, onS
   return (
     <>
       <div className={styles.sheetBackdrop} onClick={onClose} />
-      <div className={styles.sheet} role="dialog" aria-modal="true" aria-label="Choose a subcategory">
+      <div className={styles.sheet} style={sheetStyle(keyboardInset)} role="dialog" aria-modal="true" aria-label="Choose a subcategory">
         <div className={styles.sheetGrip} />
         <div className={styles.sheetHead}>
           <div className={styles.sheetTitle}>{category} detail</div>

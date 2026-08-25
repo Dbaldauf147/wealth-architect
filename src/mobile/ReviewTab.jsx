@@ -27,8 +27,13 @@ export function ReviewTab({ sort, onSortChange, askSub }) {
   } = useDataActions();
 
   const [skipped, setSkipped] = useState(() => new Set());
-  const [remember, setRemember] = useState(true);
-  const [rememberSub, setRememberSub] = useState(true);
+  // Both remember toggles start off. A rule is a standing instruction that goes
+  // on filing transactions long after this card is gone, so it should be a thing
+  // you reach for — not the thing that happens when you file an expense without
+  // reading the checkbox. Held as the card key it was ticked for rather than a
+  // bare boolean, so moving to the next card puts it back down on its own.
+  const [rememberFor, setRememberFor] = useState(null);
+  const [rememberSub, setRememberSub] = useState(false);
   const [catSheet, setCatSheet] = useState(false);
   const [subSheet, setSubSheet] = useState(null); // { category, ids }
   const [undo, setUndo] = useState(null);
@@ -87,6 +92,7 @@ export function ReviewTab({ sort, onSortChange, askSub }) {
 
   const item = queue[0] || null;
   const txn = item?.txn || null;
+  const remember = !!item && rememberFor === item.key;
 
   const suggestions = useMemo(() => {
     if (!txn) return [];
@@ -150,6 +156,7 @@ export function ReviewTab({ sort, onSortChange, askSub }) {
     // seconds. Skipping is one tap, and turning the prompt off entirely is a
     // switch on the Rules screen for anyone clearing a big backlog.
     if (hasSubs && askSub) {
+      setRememberSub(false);
       setSubSheet({ category, ids, merchant: ruleText, offerRule: true });
     }
     setDrag(0);
@@ -401,7 +408,7 @@ export function ReviewTab({ sort, onSortChange, askSub }) {
 
       {ruleText && (
         <label className={styles.rememberRow}>
-          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+          <input type="checkbox" checked={remember} onChange={(e) => setRememberFor(e.target.checked ? item.key : null)} />
           <span>
             Remember <strong>“{ruleText}”</strong>
             {ruleReach > 1 ? ` — a rule covering ${ruleReach} transactions, now and later` : ' as a rule for next time'}
