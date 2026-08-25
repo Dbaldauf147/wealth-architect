@@ -54,7 +54,7 @@ export function SplitsTab() {
         <div className={styles.emptyTitle}>Nothing to split</div>
         <div className={styles.emptyText}>
           Tap <strong>Split</strong> on a charge in Review and it shows up here, and in Rally
-          under Expenses.
+          under Trip Expenses.
         </div>
       </div>
     );
@@ -71,7 +71,7 @@ export function SplitsTab() {
         <div className={styles.progressAmount}>
           {unsent > 0
             ? `${unsent} not sent to Rally yet — tap to retry`
-            : 'All sent. Set the shares in Rally under Expenses.'}
+            : 'All sent. Set the shares in Rally under Trip Expenses.'}
         </div>
       </div>
 
