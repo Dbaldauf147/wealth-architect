@@ -446,6 +446,20 @@
 }
 
 .rememberRow input { width: 18px; height: 18px; accent-color: var(--color-secondary); }
+/* A sentence under a setting — why it is off, or what it will and will not do. */
+.settingNote {
+  margin: var(--space-2) 0 0;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+.settingNote strong {
+  color: var(--color-text-secondary);
+  font-weight: 650;
+}
+
 .rememberRow strong { color: var(--color-text-primary); font-weight: 650; }
 
 /* ── Bottom sheet ───────────────────────────────────── */

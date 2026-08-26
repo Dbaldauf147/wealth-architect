@@ -3,6 +3,7 @@ import { useData, useDataActions } from '../contexts/DataContext';
 import { ruleMatches } from '../lib/categorize';
 import { ALL_CATEGORIES, SUBCATEGORIES, getCategoryIcon, catColor, catBg } from '../lib/categories';
 import { CategorySheet, SubcategorySheet } from './CategorySheet';
+import { badgeBlocker } from './appBadge';
 import styles from './MobileApp.module.css';
 
 /* Managing the rules themselves.
@@ -30,7 +31,43 @@ const KINDS = {
   },
 };
 
-export function RulesTab({ askSub, onAskSubChange }) {
+/* The home screen count, and why it isn't available when it isn't.
+
+   Every way this can fail is silent — an uninstalled app, a browser that has
+   no Badging API, a refusal iOS will not let the page ask about twice — so a
+   plain checkbox would read as broken. Each blocker gets its own sentence,
+   and the checkbox only appears when ticking it would do something. */
+function HomeBadgeSetting({ on, onChange }) {
+  const [blocker, setBlocker] = useState(() => badgeBlocker());
+
+  const toggle = useCallback(async (next) => {
+    const result = await onChange(next);
+    // A refusal only shows up after the prompt has been answered.
+    if (result === 'denied') setBlocker('denied');
+  }, [onChange]);
+
+  if (blocker) {
+    const why = {
+      unsupported: 'Your browser can’t put a count on an app icon. On an iPhone this needs iOS 16.4 or later.',
+      'not-installed': 'Add this to your home screen first — Share, then Add to Home Screen — and the count can go on its icon.',
+      denied: 'Notifications are off for this app, and the count is drawn under that permission. Turn them back on in Settings › Notifications › Categorize.',
+    }[blocker];
+    return (
+      <div className={styles.settingNote} style={{ marginTop: 'var(--space-3)' }}>
+        <strong>Backlog count on the app icon.</strong> {why}
+      </div>
+    );
+  }
+
+  return (
+    <label className={styles.rememberRow}>
+      <input type="checkbox" checked={on} onChange={(e) => toggle(e.target.checked)} />
+      <span>Show the backlog <strong>count on the app icon</strong></span>
+    </label>
+  );
+}
+
+export function RulesTab({ askSub, onAskSubChange, badgeOn, onBadgeChange }) {
   const { categoryRules, subcategoryRules, transactions, customCategories, hiddenCategories, categoryColors } = useData();
   const {
     updateCategoryRule, removeCategoryRule, addCategoryRule,
@@ -153,6 +190,13 @@ export function RulesTab({ askSub, onAskSubChange }) {
         <input type="checkbox" checked={askSub} onChange={(e) => onAskSubChange(e.target.checked)} />
         <span>Ask for a <strong>detail</strong> after each category</span>
       </label>
+
+      <HomeBadgeSetting on={badgeOn} onChange={onBadgeChange} />
+
+      <div className={styles.settingNote}>
+        The count is written while the app is open, so filing on the desktop
+        site leaves it stale until you next open this one.
+      </div>
 
       {rules.length > 6 && (
         <div className={styles.search}>

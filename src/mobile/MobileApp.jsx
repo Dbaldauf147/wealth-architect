@@ -6,6 +6,7 @@ import { RecentTab } from './RecentTab';
 import { InsightsTab } from './InsightsTab';
 import { SplitsTab } from './SplitsTab';
 import { RulesTab } from './RulesTab';
+import { applyBadge, clearBadge, badgeBlocker, requestBadgePermission } from './appBadge';
 import styles from './MobileApp.module.css';
 
 const TABS = [
@@ -21,6 +22,8 @@ const ALL_VIEWS = [...TABS.map(t => t.id), 'rules'];
 
 const SORT_KEY = 'mobileReviewSort';
 const ASK_SUB_KEY = 'mobileAskSubcategory';
+const BADGE_KEY = 'mobileHomeBadge';
+const BADGE_ASKED_KEY = 'mobileHomeBadgeAsked';
 
 function readHashTab() {
   const hash = window.location.hash.replace(/^#/, '');
@@ -42,6 +45,15 @@ export function MobileApp() {
   });
   const [askSub, setAskSub] = useState(() => {
     try { return localStorage.getItem(ASK_SUB_KEY) !== '0'; } catch { return true; }
+  });
+  // Off until asked for. Switching it on needs a permission prompt, and a
+  // prompt nobody asked for is the fastest way to get notifications denied for
+  // good — iOS gives you one refusal and then only Settings can undo it.
+  const [badgeOn, setBadgeOn] = useState(() => {
+    try { return localStorage.getItem(BADGE_KEY) === '1'; } catch { return false; }
+  });
+  const [badgeAsked, setBadgeAsked] = useState(() => {
+    try { return localStorage.getItem(BADGE_ASKED_KEY) === '1'; } catch { return true; }
   });
   const [installEvent, setInstallEvent] = useState(null);
   const { transactions, loading, syncing, error, lastSync } = useData();
@@ -87,6 +99,32 @@ export function MobileApp() {
     try { localStorage.setItem(ASK_SUB_KEY, next ? '1' : '0'); } catch { /* private mode */ }
   }, []);
 
+  /* Turn the home screen count on, which means asking for the permission it is
+     drawn under. Has to run off a tap: iOS ignores an unprompted request, and
+     spends the one refusal you get if it decides you were being pushy. */
+  const enableBadge = useCallback(async () => {
+    setBadgeAsked(true);
+    try { localStorage.setItem(BADGE_ASKED_KEY, '1'); } catch { /* private mode */ }
+    const result = await requestBadgePermission();
+    const on = result === 'granted';
+    setBadgeOn(on);
+    try { localStorage.setItem(BADGE_KEY, on ? '1' : '0'); } catch { /* private mode */ }
+    return result;
+  }, []);
+
+  const changeBadge = useCallback(async (next) => {
+    if (next) return enableBadge();
+    setBadgeOn(false);
+    try { localStorage.setItem(BADGE_KEY, '0'); } catch { /* private mode */ }
+    clearBadge();
+    return 'off';
+  }, [enableBadge]);
+
+  const dismissBadgeOffer = useCallback(() => {
+    setBadgeAsked(true);
+    try { localStorage.setItem(BADGE_ASKED_KEY, '1'); } catch { /* private mode */ }
+  }, []);
+
   // Chrome/Edge fire this when the app is installable; iOS Safari never does,
   // and there the user installs from the share sheet, so the prompt is simply
   // absent rather than broken.
@@ -101,8 +139,33 @@ export function MobileApp() {
     };
   }, []);
 
-  const pending = useMemo(() => reviewStats(transactions).count, [transactions]);
+  /* What is actually left to file.
+
+     Only transactions carrying an ID, because the whole config layer is keyed
+     by one and the review deck drops the rest — counting them gives a number
+     no amount of work can bring down. That was survivable when this only fed
+     the tab badge, which disagreed with the deck's own progress strip; it is
+     not survivable on a home screen icon, where the red dot would never clear. */
+  const pending = useMemo(
+    () => reviewStats((transactions || []).filter(t => t.transactionId)).count,
+    [transactions],
+  );
   const busy = loading || syncing;
+
+  /* Write the backlog onto the icon whenever it moves.
+
+     iOS has no periodic background sync, so this is the only moment the count
+     can be written: while the app is open. It then holds that value on the
+     icon until the app is next opened — which is what makes it a reminder,
+     and also why filing on the desktop site leaves it briefly stale. */
+  useEffect(() => {
+    if (!badgeOn) return;
+    applyBadge(pending);
+  }, [badgeOn, pending]);
+
+  // Worth offering only when it would do something: an installed app, a
+  // permission still unasked, and a backlog to actually count.
+  const offerBadge = !badgeAsked && !badgeOn && pending > 0 && badgeBlocker() === null;
 
   return (
     <div className={styles.app}>
@@ -160,6 +223,24 @@ export function MobileApp() {
           </div>
         )}
 
+        {offerBadge && (
+          <div className={styles.install}>
+            <span className="material-symbols-outlined" style={{ fontSize: 19 }}>notifications_active</span>
+            Show {pending} on the app icon
+            <button className={styles.installBtn} onClick={enableBadge}>
+              Turn on
+            </button>
+            <button
+              className={styles.iconBtn}
+              style={{ width: 28, height: 28 }}
+              onClick={dismissBadgeOffer}
+              aria-label="Not now"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
+            </button>
+          </div>
+        )}
+
         {error && (
           <div className={styles.install} style={{ background: 'rgba(186,26,26,0.08)', color: 'var(--color-error)' }}>
             <span className="material-symbols-outlined" style={{ fontSize: 19 }}>cloud_off</span>
@@ -180,7 +261,14 @@ export function MobileApp() {
             {tab === 'recent' && <RecentTab />}
             {tab === 'splits' && <SplitsTab />}
             {tab === 'insights' && <InsightsTab onGoReview={() => go('review')} />}
-            {tab === 'rules' && <RulesTab askSub={askSub} onAskSubChange={changeAskSub} />}
+            {tab === 'rules' && (
+              <RulesTab
+                askSub={askSub}
+                onAskSubChange={changeAskSub}
+                badgeOn={badgeOn}
+                onBadgeChange={changeBadge}
+              />
+            )}
           </>
         )}
       </div>
