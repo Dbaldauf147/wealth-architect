@@ -45,6 +45,10 @@ export function dayNumber(input) {
 const NOISE = new Set([
   'the', 'inc', 'llc', 'co', 'corp', 'ltd', 'store', 'purchase', 'pos', 'debit',
   'credit', 'card', 'payment', 'us', 'usa', 'ny', 'nyc', 'com', 'www', 'http', 'https',
+  // Card networks and tiers. Present on nearly every card name, so they agree
+  // with everything and distinguish nothing — "Prime Visa" has to match on
+  // "prime" or it would match every Visa in the ledger.
+  'visa', 'mastercard', 'amex', 'discover', 'signature', 'platinum', 'gold', 'rewards',
 ]);
 
 function words(text) {
@@ -105,6 +109,15 @@ function score(alert, t, alertDay) {
 
   // A card's last four, when both sides carry one, is near-proof.
   if (alert.card && t.account && String(t.account).includes(alert.card)) points += 4;
+
+  /* Failing that, the name the alert was sent under.
+   *
+   * Plenty of issuers quote no last four at all and instead send as the card
+   * itself — "Prime Visa", "Chase Sapphire Reserve Visa". That is the only
+   * thing in the message saying which card was used, and it is exactly what
+   * separates two charges of the same size on different cards. Worth less than
+   * a last four, being a fuzzy name match, but enough to break a tie. */
+  if (alert.bank && t.account) points += merchantSimilarity(alert.bank, t.account) * 3;
 
   return points;
 }

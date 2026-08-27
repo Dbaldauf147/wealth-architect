@@ -142,3 +142,46 @@ describe('parseAlert — robustness', () => {
     expect(got.raw).toBe('Chase: A $5.00 purchase at X');
   });
 });
+
+/* The two wordings actually arriving on this phone, kept verbatim.
+ *
+ * The published formats above are what issuers document; these are what Chase
+ * really sends, and they differ in a way that mattered — the sender is the
+ * card, not the bank, and there is no last four anywhere in the message. */
+describe('parseAlert — the alerts this account really gets', () => {
+  it('reads a Prime Visa alert', () => {
+    const got = parseAlert(
+      'Prime Visa: You made a $108.82 transaction with AMAZON MKTPLACE PMTS on Aug 27, 2026 at 2:10 PM ET.',
+    );
+    expect(got).toMatchObject({
+      ok: true,
+      amount: 108.82,
+      merchant: 'AMAZON MKTPLACE PMTS',
+      date: '2026-08-27',
+      bank: 'Prime Visa',
+      refund: false,
+    });
+  });
+
+  it('keeps a card name too long for a bank name', () => {
+    // "Chase Sapphire Reserve Visa" is 27 characters and used to fall off the
+    // end of the sender pattern, taking the only clue about which card it was.
+    const got = parseAlert(
+      'Chase Sapphire Reserve Visa: You made a $108.88 transaction with Hubspot Inc. on Aug 24, 2026 at 7:13 PM ET.',
+    );
+    expect(got).toMatchObject({
+      ok: true,
+      amount: 108.88,
+      merchant: 'Hubspot Inc',
+      date: '2026-08-24',
+      bank: 'Chase Sapphire Reserve Visa',
+    });
+  });
+
+  it('is not fooled by the trailing "at 2:10 PM" into calling that the merchant', () => {
+    const got = parseAlert(
+      'Prime Visa: You made a $9.99 transaction with SPOTIFY on Aug 27, 2026 at 2:10 PM ET.',
+    );
+    expect(got.merchant).toBe('SPOTIFY');
+  });
+});

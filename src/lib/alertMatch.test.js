@@ -176,3 +176,41 @@ describe('a bank text, end to end', () => {
     expect(ready[0].transaction.transactionId).toBe('T900');
   });
 });
+
+describe('telling two cards apart by the name the alert came from', () => {
+  // Chase sends as the card — "Prime Visa" — and quotes no last four, so the
+  // sender label is the only thing saying which card was used.
+  const sameDayTwins = [
+    txn('prime', '2026-08-27', -108.82, 'AMAZON MKTPLACE PMTS', { account: 'Amazon Prime Visa' }),
+    txn('csr', '2026-08-27', -108.82, 'AMAZON MKTPLACE PMTS', { account: 'Chase Sapphire Reserve' }),
+  ];
+
+  it('picks the card the alert was sent from', () => {
+    const got = matchAlert(
+      { amount: 108.82, merchant: 'AMAZON MKTPLACE PMTS', date: '2026-08-27', bank: 'Prime Visa' },
+      sameDayTwins,
+    );
+    expect(got.transaction.transactionId).toBe('prime');
+  });
+
+  it('picks the other one when the alert came from the other card', () => {
+    const got = matchAlert(
+      { amount: 108.82, merchant: 'AMAZON MKTPLACE PMTS', date: '2026-08-27', bank: 'Chase Sapphire Reserve Visa' },
+      sameDayTwins,
+    );
+    expect(got.transaction.transactionId).toBe('csr');
+  });
+
+  it('still refuses when there is no card name to separate them', () => {
+    const got = matchAlert(
+      { amount: 108.82, merchant: 'AMAZON MKTPLACE PMTS', date: '2026-08-27' },
+      sameDayTwins,
+    );
+    expect(got).toBeNull();
+  });
+
+  it('does not let "Visa" alone vouch for a card', () => {
+    // Every Visa in the ledger would otherwise corroborate every Visa alert.
+    expect(merchantSimilarity('Prime Visa', 'Chase Sapphire Reserve Visa')).toBe(0);
+  });
+});

@@ -58,6 +58,12 @@ then stops existing; one nobody answers simply expires.
 | `src/lib/alertMatch.js` | Joins an alert to the transaction that later arrives. Pure; tested |
 | `src/mobile/AlertsStrip.jsx` | The card above the review deck that asks the question |
 
+Some issuers send as the card rather than the bank — `Prime Visa:`, `Chase
+Sapphire Reserve Visa:` — and quote no last four anywhere. That sender label
+is then the only thing saying which card was used, so it is kept and matched
+against the transaction’s account; network words (`visa`, `amex`, `platinum`)
+are ignored in that comparison or every Visa would vouch for every other.
+
 Matching is on the **amount**, exact to the cent — it is the one field neither
 the bank nor the network rewrites. The merchant only corroborates, and the date
 window allows two days early and ten late for a card to post. Where two

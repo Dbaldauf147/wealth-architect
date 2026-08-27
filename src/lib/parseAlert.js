@@ -120,9 +120,17 @@ function readDate(text) {
   return null;
 }
 
-/** Whoever sent it, from the "Chase:" / "BofA:" opener. */
+/**
+ * Whoever sent it, from the "Chase:" / "BofA:" opener.
+ *
+ * Often the card rather than the bank — "Prime Visa", "Chase Sapphire Reserve
+ * Visa" — which is more useful than it looks: where the alert quotes no last
+ * four, this is the only thing saying which card was used, and the matcher
+ * leans on it to tell two same-priced charges apart. Long enough to keep a
+ * full card name; anything past that is not a sender label.
+ */
 function readBank(text) {
-  const m = /^\s*([A-Za-z][A-Za-z0-9 &.'-]{1,24}?)\s*:/.exec(text);
+  const m = /^\s*([A-Za-z][A-Za-z0-9 &.'-]{1,44}?)\s*:/.exec(text);
   if (!m) return null;
   return m[1].replace(/\b(alert|alerts|free msg|freemsg)\b/gi, '').replace(/\s{2,}/g, ' ').trim() || null;
 }
