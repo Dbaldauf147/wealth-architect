@@ -34,6 +34,14 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false;
     }
+    // Purchase alerts pushed from the phone by a Shortcuts automation, through
+    // api/spend-alert. The server writes them with the Admin SDK, which bypasses
+    // these rules; the browser needs write as well as read because choosing a
+    // category for an alert, and marking it applied, both happen on the device.
+    // Open like /config/default for the same reason — there is no auth yet.
+    match /spendAlerts/{doc} {
+      allow read, write: if true;
+    }
     match /{document=**} {
       allow read, write: if false;
     }

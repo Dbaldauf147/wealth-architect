@@ -1,7 +1,8 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, updateDoc, collection, query, orderBy, limit } from 'firebase/firestore';
 import { fetchTransactions, fetchBalances, fetchBalanceHistory, computeAnalytics } from '../utils/sheets';
 import { db } from '../firebase';
+import { pendingApplications } from '../lib/alertMatch';
 import {
   normalizeDesc,
   txnFallbackKey,
@@ -19,6 +20,10 @@ import {
 } from '../lib/privacy';
 
 const CONFIG_DOC_PATH = ['config', 'default'];
+const ALERTS_PATH = 'spendAlerts';
+// One document per purchase, and every device reads the collection, so the
+// subscription is capped rather than left to grow without limit.
+const ALERTS_LIMIT = 60;
 
 const DataContext = createContext(null);
 const DataActionsContext = createContext(null);
@@ -686,6 +691,10 @@ export function DataProvider({ children }) {
   const [calendarSyncPrefs, setCalendarSyncPrefs] = useState(loadCalendarSyncPrefs);
   const [weeklyEmailSections, setWeeklyEmailSections] = useState(loadWeeklyEmailSections);
   const [weeklyEmailDay, setWeeklyEmailDay] = useState(loadWeeklyEmailDay);
+  // Purchase alerts pushed from the phone, newest first. Server-written, so
+  // there is nothing to hydrate from localStorage — an alert that has not
+  // reached Firestore does not exist.
+  const [spendAlerts, setSpendAlerts] = useState([]);
   const [rawBalances, setRawBalances] = useState(initialCache?.balances || null);
   const [balanceHistory, setBalanceHistory] = useState(initialCache?.balanceHistory || []);
   // Only true on the first cold load when we have nothing on disk to show.
@@ -755,6 +764,31 @@ export function DataProvider({ children }) {
     setShowAccountsState(m.showAccounts); saveShowAccounts(m.showAccounts);
     setPareto8020ViewState(m.pareto8020View); savePareto8020View(m.pareto8020View);
     setHiddenIds(m.hiddenTransactionIds); saveHiddenIds(m.hiddenTransactionIds);
+  }, []);
+
+  /* The purchase-alert queue, live.
+
+     Bounded to the most recent slice rather than the whole collection: it
+     grows by one document per purchase forever, and every device subscribes
+     to it. Anything old enough to fall outside this window has either been
+     applied to its transaction already or was never going to be.
+
+     Deliberately not merged into the config doc. The page writes that one
+     back whole, so a server-written field there would be wiped by the next
+     save from any device. */
+  useEffect(() => {
+    const q = query(collection(db, ALERTS_PATH), orderBy('receivedAt', 'desc'), limit(ALERTS_LIMIT));
+    const unsub = onSnapshot(
+      q,
+      (snap) => setSpendAlerts(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      (err) => {
+        // A missing rule or an offline start is not worth taking the app
+        // down for — the rest of it does not depend on alerts existing.
+        console.warn('Purchase alerts unavailable:', err?.message || err);
+        setSpendAlerts([]);
+      },
+    );
+    return unsub;
   }, []);
 
   // Live Firestore subscription. The first server snapshot hydrates via a
@@ -1037,6 +1071,20 @@ export function DataProvider({ children }) {
       saveCategoryOverrides(next);
       return next;
     });
+  }, []);
+
+  /* Write a decision onto an alert. Firestore rather than local state, so a
+     category chosen on the phone is not asked for again on the laptop. */
+  const categorizeAlert = useCallback((id, category) => {
+    if (!id) return Promise.resolve();
+    return updateDoc(doc(db, ALERTS_PATH, id), { category: category || null })
+      .catch(err => console.warn('Could not save the alert category:', err?.message || err));
+  }, []);
+
+  const dismissAlert = useCallback((id) => {
+    if (!id) return Promise.resolve();
+    return updateDoc(doc(db, ALERTS_PATH, id), { dismissed: true })
+      .catch(err => console.warn('Could not dismiss the alert:', err?.message || err));
   }, []);
 
   const updateTransactionSubcategory = useCallback((transactionId, newSubcategory) => {
@@ -1893,11 +1941,43 @@ export function DataProvider({ children }) {
   // changes after mount. Components that only need to write can subscribe to
   // DataActionsContext via useDataActions() and skip re-renders entirely
   // when reads (transactions, overrides, etc.) change.
+  /* Hand a decided alert its transaction, once that transaction exists.
+
+     This is the whole point of the feature: the category was chosen at the
+     till, when the purchase was still a memory, and it waits here until the
+     sheet catches up days later. pendingApplications is the careful half —
+     it will not match ambiguously and will not overwrite a category already
+     set by hand.
+
+     The ref guards the gap between writing the override and Firestore
+     echoing appliedTo back, which is several hundred milliseconds of renders
+     during which the alert still looks unapplied. */
+  const appliedAlerts = useRef(new Set());
+  useEffect(() => {
+    const ready = pendingApplications(spendAlerts, transactions);
+    for (const { alert, transaction, category } of ready) {
+      if (appliedAlerts.current.has(alert.id)) continue;
+      appliedAlerts.current.add(alert.id);
+      updateTransactionCategory(transaction.transactionId, null, category);
+      updateDoc(doc(db, ALERTS_PATH, alert.id), {
+        appliedTo: transaction.transactionId,
+        appliedAt: new Date().toISOString(),
+      }).catch(err => {
+        // The override is already written locally and syncs through the
+        // config doc; failing to stamp the alert only risks it being
+        // reapplied, which is idempotent.
+        console.warn('Could not stamp the alert as applied:', err?.message || err);
+      });
+    }
+  }, [spendAlerts, transactions, updateTransactionCategory]);
+
   const actions = useMemo(() => ({
     refresh: loadData,
     setPrivacyMode,
     updateTransactionCategory,
     updateTransactionSubcategory,
+    categorizeAlert,
+    dismissAlert,
     updateTransactionDate,
     bulkUpdateCategoryByIds,
     addCategoryRule,
@@ -1961,6 +2041,8 @@ export function DataProvider({ children }) {
     setPrivacyMode,
     updateTransactionCategory,
     updateTransactionSubcategory,
+    categorizeAlert,
+    dismissAlert,
     updateTransactionDate,
     bulkUpdateCategoryByIds,
     addCategoryRule,
@@ -2025,6 +2107,7 @@ export function DataProvider({ children }) {
   // identity unless something they actually depend on changed.
   const reads = useMemo(() => ({
     transactions,
+    spendAlerts,
     balances,
     balanceHistory: shownBalanceHistory,
     analytics,
@@ -2077,6 +2160,7 @@ export function DataProvider({ children }) {
     hiddenCount: hiddenIds.size,
   }), [
     transactions,
+    spendAlerts,
     balances,
     analytics,
     loading,

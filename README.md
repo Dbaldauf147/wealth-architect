@@ -39,6 +39,68 @@ Suggestions are drawn only from categories the user has already assigned
 themselves — there is no hard-coded merchant list — and every one shows why it
 was suggested, so a wrong guess is visible before it is tapped.
 
+## Purchase alerts
+
+The bank texts you seconds after the card is used; the row it belongs to
+reaches the sheet days later, reworded by the card network. Answering "what was
+that?" in the shop is a much easier question than answering it next week
+against `34N7THST FEES BROOKLYN NY` — so an alert can be categorized the moment
+it arrives, and the answer waits for its transaction.
+
+**Nothing here creates a transaction.** The sheet stays the only source of rows.
+An alert is a note that hands its category over once the real row appears and
+then stops existing; one nobody answers simply expires.
+
+| Piece | What it does |
+| --- | --- |
+| `api/spend-alert.js` | Receives the alert, reads it, writes it to Firestore `spendAlerts` |
+| `src/lib/parseAlert.js` | Pulls amount, merchant, card and date out of the bank's prose. Pure; tested against six issuers' wordings |
+| `src/lib/alertMatch.js` | Joins an alert to the transaction that later arrives. Pure; tested |
+| `src/mobile/AlertsStrip.jsx` | The card above the review deck that asks the question |
+
+Matching is on the **amount**, exact to the cent — it is the one field neither
+the bank nor the network rewrites. The merchant only corroborates, and the date
+window allows two days early and ten late for a card to post. Where two
+transactions are equally good candidates the alert is left alone: a silent
+wrong match writes a category onto someone else's row and looks like you did
+it. A category already set by hand is never overwritten.
+
+### Setting it up
+
+1. **Vercel env:** set `SPEND_ALERT_SECRET` to a long random string. Without it
+   the route returns 503 and nothing is accepted. `FIREBASE_SERVICE_ACCOUNT_JSON`
+   is the same one the crons already use.
+2. **Firestore rules:** publish `firestore.rules` — it now carries a
+   `spendAlerts` block. Until that is published the phone can read nothing and
+   the strip stays empty.
+3. **On the iPhone**, Shortcuts → Automation → New. Two are worth having:
+
+   **Bank texts** — trigger *Message*, From: your bank's shortcode, and set it
+   to **Run Immediately**. One action, *Get Contents of URL*:
+
+   ```
+   URL     https://<your-app>/api/spend-alert
+   Method  POST
+   Headers x-ingest-secret: <SPEND_ALERT_SECRET>
+   Body    JSON  →  text : [Shortcut Input]
+   ```
+
+   **Apple Pay taps** — trigger *Transaction*, same action, but send the fields
+   already structured so nothing has to be parsed:
+
+   ```
+   Body  JSON  →  source   : wallet
+                  merchant : [Merchant Name]
+                  amount   : [Amount]
+                  date     : [Date]
+   ```
+
+iOS always posts a notification when an automation runs immediately — Apple
+requires it and the toggle can't be turned off — so every alert is visible.
+Messages that aren't purchases (declines, balances, one-time codes) are
+recognised and dropped with a `200`, so the automation can fire on everything
+the bank sends without filling the queue with noise.
+
 The icon PNGs in `public/` are generated: edit `public/app-icon*.svg`, then run
 `node scripts/make-icons.mjs`.
 

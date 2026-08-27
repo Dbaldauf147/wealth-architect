@@ -899,3 +899,119 @@
   .progressFill { transition: none; }
   .spin { animation: none; }
 }
+
+/* ── Purchase alerts ────────────────────────────────── */
+
+/* Sits above the deck. Deliberately louder than a queue card: this is the
+   thing that happened ninety seconds ago, and its whole value is being
+   answered while you still remember the shop you were standing in. */
+.alertCard {
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid rgba(0, 88, 190, 0.35);
+  border-left: 3px solid var(--color-secondary, #0058be);
+  border-radius: 14px;
+  box-shadow: 0 1px 8px rgba(15, 23, 42, 0.06);
+}
+
+.alertHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.alertBolt {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: rgba(0, 88, 190, 0.12);
+  color: var(--color-secondary, #0058be);
+}
+
+.alertMerchant {
+  font-family: var(--font-headline);
+  font-size: 15px;
+  font-weight: 750;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.alertMeta {
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.alertAmount {
+  flex: none;
+  font-family: var(--font-headline);
+  font-size: 16px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+
+/* The bank’s own sentence, kept for when the merchant line is unhelpful. */
+.alertRaw {
+  margin-top: var(--space-2);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.alertActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-3);
+}
+
+.alertChip, .alertChipPlain {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 999px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.alertChipPlain {
+  background: var(--color-surface-alt);
+  color: var(--color-text-secondary);
+}
+
+.alertChip:active, .alertChipPlain:active { opacity: 0.7; }
+
+/* Answered, and now just waiting on the bank to post the row it belongs to. */
+.alertWaiting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--space-3);
+  padding: 7px var(--space-3);
+  border-radius: 10px;
+  background: var(--color-surface-alt);
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+}

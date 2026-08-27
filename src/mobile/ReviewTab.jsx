@@ -7,6 +7,7 @@ import {
 import { buildReviewQueue, reviewStats, SORTS } from '../lib/reviewQueue';
 import { ALL_CATEGORIES, getCategoryIcon, catColor, catBg, SUBCATEGORIES } from '../lib/categories';
 import { CategorySheet, SubcategorySheet } from './CategorySheet';
+import { AlertsStrip } from './AlertsStrip';
 import { fmt, fmtCompact, fmtRelative } from './format';
 import styles from './MobileApp.module.css';
 
@@ -18,12 +19,12 @@ const UNDO_MS = 7000;
 export function ReviewTab({ sort, onSortChange, askSub }) {
   const {
     transactions, categoryRules, customCategories, hiddenCategories,
-    categoryColors, splitTags,
+    categoryColors, splitTags, spendAlerts,
   } = useData();
   const {
     updateTransactionCategory, updateTransactionSubcategory, bulkUpdateCategoryByIds,
     addCategoryRule, removeCategoryRule, addSubcategoryRule, addCustomCategory,
-    getMatchCount, tagForSplit, untagSplit,
+    getMatchCount, tagForSplit, untagSplit, categorizeAlert, dismissAlert,
   } = useDataActions();
 
   const [skipped, setSkipped] = useState(() => new Set());
@@ -248,6 +249,14 @@ export function ReviewTab({ sort, onSortChange, askSub }) {
     const everythingDone = stats.count === 0;
     return (
       <>
+        <AlertsStrip
+          alerts={spendAlerts}
+          categoryOptions={categoryOptions}
+          usage={usage}
+          history={history}
+          onCategorize={categorizeAlert}
+          onDismiss={dismissAlert}
+        />
         <ProgressStrip stats={stats} sort={sort} onSortChange={onSortChange} />
         <div className={styles.empty}>
           <span className={`material-symbols-outlined ${styles.emptyIcon}`}>
@@ -304,6 +313,14 @@ export function ReviewTab({ sort, onSortChange, askSub }) {
 
   return (
     <>
+      <AlertsStrip
+        alerts={spendAlerts}
+        categoryOptions={categoryOptions}
+        usage={usage}
+        history={history}
+        onCategorize={categorizeAlert}
+        onDismiss={dismissAlert}
+      />
       <ProgressStrip stats={stats} sort={sort} onSortChange={onSortChange} />
 
       <div className={styles.deck}>
