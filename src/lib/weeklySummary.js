@@ -6,6 +6,7 @@
 
 import { rangeWindows, spendByWindow, bandsFor, seriesFor } from './normalRange.js';
 import { findSuboptimalCharges, detectCardKey, CARD_LABELS } from './cardRewards.js';
+import { summarizeCardPromos, SEED_PROMOS } from './cardPromos.js';
 
 function parseDate(v) {
   if (!v) return null;
@@ -454,7 +455,7 @@ export function monthlyTrends({ transactions, weekEnd }) {
  *  `accountNicknames` and `accountGroups` are optional maps applied to
  *  user-visible account names so the email matches the in-app naming.
  *  Group membership takes precedence over individual nicknames. */
-export function buildWeeklySummary({ transactions, start, end, asOf = new Date(), accountNicknames = {}, accountGroups = {}, rangeExcludedCategories = [], cardMap = {} }) {
+export function buildWeeklySummary({ transactions, start, end, asOf = new Date(), accountNicknames = {}, accountGroups = {}, rangeExcludedCategories = [], cardMap = {}, cardPromos = null }) {
   const inRange = (transactions || []).filter(t => withinRange(t, start, end) && !isTransferLike(t));
   // Prior week of the same length for week-over-week comparison
   const spanMs = end.getTime() - start.getTime();
@@ -547,6 +548,23 @@ export function buildWeeklySummary({ transactions, start, end, asOf = new Date()
     moreCount: Math.max(0, subCards.flagged.length - 6),
   };
 
+  // Card credits and how much of each is still unclaimed. A null list means
+  // the user has never touched the Card Promotions page, in which case they are
+  // looking at the seed benefits and so should the email.
+  const promoSummary = summarizeCardPromos({
+    promos: Array.isArray(cardPromos) ? cardPromos : SEED_PROMOS,
+    transactions,
+    asOf,
+    limit: 8,
+  });
+  // Account names in the email follow the in-app naming, same as elsewhere.
+  for (const item of promoSummary.items) {
+    if (item.lastTransaction && item.lastTransaction.account) {
+      const a = item.lastTransaction.account;
+      item.lastTransaction.account = accountGroups[a] || accountNicknames[a] || a;
+    }
+  }
+
   return {
     range: { start: start.toISOString(), end: end.toISOString() },
     expenseTotal,
@@ -564,6 +582,7 @@ export function buildWeeklySummary({ transactions, start, end, asOf = new Date()
     weekCompare: week,
     aboveRange,
     suboptimalCards,
+    cardPromos: promoSummary,
     fmt,
   };
 }

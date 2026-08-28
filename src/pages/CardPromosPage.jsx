@@ -1,25 +1,18 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import {
   REWARD_CATEGORIES, CARD_KEYS, CARD_LABELS, CARD_COLORS, BOFA_CHOICE, POINT_VALUE_CENTS,
   detectCardKey, findSuboptimalCharges,
 } from '../lib/cardRewards';
+// These moved to a lib so the weekly email can report the same numbers this
+// page shows. The page is no longer the only thing that knows what a promo is.
+import {
+  SEED_PROMOS, isPromoCompleted, promoHasAutoMatch, autoUsedForPromo,
+} from '../lib/cardPromos';
 
 function fmt(n) {
   if (n == null || n === '') return '—';
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
-}
-
-function periodWindowStart(period) {
-  // Returns the inclusive start date of the current cycle for the given period.
-  const now = new Date();
-  if (period === 'monthly') return new Date(now.getFullYear(), now.getMonth(), 1);
-  if (period === 'quarterly') {
-    const q = Math.floor(now.getMonth() / 3);
-    return new Date(now.getFullYear(), q * 3, 1);
-  }
-  if (period === 'annual') return new Date(now.getFullYear(), 0, 1);
-  return null; // one-time → no window
 }
 
 function todayISO() {
@@ -33,126 +26,12 @@ function parseISODate(s) {
   return isNaN(d) ? null : d;
 }
 
-// A promo counts as manually completed only if it was marked within the CURRENT
-// cycle — so a monthly credit ticked in July shows up unused again in August.
-// One-time promos have no window, so they stay completed once marked.
-function isPromoCompleted(p) {
-  if (!p.completedAt) return false;
-  const start = periodWindowStart(p.period);
-  if (!start) return true;
-  const d = parseISODate(p.completedAt);
-  return d ? d >= start : true;
-}
-
-function normalizeDesc(s) {
-  return (s || '').toLowerCase().trim().replace(/[\s\-–—]+/g, ' ');
-}
-
-function promoHasAutoMatch(p) {
-  return !!((p.matchSubcategory || '').trim() || (p.matchCategory || '').trim() || (p.matchDescription || '').trim());
-}
-
-// OR semantics across the three match fields: a transaction qualifies if it matches
-// ANY of the populated criteria. Description match uses the same bidirectional contains
-// check used by the auto-categorization rules on the Transactions page.
-function transactionMatchesPromo(t, promo) {
-  const wantSub = (promo.matchSubcategory || '').trim().toLowerCase();
-  const wantCat = (promo.matchCategory || '').trim().toLowerCase();
-  const wantDesc = normalizeDesc(promo.matchDescription);
-  if (!wantSub && !wantCat && !wantDesc) return false;
-  if (wantSub && (t.subcategory || '').toLowerCase() === wantSub) return true;
-  if (wantCat && (t.category || '').toLowerCase() === wantCat) return true;
-  if (wantDesc) {
-    const txnDesc = normalizeDesc(t.description);
-    const txnFull = normalizeDesc(t.fullDescription);
-    if (txnDesc && (txnDesc.includes(wantDesc) || wantDesc.includes(txnDesc))) return true;
-    if (txnFull && txnFull.includes(wantDesc)) return true;
-  }
-  return false;
-}
-
-function autoUsedForPromo(promo, transactions) {
-  if (!promoHasAutoMatch(promo)) return null;
-  if (!transactions || transactions.length === 0) return 0;
-  const start = periodWindowStart(promo.period);
-  let sum = 0;
-  for (const t of transactions) {
-    const amt = Number(t.amount) || 0;
-    if (amt === 0) continue;
-    if (start) {
-      const d = new Date(t.date);
-      if (isNaN(d) || d < start) continue;
-    }
-    if (!transactionMatchesPromo(t, promo)) continue;
-    // Sum absolute value so the rule works for either direction:
-    // - tag the original travel CHARGE (negative) → tracks redeemable spend
-    // - tag the statement CREDIT (positive)       → tracks actual redemption
-    sum += Math.abs(amt);
-  }
-  return sum;
-}
-
 // The CSR sub-tab owns any promo whose card reads as a Sapphire Reserve, so a
 // renamed/nicknamed card ("CSR", "Chase Sapphire Reserve …") still lands there.
 function isSapphireCard(card) {
   const c = (card || '').toLowerCase();
   return c.includes('sapphire') || c.trim() === 'csr';
 }
-
-/* ── Seed data: Chase Sapphire Reserve benefits ── */
-const SEED_PROMOS = [
-  {
-    id: 'seed-csr-travel',
-    card: 'Chase Sapphire Reserve',
-    name: '$300 Annual Travel Credit',
-    value: 300,
-    used: 0,
-    period: 'annual',
-    matchSubcategory: 'Travel Credit',
-    notes: 'Auto-applied to anything Chase codes as travel — NYC MTA, Citi Bike, rideshare, tolls, parking, hotels, airlines.',
-    color: '#0058be',
-  },
-  {
-    id: 'seed-csr-lyft',
-    card: 'Chase Sapphire Reserve',
-    name: '$10 Monthly Lyft Credit',
-    value: 10,
-    used: 0,
-    period: 'monthly',
-    notes: 'Through March 2027. Activated in Lyft app with Chase card set as default.',
-    color: '#0058be',
-  },
-  {
-    id: 'seed-csr-doordash',
-    card: 'Chase Sapphire Reserve',
-    name: 'DoorDash DashPass',
-    value: 120,
-    used: 0,
-    period: 'annual',
-    notes: 'Free DashPass membership through 2027, plus monthly dining/grocery credits.',
-    color: '#0058be',
-  },
-  {
-    id: 'seed-csr-global-entry',
-    card: 'Chase Sapphire Reserve',
-    name: 'Global Entry / TSA PreCheck',
-    value: 120,
-    used: 0,
-    period: 'annual',
-    notes: 'Up to $120 statement credit every 4 years for application fee.',
-    color: '#0058be',
-  },
-  {
-    id: 'seed-csr-pp',
-    card: 'Chase Sapphire Reserve',
-    name: 'Priority Pass Select',
-    value: 469,
-    used: 0,
-    period: 'annual',
-    notes: 'Complimentary Priority Pass lounge access (1,300+ airport lounges worldwide).',
-    color: '#0058be',
-  },
-];
 
 /* ── Reward optimization matrix: best card per spending category ──
    Static reference of effective cash-back / points rates across the user's
@@ -191,7 +70,7 @@ const CARD_RATE_MATRIX = REWARD_CATEGORIES.map(c => {
   return { cat: c.label, rates, effective, best: effective.indexOf(Math.max(...effective)) };
 });
 
-const STORAGE_KEY = 'cardPromos';
+
 
 // Which rate profile each account uses. Only needed for accounts whose name
 // doesn't already say which card it is (e.g. "CREDIT CARD (-1947)"). Values are
@@ -210,29 +89,20 @@ function shortDate(iso) {
   return `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
 }
 
-function loadPromos() {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) return JSON.parse(saved);
-  } catch {}
-  return SEED_PROMOS;
-}
-
-function savePromos(promos) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(promos));
-}
-
 export function CardPromosPage() {
-  const { transactions, accountNicknames, accountGroups, cardMap } = useData();
-  const { setCardForAccount } = useDataActions();
+  const { transactions, accountNicknames, accountGroups, cardMap, cardPromos: promos } = useData();
+  const { setCardForAccount, setCardPromos } = useDataActions();
   const displayName = (name) => (accountGroups && accountGroups[name]) || (accountNicknames && accountNicknames[name]) || name;
-  const [promos, setPromos] = useState(loadPromos);
+  // Keeps the updater-function call sites below working now that the list
+  // lives in the provider, which takes a plain value.
+  const setPromos = useCallback(
+    (next) => setCardPromos(typeof next === 'function' ? next(promos) : next),
+    [promos, setCardPromos],
+  );
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState({});
   const [showSeedBtn, setShowSeedBtn] = useState(false);
   const [view, setView] = useState('csr'); // 'csr' | 'promos'
-
-  useEffect(() => savePromos(promos), [promos]);
 
   // Charges in the last 30 days that would have earned more on another card.
   // An explicit mapping wins over guessing the card from the account name.

@@ -14,9 +14,9 @@
 // All other paths remain locked so accidental writes to other collections
 // can't happen.
 //
-// To deploy: paste into Firebase Console → Firestore Database → Rules → Publish.
-// Alternatively, install the Firebase CLI and run:
-//   firebase deploy --only firestore:rules
+// To deploy: firebase deploy --only firestore:rules
+// (firebase.json and .firebaserc are checked in and point at wealth-architecht).
+// Or paste into Firebase Console → Firestore Database → Rules → Publish.
 
 rules_version = '2';
 service cloud.firestore {

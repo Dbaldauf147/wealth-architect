@@ -76,9 +76,10 @@ it. A category already set by hand is never overwritten.
 1. **Vercel env:** set `SPEND_ALERT_SECRET` to a long random string. Without it
    the route returns 503 and nothing is accepted. `FIREBASE_SERVICE_ACCOUNT_JSON`
    is the same one the crons already use.
-2. **Firestore rules:** publish `firestore.rules` — it now carries a
-   `spendAlerts` block. Until that is published the phone can read nothing and
-   the strip stays empty.
+2. **Firestore rules:** publish `firestore.rules` — it carries a `spendAlerts`
+   block, and until it is published the phone can read nothing and the strip
+   stays empty. `firebase.json` and `.firebaserc` are checked in, so this is
+   `firebase deploy --only firestore:rules` rather than a console paste.
 3. **On the iPhone**, Shortcuts → Automation → New. Two are worth having:
 
    **Bank texts** — trigger *Message*, From: your bank's shortcode, and set it

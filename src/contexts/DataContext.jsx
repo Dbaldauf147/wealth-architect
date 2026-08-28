@@ -13,6 +13,7 @@ import {
   applyOverrides,
 } from '../lib/categorize';
 import { normalizeEmailSections } from '../lib/renderWeeklyEmail';
+import { SEED_PROMOS } from '../lib/cardPromos';
 import {
   makeScrambler, scrambleTransactions, scrambleBalances, scrambleBalanceHistory,
   scrambleRobinhood, scrambleCustomItems, scrambleLoan, scrambleAccountMaps,
@@ -212,6 +213,18 @@ const loadCardMap = () => {
   return current || {};
 };
 const saveCardMap = (v) => saveJSON('cardMap', v);
+
+// Card promotions — the credits each card gives back. Same story as cardMap
+// above: these lived in localStorage, written straight from CardPromosPage, so
+// the weekly-email cron (which reads Firestore, not a browser) had no way to
+// see them. Synced now.
+//
+// null means "never configured", which is different from an empty list: null
+// falls back to the seed benefits, [] is a user who deleted them all and meant
+// it. Keeping that distinction is what stops a fresh device's seed list from
+// overwriting a curated one during the hydration merge.
+const loadCardPromos = () => loadJSON('cardPromos', null);
+const saveCardPromos = (v) => saveJSON('cardPromos', v);
 
 // Demo mode. Stored locally and *not* included in the Firestore payload:
 // it is a property of the screen you are standing in front of, not of the
@@ -433,6 +446,10 @@ function mergedDiffersFromRemote(merged, remote) {
   if (JSON.stringify(merged.shortTermLoan ?? null) !== JSON.stringify(remote.shortTermLoan ?? null)) {
     return true;
   }
+  // Card promotions — ordered list of objects, compare serialized.
+  if (JSON.stringify(merged.cardPromos ?? null) !== JSON.stringify(remote.cardPromos ?? null)) {
+    return true;
+  }
   // Imported Robinhood trades — single object, compare serialized.
   if (JSON.stringify(merged.robinhoodTrades ?? null) !== JSON.stringify(remote.robinhoodTrades ?? null)) {
     return true;
@@ -459,6 +476,7 @@ const EMPTY_LOCALS = {
   assetClasses: {}, netWorthCategories: {}, netWorthLiquidCategories: {}, netWorthPrefs: null,
   customAssets: [], customLiabilities: [], customAssetClasses: [],
   hiddenCards: [], paymentReminderPrefs: {}, calendarSyncPrefs: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
+  cardPromos: null,
   hiddenCategories: new Set(), rangeExcludedCategories: [], shortTermLoan: null, robinhoodTrades: null,
   organizedCategories: new Set(), incomeCategories: new Set(), savedTxnViews: {},
   chartHiddenCats: new Set(), chartHiddenSubs: new Set(), txnColumnWidths: {},
@@ -480,6 +498,7 @@ function readLocalConfig() {
     accountNicknames: loadAccountNicknames(),
     accountGroups: loadAccountGroups(),
     cardMap: loadCardMap(),
+    cardPromos: loadCardPromos(),
     assetClasses: loadAssetClasses(),
     netWorthCategories: loadNetWorthCategories(),
     netWorthLiquidCategories: loadNetWorthLiquidCategories(),
@@ -527,6 +546,7 @@ function mergeConfig(remote, locals) {
     accountNicknames: unionMap(locals.accountNicknames, remote.accountNicknames),
     accountGroups: unionMap(locals.accountGroups, remote.accountGroups),
     cardMap: unionMap(locals.cardMap, remote.cardMap),
+    cardPromos: locals.cardPromos || remote.cardPromos || null,
     assetClasses: unionMap(locals.assetClasses, remote.assetClasses),
     netWorthCategories: unionMap(locals.netWorthCategories, remote.netWorthCategories),
     netWorthLiquidCategories: unionMap(locals.netWorthLiquidCategories, remote.netWorthLiquidCategories),
@@ -578,6 +598,7 @@ function buildSyncPayload(v) {
     accountNicknames: v.accountNicknames,
     accountGroups: v.accountGroups,
     cardMap: v.cardMap,
+    cardPromos: v.cardPromos ?? null,
     assetClasses: v.assetClasses,
     netWorthCategories: v.netWorthCategories,
     netWorthLiquidCategories: v.netWorthLiquidCategories,
@@ -679,6 +700,7 @@ export function DataProvider({ children }) {
   const [accountNicknames, setAccountNicknames] = useState(loadAccountNicknames);
   const [accountGroups, setAccountGroups] = useState(loadAccountGroups);
   const [cardMap, setCardMapState] = useState(loadCardMap);
+  const [cardPromos, setCardPromosState] = useState(loadCardPromos);
   const [assetClasses, setAssetClasses] = useState(loadAssetClasses);
   const [netWorthCategories, setNetWorthCategories] = useState(loadNetWorthCategories);
   const [netWorthLiquidCategories, setNetWorthLiquidCategories] = useState(loadNetWorthLiquidCategories);
@@ -735,6 +757,7 @@ export function DataProvider({ children }) {
     setAccountNicknames(m.accountNicknames); saveAccountNicknames(m.accountNicknames);
     setAccountGroups(m.accountGroups); saveAccountGroups(m.accountGroups);
     setCardMapState(m.cardMap); saveCardMap(m.cardMap);
+    setCardPromosState(m.cardPromos); saveCardPromos(m.cardPromos);
     setAssetClasses(m.assetClasses); saveAssetClasses(m.assetClasses);
     setNetWorthCategories(m.netWorthCategories); saveNetWorthCategories(m.netWorthCategories);
     setNetWorthLiquidCategories(m.netWorthLiquidCategories); saveNetWorthLiquidCategories(m.netWorthLiquidCategories);
@@ -841,7 +864,7 @@ export function DataProvider({ children }) {
     if (!syncHydrated.current) return;
     const currentConfig = {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
-      transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, assetClasses,
+      transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, cardPromos, assetClasses,
       netWorthCategories, netWorthLiquidCategories, netWorthPrefs, customAssets,
       customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay,
       customCategories, hiddenCategories, rangeExcludedCategories, shortTermLoan, robinhoodTrades, organizedCategories,
@@ -879,6 +902,7 @@ export function DataProvider({ children }) {
     accountNicknames,
     accountGroups,
     cardMap,
+    cardPromos,
     assetClasses,
     netWorthCategories,
     netWorthLiquidCategories,
@@ -1210,6 +1234,12 @@ export function DataProvider({ children }) {
       saveCardMap(next);
       return next;
     });
+  }, []);
+
+  const setCardPromos = useCallback((promos) => {
+    const next = Array.isArray(promos) ? promos : [];
+    setCardPromosState(next);
+    saveCardPromos(next);
   }, []);
 
   const setAccountNickname = useCallback((accountName, nickname) => {
@@ -1995,6 +2025,7 @@ export function DataProvider({ children }) {
     untagSplit,
     setAccountNickname,
     setCardForAccount,
+    setCardPromos,
     setAccountGroup,
     setAssetClass,
     setNetWorthCategory,
@@ -2060,6 +2091,7 @@ export function DataProvider({ children }) {
     untagSplit,
     setAccountNickname,
     setCardForAccount,
+    setCardPromos,
     setAccountGroup,
     setAssetClass,
     setNetWorthCategory,
@@ -2139,6 +2171,7 @@ export function DataProvider({ children }) {
     accountNumbers: shownMaps.accountNumbers,
     accountGroups: shownMaps.accountGroups,
     cardMap: shownMaps.cardMap,
+    cardPromos: cardPromos ?? SEED_PROMOS,
     assetClasses: shownMaps.assetClasses,
     netWorthCategories: shownMaps.netWorthCategories,
     netWorthLiquidCategories: shownMaps.netWorthLiquidCategories,
@@ -2190,6 +2223,7 @@ export function DataProvider({ children }) {
     weeklyEmailDay,
     hiddenIds,
     splitTags,
+    cardPromos,
     privacyMode,
     revealTicker,
     shownBalanceHistory,

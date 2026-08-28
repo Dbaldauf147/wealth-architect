@@ -227,6 +227,7 @@ export const WEEKLY_EMAIL_SECTIONS = [
   { id: 'spendCharts', label: 'Spend charts (weekly + monthly)' },
   { id: 'aboveRange', label: 'Above Normal Range' },
   { id: 'suboptimalCards', label: 'Suboptimal Card Usage' },
+  { id: 'cardPromos', label: 'Card Promotions' },
   { id: 'topCategories', label: 'Top Categories' },
   { id: 'topMerchants', label: 'Top Merchants' },
   { id: 'monthlyTrends', label: 'Month-to-Date & Movers' },
@@ -272,7 +273,7 @@ export function normalizeEmailSections(stored) {
 export function renderWeeklyEmailHtml(summary, opts = {}) {
   const chart = opts.chart || ((key, svg) => svg);
   const sections = normalizeEmailSections(opts.sections);
-  const { topCategories, topMerchants, uncategorized, monthlyTrends, monthCompare, weekCompare, aboveRange, suboptimalCards } = summary;
+  const { topCategories, topMerchants, uncategorized, monthlyTrends, monthCompare, weekCompare, aboveRange, suboptimalCards, cardPromos } = summary;
 
   const catBarMax = topCategories.length ? topCategories[0].amount : 1;
 
@@ -411,6 +412,76 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
         </div>
       </td>
     </tr>` : '';
+
+  /* Card credits: what each benefit is worth, how much of it is claimed, and
+     the most recent charge that counted toward it.
+
+     The last-charge line is the point of the section. "$300 travel credit, $0
+     used" says nothing about whether the benefit is being forgotten or simply
+     hasn't come round yet; "last used May 3" answers that in a glance. It
+     deliberately reaches back past the current cycle — a monthly credit with no
+     hits this month is exactly when the previous month's date is worth seeing —
+     and marks anything older than the cycle so the two can't be confused. */
+  parts.cardPromos = (cardPromos && cardPromos.items && cardPromos.items.length) ? (() => {
+    const cycleWord = p => (p === 'monthly' ? 'month' : p === 'quarterly' ? 'quarter' : 'year');
+
+    const promoRows = cardPromos.items.map(item => {
+      const capped = Math.min(item.used, item.value);
+      const pct = item.value > 0 ? Math.min(100, Math.round((capped / item.value) * 100)) : 0;
+      const done = item.remaining <= 0;
+      const barColor = done ? '#16a34a' : (item.color || '#0058be');
+      const last = item.lastTransaction;
+
+      // Three states that mean genuinely different things: a benefit with no
+      // match rule cannot have a last charge, one with rules but no hits has
+      // never been used, and one whose last hit predates the current cycle is
+      // the case actually worth flagging.
+      let lastLine;
+      if (!last) {
+        lastLine = item.tracked ? 'No matching charge yet' : 'Tracked by hand — no match rule set';
+      } else {
+        const acct = last.account ? ` · ${escapeHtml(last.account)}` : '';
+        const stale = last.inCurrentCycle
+          ? ''
+          : ` <span style="color:#b45309;">(before this ${cycleWord(item.period)})</span>`;
+        lastLine = `${shortDate(last.date)} · ${escapeHtml(last.description || 'charge')} · ${money(last.amount)}${acct}${stale}`;
+      }
+
+      return `
+            <tr>
+              <td style="padding:8px 8px 8px 0;vertical-align:top;">
+                <div style="font-size:12.5px;font-weight:600;color:#111;">${escapeHtml(item.name)}</div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:2px;">${escapeHtml(item.card)} · ${escapeHtml(item.period)}</div>
+                <div style="font-size:11px;color:#64748b;margin-top:4px;">${lastLine}</div>
+              </td>
+              <td style="padding:8px 0;vertical-align:top;text-align:right;white-space:nowrap;width:156px;">
+                <div style="font-size:12.5px;font-weight:700;color:#111;font-variant-numeric:tabular-nums;">${money(capped)} <span style="color:#64748b;font-weight:400;">of ${money(item.value)}</span></div>
+                <div style="background:#f1f5f9;border-radius:4px;height:6px;overflow:hidden;margin-top:6px;">
+                  <div style="background:${barColor};height:6px;width:${Math.max(pct, 2)}%;"></div>
+                </div>
+                <div style="font-size:11px;color:${done ? '#16a34a' : '#64748b'};margin-top:4px;">${done ? 'Fully used' : money(item.remaining) + ' left'}</div>
+              </td>
+            </tr>`;
+    }).join('');
+
+    const more = cardPromos.moreCount
+      ? `<div style="font-size:11px;color:#94a3b8;margin-top:10px;font-style:italic;">and ${cardPromos.moreCount} more on the Card Promotions tab.</div>`
+      : '';
+
+    return `
+    <tr>
+      <td style="padding:0 28px 20px;">
+        <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:4px;">Card Promotions</div>
+          <div style="font-size:12px;color:#64748b;margin-bottom:14px;"><strong>${money(cardPromos.remaining)}</strong> still unclaimed of ${money(cardPromos.totalValue)} across ${cardPromos.count} benefit${cardPromos.count === 1 ? '' : 's'}${cardPromos.completedCount ? ` · ${cardPromos.completedCount} marked done` : ''}.</div>
+          <table role="presentation" width="100%" style="border-collapse:collapse;font-size:12px;">
+            ${promoRows}
+          </table>
+          ${more}
+        </div>
+      </td>
+    </tr>`;
+  })() : '';
 
   parts.topCategories = topCategories.length ? `
     <tr>
