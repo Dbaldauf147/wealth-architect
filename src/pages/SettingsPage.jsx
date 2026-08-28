@@ -35,7 +35,7 @@ function saveEmailPrefs(prefs) {
 }
 
 export function SettingsPage() {
-  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay, rangeExcludedCategories } = useData();
+  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay, rangeExcludedCategories, cardPromos } = useData();
   const { refresh, updatePaymentReminderPrefs, updateCalendarSyncPrefs, updateWeeklyEmailSections, updateWeeklyEmailDay } = useDataActions();
   // Send day is synced via DataContext (Firestore) so the cron reads it; fall
   // back to Sunday for display when nothing has been chosen yet.
@@ -55,9 +55,10 @@ export function SettingsPage() {
       accountNicknames: accountNicknames || {},
       accountGroups: accountGroups || {},
       rangeExcludedCategories: rangeExcludedCategories || [],
+      cardPromos,
     });
     return renderWeeklyEmailHtml(summary, { sections: weeklyEmailSections });
-  }, [transactions, accountNicknames, accountGroups, weeklyEmailSections, rangeExcludedCategories]);
+  }, [transactions, accountNicknames, accountGroups, weeklyEmailSections, rangeExcludedCategories, cardPromos]);
 
   // Reorder / toggle weekly-email sections. Each handler rebuilds the full
   // ordered list and persists it (which also syncs to Firestore for the cron).

@@ -155,6 +155,9 @@ export default async function handler(req, res) {
       accountGroups: (config && config.accountGroups) || {},
       rangeExcludedCategories: (config && config.rangeExcludedCategories) || [],
       cardMap: (config && config.cardMap) || {},
+      // null (not {}) so buildWeeklySummary can tell 'never configured' — which
+      // falls back to the seed benefits — from a deliberately empty list.
+      cardPromos: (config && config.cardPromos) || null,
     });
 
     // Render charts to PNG and attach them inline (cid:) — Gmail and others
