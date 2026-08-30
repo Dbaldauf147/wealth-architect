@@ -8,6 +8,8 @@ import {
   autoUsedForPromo,
   effectiveUsedFor,
   summarizeCardPromos,
+  promoIsTracked,
+  promoTagCounts,
 } from './cardPromos.js';
 
 // A fixed "now" so cycle boundaries are assertable: Tue 2026-08-25.
@@ -203,5 +205,71 @@ describe('summarizeCardPromos', () => {
     const s = summarizeCardPromos({ promos: [], transactions: txns, asOf: NOW });
     expect(s).toMatchObject({ totalValue: 0, totalUsed: 0, remaining: 0, pct: 0, count: 0, moreCount: 0 });
     expect(s.items).toEqual([]);
+  });
+});
+
+/* ── Hand-tagging transactions to a promo ── */
+
+describe('promo tags', () => {
+  const hotel = { transactionId: 'txn-hotel', date: '2026-08-05', description: 'Hyatt Regency', amount: -450 };
+  const coffee = { transactionId: 'txn-coffee', date: '2026-08-14', description: 'Coffee', amount: -4 };
+  const lyft = { transactionId: 'txn-lyft', date: '2026-08-10', description: 'Lyft ride', amount: -6 };
+
+  it('counts a tagged charge against a promo with no match rules at all', () => {
+    const tags = { 'txn-hotel': 'manual' };
+    expect(promoIsTracked(manualPromo, tags)).toBe(true);
+    expect(autoUsedForPromo(manualPromo, [hotel, coffee], NOW, tags)).toBe(450);
+    // The typed "used" value no longer applies once tags are doing the counting.
+    expect(effectiveUsedFor(manualPromo, [hotel, coffee], NOW, tags)).toBe(450);
+  });
+
+  it('leaves an untagged promo on its typed value', () => {
+    expect(promoIsTracked(manualPromo, {})).toBe(false);
+    expect(effectiveUsedFor(manualPromo, [hotel], NOW, {})).toBe(100);
+  });
+
+  it('keeps a tagged transaction out of every other promo that would have claimed it', () => {
+    const tags = { 'txn-lyft': 'manual' };
+    // Lyft's description rule matches this charge, but the tag sends it elsewhere.
+    expect(autoUsedForPromo(lyftPromo, [lyft], NOW, tags)).toBe(0);
+    expect(autoUsedForPromo(manualPromo, [lyft], NOW, tags)).toBe(6);
+  });
+
+  it('still honours a promo\'s own rules for untagged transactions', () => {
+    const tags = { 'txn-hotel': 'manual' };
+    expect(autoUsedForPromo(lyftPromo, [lyft, hotel], NOW, tags)).toBe(6);
+  });
+
+  it('respects the cycle window for tagged charges too', () => {
+    const old = { transactionId: 'txn-old', date: '2026-07-02', description: 'Lyft ride', amount: -8 };
+    const tags = { 'txn-old': 'lyft' };
+    expect(autoUsedForPromo(lyftPromo, [old], NOW, tags)).toBe(0);
+    // matchingTransactions reaches past the cycle on purpose.
+    expect(matchingTransactions(lyftPromo, [old], tags)).toHaveLength(1);
+  });
+
+  it('marks which matches came from a tag', () => {
+    const tags = { 'txn-hotel': 'lyft' };
+    const found = matchingTransactions(lyftPromo, [lyft, hotel], tags);
+    expect(found.map(f => [f.transactionId, f._tagged])).toEqual([
+      ['txn-lyft', false],
+      ['txn-hotel', true],
+    ]);
+  });
+
+  it('counts tags per promo, ignoring cleared ones', () => {
+    expect(promoTagCounts({ a: 'travel', b: 'travel', c: 'lyft', d: '' })).toEqual({ travel: 2, lyft: 1 });
+  });
+
+  it('reports tagged spend and tag counts through the summary', () => {
+    const s = summarizeCardPromos({
+      promos: [manualPromo],
+      transactions: [hotel, coffee],
+      asOf: NOW,
+      promoTags: { 'txn-hotel': 'manual' },
+    });
+    expect(s.items[0]).toMatchObject({ id: 'manual', used: 450, tracked: true, taggedCount: 1 });
+    // A $469 benefit with $450 tagged to it still has $19 left.
+    expect(s.items[0].remaining).toBe(19);
   });
 });

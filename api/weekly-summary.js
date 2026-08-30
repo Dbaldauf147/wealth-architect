@@ -158,6 +158,7 @@ export default async function handler(req, res) {
       // null (not {}) so buildWeeklySummary can tell 'never configured' — which
       // falls back to the seed benefits — from a deliberately empty list.
       cardPromos: (config && config.cardPromos) || null,
+      promoTags: (config && config.promoTags) || null,
     });
 
     // Render charts to PNG and attach them inline (cid:) — Gmail and others

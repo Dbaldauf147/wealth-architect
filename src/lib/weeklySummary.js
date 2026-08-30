@@ -380,7 +380,10 @@ export function aboveRangeCategories({ transactions, asOf = new Date(), excluded
       series: seriesFor(values, windows),
     });
   }
-  result.sort((a, b) => b.overBy - a.overBy);
+  // Largest spender first. Ranking by how far over the band a category ran put
+  // a $222 Venmo blip above a $2,372 travel month, which is not the order the
+  // list reads in.
+  result.sort((a, b) => b.current - a.current);
   return result;
 }
 
@@ -455,7 +458,7 @@ export function monthlyTrends({ transactions, weekEnd }) {
  *  `accountNicknames` and `accountGroups` are optional maps applied to
  *  user-visible account names so the email matches the in-app naming.
  *  Group membership takes precedence over individual nicknames. */
-export function buildWeeklySummary({ transactions, start, end, asOf = new Date(), accountNicknames = {}, accountGroups = {}, rangeExcludedCategories = [], cardMap = {}, cardPromos = null }) {
+export function buildWeeklySummary({ transactions, start, end, asOf = new Date(), accountNicknames = {}, accountGroups = {}, rangeExcludedCategories = [], cardMap = {}, cardPromos = null, promoTags = null }) {
   const inRange = (transactions || []).filter(t => withinRange(t, start, end) && !isTransferLike(t));
   // Prior week of the same length for week-over-week comparison
   const spanMs = end.getTime() - start.getTime();
@@ -556,6 +559,7 @@ export function buildWeeklySummary({ transactions, start, end, asOf = new Date()
     transactions,
     asOf,
     limit: 8,
+    promoTags,
   });
   // Account names in the email follow the in-app naming, same as elsewhere.
   for (const item of promoSummary.items) {

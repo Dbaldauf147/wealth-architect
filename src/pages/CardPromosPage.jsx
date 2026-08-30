@@ -7,7 +7,8 @@ import {
 // These moved to a lib so the weekly email can report the same numbers this
 // page shows. The page is no longer the only thing that knows what a promo is.
 import {
-  SEED_PROMOS, isPromoCompleted, promoHasAutoMatch, autoUsedForPromo,
+  SEED_PROMOS, isPromoCompleted, promoHasAutoMatch, promoIsTracked, autoUsedForPromo,
+  matchingTransactions, periodWindowStart,
 } from '../lib/cardPromos';
 
 function fmt(n) {
@@ -90,8 +91,8 @@ function shortDate(iso) {
 }
 
 export function CardPromosPage() {
-  const { transactions, accountNicknames, accountGroups, cardMap, cardPromos: promos } = useData();
-  const { setCardForAccount, setCardPromos } = useDataActions();
+  const { transactions, accountNicknames, accountGroups, cardMap, cardPromos: promos, promoTags } = useData();
+  const { setCardForAccount, setCardPromos, setPromoTagForTransactions, clearPromoTagsFor } = useDataActions();
   const displayName = (name) => (accountGroups && accountGroups[name]) || (accountNicknames && accountNicknames[name]) || name;
   // Keeps the updater-function call sites below working now that the list
   // lives in the provider, which takes a plain value.
@@ -103,6 +104,8 @@ export function CardPromosPage() {
   const [editDraft, setEditDraft] = useState({});
   const [showSeedBtn, setShowSeedBtn] = useState(false);
   const [view, setView] = useState('csr'); // 'csr' | 'promos'
+  // Which promo has its counted-transactions list open.
+  const [expandedId, setExpandedId] = useState(null);
 
   // Charges in the last 30 days that would have earned more on another card.
   // An explicit mapping wins over guessing the card from the account name.
@@ -125,11 +128,19 @@ export function CardPromosPage() {
         map.set(p.id, Number(p.value) || 0);
         continue;
       }
-      const auto = autoUsedForPromo(p, transactions);
+      const auto = autoUsedForPromo(p, transactions, new Date(), promoTags);
       map.set(p.id, auto != null ? auto : (Number(p.used) || 0));
     }
     return map;
-  }, [promos, transactions]);
+  }, [promos, transactions, promoTags]);
+
+  // The transactions counted against each promo — its match rules plus anything
+  // tagged by hand — so the page can show its work instead of a bare number.
+  const promoMatches = useMemo(() => {
+    const map = new Map();
+    for (const p of promos) map.set(p.id, matchingTransactions(p, transactions, promoTags));
+    return map;
+  }, [promos, transactions, promoTags]);
 
   // Each sub-tab is a slice of the same promo list: CSR benefits vs. everything else.
   const csrCount = useMemo(() => promos.filter(p => isSapphireCard(p.card)).length, [promos]);
@@ -207,6 +218,9 @@ export function CardPromosPage() {
   function deletePromo(id) {
     if (!confirm('Delete this promo?')) return;
     setPromos(prev => prev.filter(p => p.id !== id));
+    // Otherwise its tags outlive it, and a tag pointing at a promo that no
+    // longer exists keeps those transactions out of every other promo's rules.
+    clearPromoTagsFor(id);
   }
 
   // Manual completion log: stamps today's date, or clears it to reopen the promo.
@@ -337,6 +351,10 @@ export function CardPromosPage() {
                 const usedNow = effectiveUsed.get(p.id) || 0;
                 const isDone = isPromoCompleted(p);
                 const isAuto = promoHasAutoMatch(p) && !isDone;
+                const matches = promoMatches.get(p.id) || [];
+                const taggedCount = matches.filter(m => m._tagged).length;
+                const cycleStart = periodWindowStart(p.period);
+                const isExpanded = expandedId === p.id;
                 const pct = p.value > 0 ? Math.min(1, usedNow / Number(p.value)) : 0;
                 const remaining = Math.max(0, (Number(p.value) || 0) - usedNow);
 
@@ -372,7 +390,7 @@ export function CardPromosPage() {
                         <LabeledInput label="Or Merchant contains" value={editDraft.matchDescription} onChange={v => setEditDraft({ ...editDraft, matchDescription: v })} />
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 8 }}>
-                        Marking a promo complete (the checkbox on the row, or "Completed on" above) wins over everything below and counts the full value. Otherwise: if any match field is set, "used" auto-sums the absolute value of matching transactions in the current cycle (manual "Used $" is ignored). Sign doesn't matter — tag the original travel charge (negative) to track redeemable spend, or tag the statement credit (positive) to track actual redemption. Multiple match fields are OR'd. "Merchant contains" matches anywhere in the transaction's merchant text.
+                        Marking a promo complete (the checkbox on the row, or "Completed on" above) wins over everything below and counts the full value. Otherwise: if any match field is set — or any transaction is tagged to this promo from the Transactions page — "used" auto-sums the absolute value of those transactions in the current cycle (manual "Used $" is ignored). A hand-tag always wins over the match fields, including another promo's, so a charge only ever counts once. Sign doesn't matter — tag the original travel charge (negative) to track redeemable spend, or tag the statement credit (positive) to track actual redemption. Multiple match fields are OR'd. "Merchant contains" matches anywhere in the transaction's merchant text.
                       </div>
                       <LabeledInput label="Notes" value={editDraft.notes} onChange={v => setEditDraft({ ...editDraft, notes: v })} />
                       <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
@@ -450,6 +468,13 @@ export function CardPromosPage() {
                             </span>
                           );
                         })()}
+                        {taggedCount > 0 && (
+                          <span title={`${taggedCount} transaction${taggedCount === 1 ? '' : 's'} tagged to this benefit from the Transactions page`}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'rgba(124,58,237,0.1)', color: '#7c3aed', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>sell</span>
+                            {taggedCount} tagged
+                          </span>
+                        )}
                       </div>
                       {p.notes && <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 8, lineHeight: 1.4 }}>{p.notes}</div>}
                       <div style={{ height: 6, background: 'var(--color-surface-alt)', borderRadius: 3, overflow: 'hidden', marginBottom: 4 }}>
@@ -467,6 +492,79 @@ export function CardPromosPage() {
                           <>{fmt(usedNow)} used · <strong style={{ color: remaining > 0 ? '#16a34a' : 'var(--color-text-tertiary)' }}>{fmt(remaining)} remaining</strong> of {fmt(p.value)}</>
                         )}
                       </div>
+                      {matches.length > 0 && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedId(isExpanded ? null : p.id)}
+                            style={{
+                              marginTop: 6, padding: 0, border: 'none', background: 'transparent',
+                              cursor: 'pointer', fontSize: 11.5, fontWeight: 600,
+                              color: 'var(--color-secondary, #0058be)',
+                              display: 'inline-flex', alignItems: 'center', gap: 3,
+                            }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                              {isExpanded ? 'expand_less' : 'expand_more'}
+                            </span>
+                            {matches.length} counted transaction{matches.length === 1 ? '' : 's'}
+                          </button>
+                          {isExpanded && (
+                            <div style={{ marginTop: 6, border: '1px solid var(--border-ghost)', borderRadius: 6, overflow: 'hidden' }}>
+                              {matches.slice(0, 40).map((m, mi) => {
+                                // Only spend inside the current cycle feeds the "used"
+                                // number above; older hits are shown dimmed so the list
+                                // and the total can't look like they disagree.
+                                const inCycle = cycleStart ? m._date >= cycleStart : true;
+                                return (
+                                  <div
+                                    key={m.transactionId || mi}
+                                    style={{
+                                      display: 'flex', alignItems: 'center', gap: 8,
+                                      padding: '6px 8px', fontSize: 11.5,
+                                      borderTop: mi === 0 ? 'none' : '1px solid var(--border-ghost)',
+                                      opacity: inCycle ? 1 : 0.5,
+                                    }}
+                                  >
+                                    <span style={{ color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                                      {shortDate(m._date.toISOString())}
+                                    </span>
+                                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {m.description || '(no description)'}
+                                    </span>
+                                    {m._tagged && (
+                                      <span title="Tagged by hand" className="material-symbols-outlined" style={{ fontSize: 13, color: '#7c3aed' }}>sell</span>
+                                    )}
+                                    <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                      {fmtCents(Math.abs(Number(m.amount) || 0))}
+                                    </span>
+                                    {m._tagged && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setPromoTagForTransactions(m.transactionId, null)}
+                                        title="Remove this tag"
+                                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--color-text-tertiary)', lineHeight: 0, padding: 0 }}
+                                      >
+                                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              {matches.length > 40 && (
+                                <div style={{ padding: '6px 8px', fontSize: 11, color: 'var(--color-text-tertiary)', borderTop: '1px solid var(--border-ghost)' }}>
+                                  + {matches.length - 40} more
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )}
+                      {matches.length === 0 && !isDone && !promoIsTracked(p, promoTags) && (
+                        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+                          Tracked by hand. Tag transactions to it from the Transactions page, or set a match rule in Edit.
+                        </div>
+                      )}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
                       <button onClick={() => startEdit(p)} style={iconBtnStyle} title="Edit">

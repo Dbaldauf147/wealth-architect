@@ -3,6 +3,7 @@ import { useData, useDataActions } from '../contexts/DataContext';
 import { buildWeeklySummary, lastCompletedWeek } from '../lib/weeklySummary';
 import { renderWeeklyEmailHtml, WEEKLY_EMAIL_SECTIONS } from '../lib/renderWeeklyEmail';
 import { previewPaymentReminder, renderPaymentReminderHtml, paymentWorkbookFilename } from '../lib/paymentReminder';
+import { spendByWindow, bandsFor } from '../lib/normalRange';
 import styles from './SettingsPage.module.css';
 
 function relTime(date) {
@@ -36,7 +37,7 @@ function saveEmailPrefs(prefs) {
 
 export function SettingsPage() {
   const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay, rangeExcludedCategories, cardPromos } = useData();
-  const { refresh, updatePaymentReminderPrefs, updateCalendarSyncPrefs, updateWeeklyEmailSections, updateWeeklyEmailDay } = useDataActions();
+  const { refresh, updatePaymentReminderPrefs, updateCalendarSyncPrefs, updateWeeklyEmailSections, updateWeeklyEmailDay, toggleRangeExcludedCategory } = useDataActions();
   // Send day is synced via DataContext (Firestore) so the cron reads it; fall
   // back to Sunday for display when nothing has been chosen yet.
   const sendDay = weeklyEmailDay || 'Sun';
@@ -59,6 +60,28 @@ export function SettingsPage() {
     });
     return renderWeeklyEmailHtml(summary, { sections: weeklyEmailSections });
   }, [transactions, accountNicknames, accountGroups, weeklyEmailSections, rangeExcludedCategories, cardPromos]);
+
+  // Which categories the "Above Normal Range" section is allowed to report on.
+  // Every category with spend in the last 30 days gets a switch — the ones
+  // currently over their band are flagged so it's obvious what turning one off
+  // will remove from the next email. Ordered by 30-day spend, same as the email.
+  const rangeExcludedSet = useMemo(() => new Set(rangeExcludedCategories || []), [rangeExcludedCategories]);
+  const rangeCategoryChoices = useMemo(() => {
+    const byCat = spendByWindow(transactions || [], {
+      keyFor: t => (t.category && t.category !== 'Income' ? t.category : null),
+    });
+    const rows = [];
+    for (const [name, values] of byCat) {
+      const { avg, high, current } = bandsFor(values);
+      rows.push({ name, current, above: avg > 0 && current > high });
+    }
+    // An excluded category with no recent spend still needs a switch to come back.
+    for (const name of rangeExcludedCategories || []) {
+      if (!rows.some(r => r.name === name)) rows.push({ name, current: 0, above: false });
+    }
+    rows.sort((a, b) => (b.current - a.current) || a.name.localeCompare(b.name));
+    return rows;
+  }, [transactions, rangeExcludedCategories]);
 
   // Reorder / toggle weekly-email sections. Each handler rebuilds the full
   // ordered list and persists it (which also syncs to Firestore for the cron).
@@ -387,6 +410,59 @@ export function SettingsPage() {
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+
+          <div className={styles.divider} />
+
+          <div className={styles.cardRow}>
+            <div className={styles.cardRowIcon}>
+              <span className="material-symbols-outlined">tune</span>
+            </div>
+            <div className={styles.cardRowContent}>
+              <div className={styles.cardRowLabel}>Above Normal Range categories</div>
+              <div className={styles.cardRowValue} style={{ marginBottom: 8 }}>
+                Which categories the &ldquo;Above Normal Range&rdquo; section may flag. Switching one off also
+                removes it from the Normal Range Tracker on the Budgets page. Sorted by last-30-days spend.
+              </div>
+              {rangeCategoryChoices.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>No categories with spend yet.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxWidth: 460, maxHeight: 300, overflowY: 'auto' }}>
+                  {rangeCategoryChoices.map(c => {
+                    const included = !rangeExcludedSet.has(c.name);
+                    return (
+                      <label
+                        key={c.name}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+                          padding: '6px 10px', borderRadius: 8,
+                          border: '1px solid var(--border-ghost)',
+                          background: included ? 'var(--color-surface)' : 'var(--color-surface-alt)',
+                          opacity: included ? 1 : 0.6,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={included}
+                          onChange={() => toggleRangeExcludedCategory(c.name)}
+                        />
+                        <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                          {c.name}
+                        </span>
+                        {included && c.above && (
+                          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#b91c1c' }}>
+                            Above range
+                          </span>
+                        )}
+                        <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>
+                          {c.current.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
 

@@ -187,6 +187,14 @@ const saveHiddenCategories = (cats) => saveJSON('hiddenCategories', [...cats]);
 // "Above Normal Range" section. Stored as a plain string array.
 const loadRangeExcludedCategories = () => loadJSON('rangeExcludedCategories', []);
 const saveRangeExcludedCategories = (v) => saveJSON('rangeExcludedCategories', v);
+// Transfer is money moving between the user's own accounts, not spending, so it
+// has no business leading a list of categories that overspent. Added to the
+// exclusion list exactly once per account (mergeConfig does it, since only the
+// merge can see both sides), and this flag records that it happened — otherwise
+// turning Transfer back on would be undone by the next device to load.
+const RANGE_EXCLUDED_SEED = ['Transfer'];
+const loadRangeExcludedSeeded = () => loadJSON('rangeExcludedSeeded', false) === true;
+const saveRangeExcludedSeeded = (v) => saveJSON('rangeExcludedSeeded', !!v);
 // Short-term loan tracker — a single loan the user is paying daily interest on.
 // Stored as one object { name, lender, principal, rate, rateType, startDate,
 // note, payments: [{ id, date, amount, note }] }, or null when no loan is set.
@@ -225,6 +233,13 @@ const saveCardMap = (v) => saveJSON('cardMap', v);
 // overwriting a curated one during the hydration merge.
 const loadCardPromos = () => loadJSON('cardPromos', null);
 const saveCardPromos = (v) => saveJSON('cardPromos', v);
+
+// Transactions hand-tagged to a card promotion, as { [transactionId]: promoId }.
+// The promos' match rules only get you so far — a $300 travel credit redeemed
+// against one specific hotel charge has no rule that describes it. Synced so
+// the Card Promotions page and the weekly email count the same redemptions.
+const loadPromoTags = () => loadJSON('promoTags', {});
+const savePromoTags = (v) => saveJSON('promoTags', v);
 
 // Demo mode. Stored locally and *not* included in the Firestore payload:
 // it is a property of the screen you are standing in front of, not of the
@@ -416,6 +431,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.accountNicknames, remote.accountNicknames],
     [merged.accountGroups, remote.accountGroups],
     [merged.cardMap, remote.cardMap],
+    [merged.promoTags, remote.promoTags],
     [merged.assetClasses, remote.assetClasses],
     [merged.netWorthCategories, remote.netWorthCategories],
     [merged.netWorthLiquidCategories, remote.netWorthLiquidCategories],
@@ -425,6 +441,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.txnColumnWidths, remote.txnColumnWidths],
     [merged.categoryColors, remote.categoryColors],
   ];
+  if ((merged.rangeExcludedSeeded === true) !== (remote.rangeExcludedSeeded === true)) return true;
   for (const [a, b] of maps) {
     const bObj = b && typeof b === 'object' ? b : {};
     const aKeys = Object.keys(a);
@@ -476,8 +493,8 @@ const EMPTY_LOCALS = {
   assetClasses: {}, netWorthCategories: {}, netWorthLiquidCategories: {}, netWorthPrefs: null,
   customAssets: [], customLiabilities: [], customAssetClasses: [],
   hiddenCards: [], paymentReminderPrefs: {}, calendarSyncPrefs: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
-  cardPromos: null,
-  hiddenCategories: new Set(), rangeExcludedCategories: [], shortTermLoan: null, robinhoodTrades: null,
+  cardPromos: null, promoTags: {},
+  hiddenCategories: new Set(), rangeExcludedCategories: [], rangeExcludedSeeded: false, shortTermLoan: null, robinhoodTrades: null,
   organizedCategories: new Set(), incomeCategories: new Set(), savedTxnViews: {},
   chartHiddenCats: new Set(), chartHiddenSubs: new Set(), txnColumnWidths: {},
   categoryColors: {}, visibleColumns: null, activeTxnView: '', showAccounts: null,
@@ -499,6 +516,7 @@ function readLocalConfig() {
     accountGroups: loadAccountGroups(),
     cardMap: loadCardMap(),
     cardPromos: loadCardPromos(),
+    promoTags: loadPromoTags(),
     assetClasses: loadAssetClasses(),
     netWorthCategories: loadNetWorthCategories(),
     netWorthLiquidCategories: loadNetWorthLiquidCategories(),
@@ -514,6 +532,7 @@ function readLocalConfig() {
     customCategories: loadCustomCategories(),
     hiddenCategories: loadHiddenCategories(),
     rangeExcludedCategories: loadRangeExcludedCategories(),
+    rangeExcludedSeeded: loadRangeExcludedSeeded(),
     shortTermLoan: loadShortTermLoan(),
     robinhoodTrades: loadRobinhoodTrades(),
     organizedCategories: loadOrganizedCategories(),
@@ -547,6 +566,7 @@ function mergeConfig(remote, locals) {
     accountGroups: unionMap(locals.accountGroups, remote.accountGroups),
     cardMap: unionMap(locals.cardMap, remote.cardMap),
     cardPromos: locals.cardPromos || remote.cardPromos || null,
+    promoTags: unionMap(locals.promoTags, remote.promoTags),
     assetClasses: unionMap(locals.assetClasses, remote.assetClasses),
     netWorthCategories: unionMap(locals.netWorthCategories, remote.netWorthCategories),
     netWorthLiquidCategories: unionMap(locals.netWorthLiquidCategories, remote.netWorthLiquidCategories),
@@ -567,7 +587,16 @@ function mergeConfig(remote, locals) {
     weeklyEmailDay: locals.weeklyEmailDay || remote.weeklyEmailDay || null,
     customCategories: unionStringArray(locals.customCategories, remote.customCategories),
     hiddenCategories: unionSet(locals.hiddenCategories, remote.hiddenCategories),
-    rangeExcludedCategories: unionStringArray(locals.rangeExcludedCategories, remote.rangeExcludedCategories),
+    ...(() => {
+      // One-time seed of the Normal Range exclusions (see RANGE_EXCLUDED_SEED).
+      // Once the flag is set, whatever the user has chosen is the whole answer.
+      const seeded = locals.rangeExcludedSeeded || remote.rangeExcludedSeeded === true;
+      const excluded = unionStringArray(locals.rangeExcludedCategories, remote.rangeExcludedCategories);
+      return {
+        rangeExcludedCategories: seeded ? excluded : [...new Set([...excluded, ...RANGE_EXCLUDED_SEED])],
+        rangeExcludedSeeded: true,
+      };
+    })(),
     shortTermLoan: locals.shortTermLoan || remote.shortTermLoan || null,
     robinhoodTrades: locals.robinhoodTrades || remote.robinhoodTrades || null,
     organizedCategories: unionSet(locals.organizedCategories, remote.organizedCategories),
@@ -599,6 +628,7 @@ function buildSyncPayload(v) {
     accountGroups: v.accountGroups,
     cardMap: v.cardMap,
     cardPromos: v.cardPromos ?? null,
+    promoTags: v.promoTags,
     assetClasses: v.assetClasses,
     netWorthCategories: v.netWorthCategories,
     netWorthLiquidCategories: v.netWorthLiquidCategories,
@@ -614,6 +644,7 @@ function buildSyncPayload(v) {
     customCategories: v.customCategories,
     hiddenCategories: [...v.hiddenCategories],
     rangeExcludedCategories: v.rangeExcludedCategories,
+    rangeExcludedSeeded: v.rangeExcludedSeeded === true,
     shortTermLoan: v.shortTermLoan || null,
     robinhoodTrades: v.robinhoodTrades || null,
     organizedCategories: [...v.organizedCategories],
@@ -680,6 +711,7 @@ export function DataProvider({ children }) {
   const [customCategories, setCustomCategories] = useState(loadCustomCategories);
   const [hiddenCategories, setHiddenCategories] = useState(loadHiddenCategories);
   const [rangeExcludedCategories, setRangeExcludedCategories] = useState(loadRangeExcludedCategories);
+  const [rangeExcludedSeeded, setRangeExcludedSeeded] = useState(loadRangeExcludedSeeded);
   const [shortTermLoan, setShortTermLoan] = useState(loadShortTermLoan);
   const [robinhoodTrades, setRobinhoodTradesState] = useState(loadRobinhoodTrades);
   const [privacyMode, setPrivacyModeState] = useState(loadPrivacyMode);
@@ -701,6 +733,7 @@ export function DataProvider({ children }) {
   const [accountGroups, setAccountGroups] = useState(loadAccountGroups);
   const [cardMap, setCardMapState] = useState(loadCardMap);
   const [cardPromos, setCardPromosState] = useState(loadCardPromos);
+  const [promoTags, setPromoTags] = useState(loadPromoTags);
   const [assetClasses, setAssetClasses] = useState(loadAssetClasses);
   const [netWorthCategories, setNetWorthCategories] = useState(loadNetWorthCategories);
   const [netWorthLiquidCategories, setNetWorthLiquidCategories] = useState(loadNetWorthLiquidCategories);
@@ -758,6 +791,7 @@ export function DataProvider({ children }) {
     setAccountGroups(m.accountGroups); saveAccountGroups(m.accountGroups);
     setCardMapState(m.cardMap); saveCardMap(m.cardMap);
     setCardPromosState(m.cardPromos); saveCardPromos(m.cardPromos);
+    setPromoTags(m.promoTags); savePromoTags(m.promoTags);
     setAssetClasses(m.assetClasses); saveAssetClasses(m.assetClasses);
     setNetWorthCategories(m.netWorthCategories); saveNetWorthCategories(m.netWorthCategories);
     setNetWorthLiquidCategories(m.netWorthLiquidCategories); saveNetWorthLiquidCategories(m.netWorthLiquidCategories);
@@ -773,6 +807,7 @@ export function DataProvider({ children }) {
     setCustomCategories(m.customCategories); saveCustomCategories(m.customCategories);
     setHiddenCategories(m.hiddenCategories); saveHiddenCategories(m.hiddenCategories);
     setRangeExcludedCategories(m.rangeExcludedCategories); saveRangeExcludedCategories(m.rangeExcludedCategories);
+    setRangeExcludedSeeded(m.rangeExcludedSeeded); saveRangeExcludedSeeded(m.rangeExcludedSeeded);
     setShortTermLoan(m.shortTermLoan); saveShortTermLoan(m.shortTermLoan);
     setRobinhoodTradesState(m.robinhoodTrades); saveRobinhoodTrades(m.robinhoodTrades);
     setOrganizedCategories(m.organizedCategories); saveOrganizedCategories(m.organizedCategories);
@@ -864,10 +899,10 @@ export function DataProvider({ children }) {
     if (!syncHydrated.current) return;
     const currentConfig = {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
-      transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, cardPromos, assetClasses,
+      transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, cardPromos, promoTags, assetClasses,
       netWorthCategories, netWorthLiquidCategories, netWorthPrefs, customAssets,
       customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay,
-      customCategories, hiddenCategories, rangeExcludedCategories, shortTermLoan, robinhoodTrades, organizedCategories,
+      customCategories, hiddenCategories, rangeExcludedCategories, rangeExcludedSeeded, shortTermLoan, robinhoodTrades, organizedCategories,
       incomeCategories, savedTxnViews, chartHiddenCats, chartHiddenSubs, txnColumnWidths: columnWidths,
       categoryColors, visibleColumns, activeTxnView, showAccounts, pareto8020View,
       hiddenTransactionIds: hiddenIds,
@@ -903,6 +938,7 @@ export function DataProvider({ children }) {
     accountGroups,
     cardMap,
     cardPromos,
+    promoTags,
     assetClasses,
     netWorthCategories,
     netWorthLiquidCategories,
@@ -918,6 +954,7 @@ export function DataProvider({ children }) {
     customCategories,
     hiddenCategories,
     rangeExcludedCategories,
+    rangeExcludedSeeded,
     shortTermLoan,
     robinhoodTrades,
     organizedCategories,
@@ -1240,6 +1277,39 @@ export function DataProvider({ children }) {
     const next = Array.isArray(promos) ? promos : [];
     setCardPromosState(next);
     saveCardPromos(next);
+  }, []);
+
+  // Tag transactions to a card promotion so their spend counts against that
+  // credit on the Card Promotions page. A falsy promoId clears the tag.
+  const setPromoTagForTransactions = useCallback((transactionIds, promoId) => {
+    const ids = (Array.isArray(transactionIds) ? transactionIds : [transactionIds]).filter(Boolean);
+    if (ids.length === 0) return;
+    setPromoTags(prev => {
+      const next = { ...prev };
+      for (const id of ids) {
+        if (promoId) next[id] = promoId;
+        else delete next[id];
+      }
+      savePromoTags(next);
+      return next;
+    });
+  }, []);
+
+  // Drop every tag pointing at a promo — used when that promo is deleted, so
+  // its tags don't linger as orphans that quietly suppress other promos' rules.
+  const clearPromoTagsFor = useCallback((promoId) => {
+    if (!promoId) return;
+    setPromoTags(prev => {
+      const next = {};
+      let changed = false;
+      for (const id in prev) {
+        if (prev[id] === promoId) { changed = true; continue; }
+        next[id] = prev[id];
+      }
+      if (!changed) return prev;
+      savePromoTags(next);
+      return next;
+    });
   }, []);
 
   const setAccountNickname = useCallback((accountName, nickname) => {
@@ -2026,6 +2096,8 @@ export function DataProvider({ children }) {
     setAccountNickname,
     setCardForAccount,
     setCardPromos,
+    setPromoTagForTransactions,
+    clearPromoTagsFor,
     setAccountGroup,
     setAssetClass,
     setNetWorthCategory,
@@ -2092,6 +2164,8 @@ export function DataProvider({ children }) {
     setAccountNickname,
     setCardForAccount,
     setCardPromos,
+    setPromoTagForTransactions,
+    clearPromoTagsFor,
     setAccountGroup,
     setAssetClass,
     setNetWorthCategory,
@@ -2172,6 +2246,7 @@ export function DataProvider({ children }) {
     accountGroups: shownMaps.accountGroups,
     cardMap: shownMaps.cardMap,
     cardPromos: cardPromos ?? SEED_PROMOS,
+    promoTags,
     assetClasses: shownMaps.assetClasses,
     netWorthCategories: shownMaps.netWorthCategories,
     netWorthLiquidCategories: shownMaps.netWorthLiquidCategories,
@@ -2224,6 +2299,7 @@ export function DataProvider({ children }) {
     hiddenIds,
     splitTags,
     cardPromos,
+    promoTags,
     privacyMode,
     revealTicker,
     shownBalanceHistory,

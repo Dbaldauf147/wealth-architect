@@ -1406,8 +1406,8 @@ function RentCollisionNotice({ collisions, onMove, onDismiss }) {
 }
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, splitTags, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View } = useData();
-  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, tagForSplit, untagSplit, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns, setActiveTxnView, setShowAccounts, setPareto8020View } = useDataActions();
+  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, splitTags, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View, cardPromos, promoTags } = useData();
+  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, tagForSplit, untagSplit, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns, setActiveTxnView, setShowAccounts, setPareto8020View, setPromoTagForTransactions } = useDataActions();
   const [rentDismissed, setRentDismissed] = useState(loadRentDismissed);
   // Run over every transaction, not the filtered view — a rent clash is a fact
   // about the ledger and shouldn't disappear because the search box is narrow.
@@ -1449,6 +1449,8 @@ export function TransactionsPage() {
   const [bulkSubOpen, setBulkSubOpen] = useState(false);
   const [bulkSubSearch, setBulkSubSearch] = useState('');
   const bulkSubRef = useRef(null);
+  const [bulkPromoOpen, setBulkPromoOpen] = useState(false);
+  const bulkPromoRef = useRef(null);
   const [savedToast, setSavedToast] = useState(false);
   // A bulk hand-off has a real result to report — how many went, how many
   // didn't — and "Saved!" cannot carry that. Null keeps the old wording for
@@ -2159,10 +2161,13 @@ export function TransactionsPage() {
         setBulkSubOpen(false);
         setBulkSubSearch('');
       }
+      if (bulkPromoRef.current && !bulkPromoRef.current.contains(e.target)) {
+        setBulkPromoOpen(false);
+      }
     }
-    if (bulkCategoryOpen || bulkSubOpen) document.addEventListener('mousedown', handleClick);
+    if (bulkCategoryOpen || bulkSubOpen || bulkPromoOpen) document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [bulkCategoryOpen, bulkSubOpen]);
+  }, [bulkCategoryOpen, bulkSubOpen, bulkPromoOpen]);
 
   useEffect(() => {
     function handleClick(e) {
@@ -2390,6 +2395,18 @@ export function TransactionsPage() {
     flashSaved();
     setBulkSubOpen(false);
     setBulkSubSearch('');
+  }
+
+  // Tag the selection to a card promotion (or clear the tag with a null promo).
+  // The Card Promotions page counts tagged spend against that credit.
+  function handleBulkPromoTag(promo) {
+    const ids = [...selectedIds];
+    setPromoTagForTransactions(ids, promo ? promo.id : null);
+    flashSaved(promo
+      ? `Tagged ${ids.length} transaction${ids.length === 1 ? '' : 's'} to ${promo.name}`
+      : `Cleared promo tag on ${ids.length} transaction${ids.length === 1 ? '' : 's'}`);
+    setBulkPromoOpen(false);
+    setSelectedIds(new Set());
   }
 
   function handleBulkSubcategoryAndRule(sub) {
@@ -3051,6 +3068,13 @@ export function TransactionsPage() {
           </button>
           <button
             className={styles.bulkBtn}
+            onClick={() => { setBulkPromoOpen(!bulkPromoOpen); setBulkCategoryOpen(false); setBulkSubOpen(false); }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>sell</span>
+            Tag to Promo
+          </button>
+          <button
+            className={styles.bulkBtn}
             onClick={handleBulkSplit}
             disabled={bulkSplitBusy}
           >
@@ -3179,6 +3203,46 @@ export function TransactionsPage() {
                   </button>
                 </div>
               ))}
+            </div>
+          )}
+          {bulkPromoOpen && (
+            <div className={styles.bulkCategoryDropdown} ref={bulkPromoRef}>
+              <div
+                className={styles.categoryOption}
+                style={{ color: '#ba1a1a' }}
+                onClick={() => handleBulkPromoTag(null)}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                Remove promo tag
+              </div>
+              {(cardPromos || []).length === 0 && (
+                <div className={styles.categoryOption} style={{ color: 'var(--color-text-tertiary)', cursor: 'default' }}>
+                  No promos yet — add one on the Card Promotions page.
+                </div>
+              )}
+              {(cardPromos || []).map(promo => {
+                // How much of the selection already sits on this promo, so
+                // re-tagging a partly-tagged batch isn't a blind action.
+                const already = [...selectedIds].filter(id => promoTags[id] === promo.id).length;
+                return (
+                  <div
+                    key={promo.id}
+                    className={styles.categoryOption}
+                    onClick={() => handleBulkPromoTag(promo)}
+                  >
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: promo.color || '#475569', flexShrink: 0 }} />
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{promo.name}</span>
+                      <span style={{ display: 'block', fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{promo.card}</span>
+                    </span>
+                    {already > 0 && (
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: '#7c3aed', whiteSpace: 'nowrap' }}>
+                        {already} tagged
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

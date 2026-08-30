@@ -106,11 +106,51 @@ export function promoHasAutoMatch(p) {
   return !!((p.matchSubcategory || '').trim() || (p.matchCategory || '').trim() || (p.matchDescription || '').trim());
 }
 
+/** The promo a transaction has been tagged to by hand, or null.
+ *  `promoTags` is a flat { [transactionId]: promoId } map. */
+export function taggedPromoId(t, promoTags) {
+  if (!t || !promoTags) return null;
+  const id = t.transactionId;
+  if (!id) return null;
+  return promoTags[id] || null;
+}
+
+/** Whether the promo tracks itself from transactions at all — either from its
+ *  match rules or because transactions have been tagged to it by hand. Only a
+ *  promo with neither falls back to the manual "used" number. */
+export function promoIsTracked(promo, promoTags) {
+  if (!promo) return false;
+  if (promoHasAutoMatch(promo)) return true;
+  if (!promoTags) return false;
+  for (const id in promoTags) {
+    if (promoTags[id] === promo.id) return true;
+  }
+  return false;
+}
+
+/** How many transactions are hand-tagged to each promo id. */
+export function promoTagCounts(promoTags) {
+  const counts = {};
+  for (const id in (promoTags || {})) {
+    const promoId = promoTags[id];
+    if (!promoId) continue;
+    counts[promoId] = (counts[promoId] || 0) + 1;
+  }
+  return counts;
+}
+
 /** OR semantics across the three match fields: a transaction qualifies if it
  *  matches ANY of the populated criteria. Description match uses the same
- *  bidirectional contains check the auto-categorization rules use. */
-export function transactionMatchesPromo(t, promo) {
+ *  bidirectional contains check the auto-categorization rules use.
+ *
+ *  A hand-tag beats the rules in both directions: tagging a charge to a promo
+ *  counts it there even with no match fields set, and keeps it out of every
+ *  other promo whose rules would otherwise have claimed it. That's the point of
+ *  tagging — one credit, one home. */
+export function transactionMatchesPromo(t, promo, promoTags) {
   if (!t || !promo) return false;
+  const tagged = taggedPromoId(t, promoTags);
+  if (tagged) return tagged === promo.id;
   const wantSub = (promo.matchSubcategory || '').trim().toLowerCase();
   const wantCat = (promo.matchCategory || '').trim().toLowerCase();
   const wantDesc = normalizeDesc(promo.matchDescription);
@@ -131,16 +171,16 @@ export function transactionMatchesPromo(t, promo) {
  *  "how much is used" question; "when did I last touch this benefit" is a
  *  different question and a monthly credit that went unused this month is
  *  exactly when the last-used date is worth seeing. */
-export function matchingTransactions(promo, transactions) {
-  if (!promoHasAutoMatch(promo)) return [];
+export function matchingTransactions(promo, transactions, promoTags) {
+  if (!promoIsTracked(promo, promoTags)) return [];
   const out = [];
   for (const t of transactions || []) {
     const amt = Number(t.amount) || 0;
     if (amt === 0) continue;
-    if (!transactionMatchesPromo(t, promo)) continue;
+    if (!transactionMatchesPromo(t, promo, promoTags)) continue;
     const d = parseDate(t.date);
     if (!d) continue;
-    out.push({ ...t, _date: d });
+    out.push({ ...t, _date: d, _tagged: taggedPromoId(t, promoTags) === promo.id });
   }
   out.sort((a, b) => b._date - a._date);
   return out;
@@ -152,8 +192,8 @@ export function matchingTransactions(promo, transactions) {
  *  Absolute value on purpose, so the rule works in either direction: tag the
  *  original travel CHARGE (negative) to track redeemable spend, or tag the
  *  statement CREDIT (positive) to track the actual redemption. */
-export function autoUsedForPromo(promo, transactions, asOf = new Date()) {
-  if (!promoHasAutoMatch(promo)) return null;
+export function autoUsedForPromo(promo, transactions, asOf = new Date(), promoTags) {
+  if (!promoIsTracked(promo, promoTags)) return null;
   if (!transactions || transactions.length === 0) return 0;
   const start = periodWindowStart(promo.period, asOf);
   let sum = 0;
@@ -164,7 +204,7 @@ export function autoUsedForPromo(promo, transactions, asOf = new Date()) {
       const d = parseDate(t.date);
       if (!d || d < start) continue;
     }
-    if (!transactionMatchesPromo(t, promo)) continue;
+    if (!transactionMatchesPromo(t, promo, promoTags)) continue;
     sum += Math.abs(amt);
   }
   return sum;
@@ -174,9 +214,9 @@ export function autoUsedForPromo(promo, transactions, asOf = new Date()) {
  *    1. manually marked complete this cycle → the full value
  *    2. auto-tracked from transactions when a match field is set
  *    3. the manual "used" number the user typed */
-export function effectiveUsedFor(promo, transactions, asOf = new Date()) {
+export function effectiveUsedFor(promo, transactions, asOf = new Date(), promoTags) {
   if (isPromoCompleted(promo, asOf)) return Number(promo.value) || 0;
-  const auto = autoUsedForPromo(promo, transactions, asOf);
+  const auto = autoUsedForPromo(promo, transactions, asOf, promoTags);
   return auto != null ? auto : (Number(promo.used) || 0);
 }
 
@@ -187,12 +227,13 @@ export function effectiveUsedFor(promo, transactions, asOf = new Date()) {
  *  `moreCount`), because this feeds an email and not a page. Promos are ranked
  *  by how much value is still on the table, so the ones worth acting on this
  *  week sort to the top and a fully-used credit doesn't crowd them out. */
-export function summarizeCardPromos({ promos, transactions, asOf = new Date(), limit = 8 }) {
+export function summarizeCardPromos({ promos, transactions, asOf = new Date(), limit = 8, promoTags = null }) {
   const list = Array.isArray(promos) ? promos : [];
+  const tagCounts = promoTagCounts(promoTags);
   const rows = list.map((p) => {
     const value = Number(p.value) || 0;
-    const used = effectiveUsedFor(p, transactions, asOf);
-    const matches = matchingTransactions(p, transactions);
+    const used = effectiveUsedFor(p, transactions, asOf, promoTags);
+    const matches = matchingTransactions(p, transactions, promoTags);
     const last = matches[0] || null;
     const cycleStart = periodWindowStart(p.period, asOf);
     return {
@@ -207,8 +248,9 @@ export function summarizeCardPromos({ promos, transactions, asOf = new Date(), l
       // $900 of matching travel is used up, not 300% used.
       remaining: Math.max(0, value - Math.min(used, value)),
       completed: isPromoCompleted(p, asOf),
-      tracked: promoHasAutoMatch(p),
+      tracked: promoIsTracked(p, promoTags),
       matchCount: matches.length,
+      taggedCount: tagCounts[p.id] || 0,
       lastTransaction: last
         ? {
             date: last._date.toISOString(),
