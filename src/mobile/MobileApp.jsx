@@ -4,6 +4,7 @@ import { reviewStats } from '../lib/reviewQueue';
 import { ReviewTab } from './ReviewTab';
 import { RecentTab } from './RecentTab';
 import { InsightsTab } from './InsightsTab';
+import { SearchTab } from './SearchTab';
 import { SplitsTab } from './SplitsTab';
 import { RulesTab } from './RulesTab';
 import { applyBadge, clearBadge, badgeBlocker, requestBadgePermission } from './appBadge';
@@ -12,6 +13,7 @@ import styles from './MobileApp.module.css';
 const TABS = [
   { id: 'review', label: 'Review', icon: 'inbox' },
   { id: 'recent', label: 'Filed', icon: 'history' },
+  { id: 'search', label: 'Search', icon: 'query_stats' },
   { id: 'splits', label: 'Splits', icon: 'call_split' },
   { id: 'insights', label: 'Month', icon: 'donut_small' },
 ];
@@ -172,7 +174,7 @@ export function MobileApp() {
       <header className={styles.header}>
         <div className={styles.brand}>
           <span className={styles.brandMark}>W</span>
-          {tab === 'rules' ? 'Rules' : 'Categorize'}
+          {tab === 'rules' ? 'Rules' : tab === 'search' ? 'Search' : 'Categorize'}
         </div>
         <div className={styles.headerSpacer} />
         <button
@@ -259,6 +261,7 @@ export function MobileApp() {
           <>
             {tab === 'review' && <ReviewTab sort={sort} onSortChange={changeSort} askSub={askSub} />}
             {tab === 'recent' && <RecentTab />}
+            {tab === 'search' && <SearchTab />}
             {tab === 'splits' && <SplitsTab />}
             {tab === 'insights' && <InsightsTab onGoReview={() => go('review')} />}
             {tab === 'rules' && (

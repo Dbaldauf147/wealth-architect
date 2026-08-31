@@ -693,7 +693,62 @@
   font-variant-numeric: tabular-nums;
 }
 
+.statSub {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
 .barRow { padding: 10px 0; border-bottom: var(--border-ghost); }
+
+/* ── Search: a bar you can open ─────────────────────── */
+
+/* Same bar as the month view, but the whole row is the hit target for the
+   transactions behind it, so it has to be a button. */
+.barBtn {
+  display: block;
+  width: 100%;
+  padding: 10px 0;
+  border: none;
+  border-bottom: var(--border-ghost);
+  background: none;
+  text-align: left;
+  font-family: var(--font-body);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.barBtn:active { background: var(--color-surface-hover); }
+
+.barMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.drill {
+  padding: 2px 0 10px 10px;
+  border-bottom: var(--border-ghost);
+  border-left: 2px solid var(--color-surface-alt);
+  margin-left: 4px;
+}
+
+.drillRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 8px 0;
+}
+
+.drillMore {
+  padding: 8px 0 0;
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+}
 
 .barTop {
   display: flex;
