@@ -1759,172 +1759,273 @@
 }
 
 /* ──────────────────────────────────────────────
-   Rent collision — the three surrounding months
+   Rent collision — a bar per month
    ────────────────────────────────────────────── */
 
-/* A clash is only half the story. Whether to push the later payment forward or
-   drag the earlier one back is a judgement about which neighbour has the hole,
-   and the month before and after are what make that visible. */
-.rentMonths {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.rentMonth {
+/* Rent-collision warning: a bar per month, so the doubled month and the empty
+   one are read as shape rather than described in a paragraph. */
+.rentNotices {
   display: flex;
   flex-direction: column;
-  padding: 10px 12px;
-  background: var(--color-surface, #fff);
-  border: var(--border-medium);
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.rentNotice {
+  padding: 14px 16px;
+  background: rgba(232, 163, 23, 0.07);
+  border: 1px solid rgba(232, 163, 23, 0.3);
   border-radius: var(--radius-xl);
-  min-width: 0;
 }
 
-.rentMonthCollision {
-  border-color: rgba(232, 163, 23, 0.55);
-  background: rgba(232, 163, 23, 0.06);
-}
-
-.rentMonthTarget {
-  border-color: rgba(0, 88, 190, 0.45);
-  border-style: dashed;
-}
-
-.rentMonthLabel {
+.rentNoticeHead {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.rentMonthTotal {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
+  gap: 7px;
   flex-wrap: wrap;
-  margin-top: 3px;
   font-family: var(--font-headline);
-  font-size: 17px;
-  font-weight: 800;
+  font-size: 13px;
+  font-weight: 700;
   color: var(--color-text-primary);
 }
 
-/* What the month becomes if the move is taken. The old figure stays legible
-   beside it — this is a proposal, not a done deal. */
-.rentMonthWas {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--color-text-tertiary);
-  text-decoration: line-through;
-  text-decoration-thickness: 1px;
-}
-
-.rentMonthArrow {
+/* The two numbers the decision turns on, next to the headline rather than
+   buried in a sentence below it. */
+.rentNoticeFigure {
+  margin-left: auto;
   font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+}
+
+.rentPlot {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 104px;
+  margin: 12px 0 10px;
+  /* The baseline the bars stand on. Recessive — the bars are the data. */
+  border-bottom: var(--border-ghost);
+}
+
+/* What a month of rent normally comes to. Every bar is read against this line,
+   which is also the test that decides whether a month is flagged at all. */
+.rentTypicalLine {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px dashed var(--color-text-tertiary);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* Sits just above its line rather than on it, so nothing has to be painted
+   over the dashes to stay legible. */
+.rentTypicalLabel {
+  position: absolute;
+  right: 0;
+  bottom: 2px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--color-text-tertiary);
 }
 
-.rentMonthMeta {
-  margin-top: 2px;
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-}
-
-.rentMonthList {
+.rentBarCol {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-  padding-top: 7px;
-  border-top: var(--border-ghost);
-}
-
-.rentMonthEntry {
+  flex: 1 1 0;
   min-width: 0;
+  height: 100%;
 }
 
-/* One line, always — a bank description runs to eighty characters and would
-   otherwise set the width of all three boxes. */
-.rentMonthDesc {
+/* Segments stack upward from the baseline: column direction with the content
+   pushed to the end puts the first child on top, and the 2px gap keeps two
+   touching fills from reading as one. */
+.rentBarStack {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Segments never shrink: their height IS the number, and letting flex squeeze
+   them to fit would quietly rescale the chart. */
+.rentBarFill,
+.rentBarMoving,
+.rentBarGhost,
+.rentBarEmpty,
+.rentBarValue {
+  flex: none;
+}
+
+.rentBarFill {
+  background: var(--color-secondary, #0058be);
+  opacity: 0.55;
+}
+
+.rentBarFillCollision {
+  background: var(--color-warning, #e8a317);
+  opacity: 1;
+}
+
+/* The piece the Move button would take out of this month. */
+.rentBarMoving {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--color-warning, #e8a317) 0 3px,
+    rgba(255, 255, 255, 0.55) 3px 6px
+  );
+}
+
+/* And where it would land — an outline, because it hasn't happened yet. */
+.rentBarGhost {
+  border: 1px dashed var(--color-secondary, #0058be);
+  border-bottom: none;
+  background: rgba(0, 88, 190, 0.07);
+}
+
+.rentBarTop {
+  border-top-left-radius: 4px;
+  border-top-right-radius: 4px;
+}
+
+.rentBarEmpty {
+  height: 2px;
+  background: var(--color-text-tertiary);
+  opacity: 0.35;
+}
+
+.rentBarValue {
+  padding-bottom: 3px;
   font-size: 10.5px;
-  line-height: 1.35;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.rentBarLabel {
+  padding-top: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
   color: var(--color-text-tertiary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.rentMonthRow {
+.rentBarLabelCollision {
+  color: var(--color-text-primary);
+  font-weight: 800;
+}
+
+/* The payments themselves, one line each. The description is what exposes a
+   false positive, so it travels with the date and the amount. */
+.rentPayments {
   display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.rentPaymentChip {
+  display: inline-flex;
   align-items: baseline;
   gap: 7px;
+  max-width: 100%;
+  padding: 4px 9px;
+  background: var(--color-surface, #fff);
+  border: var(--border-ghost);
+  border-radius: var(--radius-lg);
   font-size: 11.5px;
   color: var(--color-text-secondary);
   min-width: 0;
 }
 
-/* The one the button would move. Marked in place so the sentence "move this
-   one" points at a row rather than only at a date in the button label. */
-.rentMonthRowMoving {
-  font-weight: 700;
+/* The one the button would move, marked in place so "move this one" points at
+   a row and not only at a date in the button label. */
+.rentPaymentChipMoving {
+  border-color: rgba(232, 163, 23, 0.55);
   color: var(--color-warning, #e8a317);
+  font-weight: 700;
 }
 
-.rentMonthDate {
+.rentPaymentDate {
   flex: none;
   font-variant-numeric: tabular-nums;
 }
 
-.rentMonthAmount {
+.rentPaymentAmount {
   flex: none;
-  margin-left: auto;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-primary);
 }
 
-.rentMonthRowMoving .rentMonthAmount {
+.rentPaymentChipMoving .rentPaymentAmount {
   color: inherit;
 }
 
-.rentMonthEmpty {
-  margin-top: 8px;
-  padding-top: 7px;
-  border-top: var(--border-ghost);
-  font-size: 11.5px;
-  font-style: italic;
+/* One line, always — a bank description runs to eighty characters. */
+.rentPaymentDesc {
+  font-size: 10.5px;
   color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
-/* The landing slot in the month after, drawn where the payment would appear. */
-.rentMonthIncoming {
+.rentActions {
   display: flex;
-  align-items: baseline;
-  gap: 7px;
-  margin-top: 8px;
-  padding: 6px 8px;
-  border: 1px dashed rgba(0, 88, 190, 0.45);
-  border-radius: var(--radius-lg);
-  font-size: 11.5px;
-  font-weight: 700;
-  color: var(--color-secondary, #0058be);
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.rentMonthIncoming .rentMonthAmount {
-  color: inherit;
+.rentMoveBtn,
+.rentKeepBtn {
+  padding: 7px 14px;
+  font-family: var(--font-headline);
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+}
+
+.rentMoveBtn {
+  color: #fff;
+  background: var(--color-secondary);
+  border: 1px solid var(--color-secondary);
+}
+
+.rentMoveBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.rentKeepBtn {
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+  border: var(--border-medium);
 }
 
 @media (max-width: 768px) {
-  .rentMonths {
-    grid-template-columns: 1fr;
+  .rentPlot {
+    height: 84px;
+  }
+
+  /* A bank description at this width pushes the amount off the chip. */
+  .rentPaymentDesc {
+    display: none;
   }
 }

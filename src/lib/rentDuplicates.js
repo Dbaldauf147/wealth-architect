@@ -11,8 +11,12 @@
 // without making it, because the alternative reading is always possible: two
 // tenants, or a tenant catching up on arrears, is genuinely two payments in
 // one month and must not be quietly rewritten.
+//
+// Two payments are not on their own a problem: what matters is whether the
+// month ends up holding roughly a month's rent. A rent that arrived in two
+// pieces sums to the usual figure and is left alone.
 
-import { isRentIncome, cashFlowMonthKey, prevMonthKey } from './cashflowExport.js';
+import { isRentIncome, cashFlowMonthKey } from './cashflowExport.js';
 import { txnFallbackKey } from './categorize.js';
 
 /** 'YYYY-MM' → 'August 2026'. */
@@ -104,6 +108,78 @@ function sumOf(rows) {
   return (rows || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
 }
 
+/** 'YYYY-MM' as a single number, so months can be compared and stepped. */
+function monthIndex(key) {
+  const [y, m] = String(key).split('-').map(Number);
+  return y && m ? y * 12 + (m - 1) : null;
+}
+
+/** The inverse of monthIndex(). */
+function keyFromIndex(index) {
+  const y = Math.floor(index / 12);
+  const m = (index % 12) + 1;
+  return `${y}-${String(m).padStart(2, '0')}`;
+}
+
+function median(values) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * How far a month's rent may run over the typical figure and still be normal.
+ *
+ * Two payments that together come to about one month's rent are a rent that
+ * arrived in two pieces — a part payment, a tenant splitting with a roommate,
+ * a small top-up after a short payment — and the month is not doubled at all.
+ * Flagging those is noise: nothing needs moving, because the month already
+ * holds the right amount of money.
+ *
+ * The allowance is deliberately narrow. A genuine double comes in near 200% of
+ * typical, so 115% separates "paid in two pieces" from "paid twice" with room
+ * to spare for a rent increase or a late fee riding along with the payment.
+ */
+export const TYPICAL_TOLERANCE = 1.15;
+
+/** How many single-payment months feed the typical figure. */
+const TYPICAL_SAMPLE = 12;
+
+/**
+ * What a month of rent normally comes to, near a given month.
+ *
+ * Read only off months holding a single payment: those are the uncontested
+ * ones, and the doubled months this file exists to find would otherwise drag
+ * the figure up towards the very number they need to be measured against.
+ *
+ * The median rather than the mean, because one month of arrears arriving as a
+ * lump would pull an average up far enough to excuse a real double. And the
+ * sample is the months *nearest* the one in question rather than all of
+ * history — rent gets raised, and a 2019 figure says nothing about whether a
+ * 2026 month is normal.
+ *
+ * Returns null when there aren't enough clean months to say anything, which
+ * leaves the collision flagged: silence should need evidence.
+ */
+export function typicalMonthlyRent(byMonth, nearKey) {
+  const near = monthIndex(nearKey);
+  const singles = [];
+  for (const [key, rows] of byMonth) {
+    if (!rows || rows.length !== 1) continue;
+    const index = monthIndex(key);
+    if (index == null) continue;
+    singles.push({ distance: near == null ? 0 : Math.abs(index - near), total: sumOf(rows) });
+  }
+  if (singles.length < 2) return null;
+  singles.sort((a, b) => a.distance - b.distance);
+  return median(singles.slice(0, TYPICAL_SAMPLE).map(s => s.total));
+}
+
+/** How many months of history a collision's chart carries, before and after. */
+const CHART_BEFORE = 6;
+const CHART_AFTER = 1;
+
 /**
  * Rent payments that collide, grouped by the month they land in.
  *
@@ -113,15 +189,18 @@ function sumOf(rows) {
  * clash with the 2nd of the same calendar month would be a false alarm about a
  * problem the site has already solved.
  *
- * Each collision carries its three surrounding months — the one before, the
- * doubled one, and the one the move would fill. A clash is only half the story:
- * whether to push the later payment forward or drag the earlier one back is a
- * judgement about which neighbour has the hole, and that can't be made without
- * seeing what is credited either side.
+ * A month is only a collision if it also holds too *much* money. Two payments
+ * adding up to a normal month's rent are one rent split in two, and nothing
+ * about that needs correcting — see TYPICAL_TOLERANCE.
+ *
+ * Each collision carries a run of surrounding months with their rent totals.
+ * A clash is only half the story: whether to push the later payment forward or
+ * drag the earlier one back is a judgement about which neighbour has the hole,
+ * and that can't be made without seeing what is credited either side.
  *
  * @param {Array} transactions
  * @param {(key: string) => boolean} isDismissed
- * @returns {Array<{ monthKey, month, payments, later, earlier, suggestedDate, suggestedMonth, months, moveAmount, key }>}
+ * @returns {Array<{ monthKey, month, payments, later, earlier, suggestedDate, suggestedMonth, series, typical, moveAmount, key }>}
  */
 export function findRentCollisions(transactions, isDismissed = () => false) {
   const byMonth = new Map();
@@ -136,34 +215,54 @@ export function findRentCollisions(transactions, isDismissed = () => false) {
 
   const byDate = (a, b) => dateOrder(a.date) - dateOrder(b.date);
 
+  // The earliest month rent ever landed in, so the chart doesn't open with a
+  // row of empty bars from before the tenant existed.
+  let firstIndex = null;
+  for (const key of byMonth.keys()) {
+    const index = monthIndex(key);
+    if (index != null && (firstIndex == null || index < firstIndex)) firstIndex = index;
+  }
+
   const out = [];
   for (const [monthKey, rows] of byMonth) {
     if (rows.length < 2) continue;
 
-    const payments = [...rows].sort(byDate);
-    const later = payments[payments.length - 1];
-    const earlier = payments[0];
-
-    // Keyed on the payment being proposed for the move, so dismissing one
-    // collision doesn't silence a different month.
-    const key = `rent-dupe:${monthKey}:${txnKey(later)}`;
+    // Keyed on the month alone. A dismissal says "December is fine", and it has
+    // to keep saying that after a re-sync gives the payments new ids or a third
+    // row lands — otherwise the warning the user answered comes straight back.
+    const key = `rent-dupe:${monthKey}`;
     if (isDismissed(key)) continue;
 
+    const payments = [...rows].sort(byDate);
+    const total = sumOf(payments);
+
+    // In line with a normal month — paid in pieces, not paid twice.
+    const typical = typicalMonthlyRent(byMonth, monthKey);
+    if (typical != null && total <= typical * TYPICAL_TOLERANCE) continue;
+
+    const later = payments[payments.length - 1];
+    const earlier = payments[0];
     const suggestedDate = shiftForwardOneMonth(later.date);
-    const beforeKey = prevMonthKey(monthKey);
     const afterKey = nextMonthKey(monthKey);
     const moveAmount = Number(later.amount) || 0;
 
-    const monthOf = (mKey, role) => {
+    const collisionIndex = monthIndex(monthKey);
+    const startIndex = Math.max(
+      collisionIndex - CHART_BEFORE,
+      firstIndex == null ? collisionIndex : firstIndex,
+    );
+    const series = [];
+    for (let i = startIndex; i <= collisionIndex + CHART_AFTER; i++) {
+      const mKey = keyFromIndex(i);
       const list = [...(byMonth.get(mKey) || [])].sort(byDate);
-      return {
+      series.push({
         key: mKey,
         label: monthLabel(mKey),
         payments: list,
         total: sumOf(list),
-        role,
-      };
-    };
+        role: mKey === monthKey ? 'collision' : mKey === afterKey ? 'after' : '',
+      });
+    }
 
     out.push({
       monthKey,
@@ -173,13 +272,10 @@ export function findRentCollisions(transactions, isDismissed = () => false) {
       earlier,
       suggestedDate,
       suggestedMonth: monthLabel(afterKey),
-      months: [
-        monthOf(beforeKey, 'before'),
-        monthOf(monthKey, 'collision'),
-        monthOf(afterKey, 'after'),
-      ],
+      series,
+      typical,
       moveAmount,
-      total: sumOf(payments),
+      total,
       key,
     });
   }

@@ -313,6 +313,18 @@ const loadShowAccounts = () => loadJSON('showAccounts', null);
 const saveShowAccounts = (v) => saveJSON('showAccounts', v);
 const loadPareto8020View = () => loadJSON('pareto8020View', null);
 const savePareto8020View = (v) => saveJSON('pareto8020View', v);
+// Rent-collision warnings the user has answered with "these are both real",
+// keyed by the month the payments landed in. Synced rather than kept on the
+// device: answering the warning is a decision about the ledger, and it has to
+// stay answered on the phone as well as the laptop.
+const loadRentDupeDismissed = () => new Set([
+  ...(loadJSON('rentDupeDismissed', []) || []),
+  // The first version keyed each dismissal to the payment offered for the move,
+  // so a re-sync that renumbered transactions brought the answered warning
+  // straight back. Carry those forward as dismissals of their month.
+  ...(loadJSON('rentDupeDismissed:v1', []) || []).map(k => String(k).split(':').slice(0, 2).join(':')),
+]);
+const saveRentDupeDismissed = (s) => saveJSON('rentDupeDismissed', [...s]);
 
 // ── Stale-while-revalidate cache for sheet data ─────────────────────────
 // The Google Sheets fetch is the slowest part of a cold load. We persist
@@ -419,6 +431,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [[...merged.chartHiddenCats], remote.chartHiddenCats],
     [[...merged.chartHiddenSubs], remote.chartHiddenSubs],
     [[...merged.hiddenTransactionIds], remote.hiddenTransactionIds],
+    [[...merged.rentDupeDismissed], remote.rentDupeDismissed],
   ];
   for (const [a, b] of checks) {
     if (!Array.isArray(b) || a.length !== b.length) return true;
@@ -498,7 +511,7 @@ const EMPTY_LOCALS = {
   organizedCategories: new Set(), incomeCategories: new Set(), savedTxnViews: {},
   chartHiddenCats: new Set(), chartHiddenSubs: new Set(), txnColumnWidths: {},
   categoryColors: {}, visibleColumns: null, activeTxnView: '', showAccounts: null,
-  pareto8020View: null, hiddenTransactionIds: new Set(),
+  pareto8020View: null, hiddenTransactionIds: new Set(), rentDupeDismissed: new Set(),
 };
 
 // Snapshot of every synced field from localStorage — the "local" side of the
@@ -547,6 +560,7 @@ function readLocalConfig() {
     showAccounts: loadShowAccounts(),
     pareto8020View: loadPareto8020View(),
     hiddenTransactionIds: loadHiddenIds(),
+    rentDupeDismissed: loadRentDupeDismissed(),
   };
 }
 
@@ -611,6 +625,7 @@ function mergeConfig(remote, locals) {
     showAccounts: locals.showAccounts ?? remote.showAccounts ?? true,
     pareto8020View: locals.pareto8020View ?? remote.pareto8020View ?? false,
     hiddenTransactionIds: unionSet(locals.hiddenTransactionIds, remote.hiddenTransactionIds),
+    rentDupeDismissed: unionSet(locals.rentDupeDismissed, remote.rentDupeDismissed),
   };
 }
 
@@ -659,6 +674,7 @@ function buildSyncPayload(v) {
     showAccounts: v.showAccounts ?? true,
     pareto8020View: v.pareto8020View ?? false,
     hiddenTransactionIds: [...v.hiddenTransactionIds],
+    rentDupeDismissed: [...v.rentDupeDismissed],
   };
 }
 
@@ -727,6 +743,7 @@ export function DataProvider({ children }) {
   const [activeTxnView, setActiveTxnViewState] = useState(loadActiveTxnView);
   const [showAccounts, setShowAccountsState] = useState(() => loadShowAccounts() ?? true);
   const [pareto8020View, setPareto8020ViewState] = useState(() => loadPareto8020View() ?? false);
+  const [rentDupeDismissed, setRentDupeDismissedState] = useState(loadRentDupeDismissed);
   const [transactionNotes, setTransactionNotes] = useState(loadNotes);
   const [splitTags, setSplitTags] = useState(loadSplitTags);
   const [accountNicknames, setAccountNicknames] = useState(loadAccountNicknames);
@@ -822,6 +839,7 @@ export function DataProvider({ children }) {
     setShowAccountsState(m.showAccounts); saveShowAccounts(m.showAccounts);
     setPareto8020ViewState(m.pareto8020View); savePareto8020View(m.pareto8020View);
     setHiddenIds(m.hiddenTransactionIds); saveHiddenIds(m.hiddenTransactionIds);
+    setRentDupeDismissedState(m.rentDupeDismissed); saveRentDupeDismissed(m.rentDupeDismissed);
   }, []);
 
   /* The purchase-alert queue, live.
@@ -906,6 +924,7 @@ export function DataProvider({ children }) {
       incomeCategories, savedTxnViews, chartHiddenCats, chartHiddenSubs, txnColumnWidths: columnWidths,
       categoryColors, visibleColumns, activeTxnView, showAccounts, pareto8020View,
       hiddenTransactionIds: hiddenIds,
+      rentDupeDismissed,
     };
     const serialized = serializeConfig(currentConfig);
     if (serialized === lastSyncedRef.current) return; // nothing actually changed
@@ -969,6 +988,7 @@ export function DataProvider({ children }) {
     showAccounts,
     pareto8020View,
     hiddenIds,
+    rentDupeDismissed,
   ]);
 
   // Apply the categorization *rules* to the raw data. This is the expensive
@@ -1657,6 +1677,19 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  // "These are both real" on a rent-collision warning. Recorded per month, so
+  // the answer survives the payments being re-imported under new ids.
+  const dismissRentCollision = useCallback((key) => {
+    if (!key) return;
+    setRentDupeDismissedState(prev => {
+      if (prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.add(key);
+      saveRentDupeDismissed(next);
+      return next;
+    });
+  }, []);
+
   const addCustomAssetClass = useCallback((className) => {
     const trimmed = (className || '').trim();
     if (!trimmed) return;
@@ -2131,6 +2164,7 @@ export function DataProvider({ children }) {
     setActiveTxnView,
     setShowAccounts,
     setPareto8020View,
+    dismissRentCollision,
     updatePaymentReminderPrefs,
     updateCalendarSyncPrefs,
     updateWeeklyEmailSections,
@@ -2199,6 +2233,7 @@ export function DataProvider({ children }) {
     setActiveTxnView,
     setShowAccounts,
     setPareto8020View,
+    dismissRentCollision,
     updatePaymentReminderPrefs,
     updateCalendarSyncPrefs,
     updateWeeklyEmailSections,
@@ -2239,6 +2274,7 @@ export function DataProvider({ children }) {
     activeTxnView,
     showAccounts,
     pareto8020View,
+    rentDupeDismissed,
     transactionNotes: shownNotes,
     splitTags,
     accountNicknames: shownMaps.accountNicknames,
@@ -2291,6 +2327,7 @@ export function DataProvider({ children }) {
     activeTxnView,
     showAccounts,
     pareto8020View,
+    rentDupeDismissed,
     customAssetClasses,
     netWorthPrefs,
     calendarSyncPrefs,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findRentCollisions, shiftForwardOneMonth, nextMonthKey } from './rentDuplicates.js';
+import { findRentCollisions, shiftForwardOneMonth, nextMonthKey, typicalMonthlyRent } from './rentDuplicates.js';
 
 const rent = (id, date, amount, description = 'Zelle payment for rent') => ({
   transactionId: id, date, amount, description, category: 'Rent',
@@ -62,14 +62,16 @@ describe('findRentCollisions', () => {
     expect(c.monthKey).toBe('2025-12');
   });
 
-  it('reports the three surrounding months with their rent totals', () => {
+  it('charts the months around the clash with their rent totals', () => {
     const [c] = findRentCollisions([
       rent('prev', '2025-11-02', 2200),
       rent('a', '2025-12-03', 1000),
       rent('b', '2025-12-15', 3480),
     ]);
-    expect(c.months.map(m => [m.role, m.key, m.total, m.payments.length])).toEqual([
-      ['before', '2025-11', 2200, 1],
+    // Starts at the first month rent ever landed in rather than six months of
+    // empty bars, and runs one month past the clash — the month the move fills.
+    expect(c.series.map(m => [m.role, m.key, m.total, m.payments.length])).toEqual([
+      ['', '2025-11', 2200, 1],
       ['collision', '2025-12', 4480, 2],
       ['after', '2026-01', 0, 0],
     ]);
@@ -95,5 +97,69 @@ describe('findRentCollisions', () => {
       { transactionId: 'a', date: '2025-12-03', amount: -1000, description: 'rent paid out' },
       { transactionId: 'b', date: '2025-12-15', amount: 3480, description: 'salary' },
     ])).toEqual([]);
+  });
+});
+
+describe('a month whose rent is in line with normal', () => {
+  // Three clean months at 2,200 set what "normal" looks like; the split month
+  // adds up to the same 2,200 and is not a doubled month at all.
+  const clean = [
+    rent('m1', '2025-08-02', 2200),
+    rent('m2', '2025-09-02', 2200),
+    rent('m3', '2025-10-02', 2200),
+  ];
+
+  it('is not flagged when two payments add up to a normal month', () => {
+    expect(findRentCollisions([
+      ...clean,
+      rent('split-a', '2025-11-02', 1200),
+      rent('split-b', '2025-11-09', 1000),
+    ])).toEqual([]);
+  });
+
+  it('allows a little over — a rent rise or a fee riding along', () => {
+    expect(findRentCollisions([
+      ...clean,
+      rent('split-a', '2025-11-02', 1200),
+      rent('split-b', '2025-11-09', 1250), // 2,450 = 111% of typical
+    ])).toEqual([]);
+  });
+
+  it('still flags a month that genuinely holds two rents', () => {
+    const [c] = findRentCollisions([
+      ...clean,
+      rent('n1', '2025-11-02', 2200),
+      rent('n2', '2025-11-09', 2200),
+    ]);
+    expect(c.monthKey).toBe('2025-11');
+    expect(c.typical).toBe(2200);
+  });
+
+  it('flags when there is no clean history to compare against', () => {
+    // Two payments and nothing else: "normal" is unknown, and an unknown must
+    // not silence the warning.
+    const [c] = findRentCollisions([
+      rent('a', '2025-11-02', 1200),
+      rent('b', '2025-11-09', 1000),
+    ]);
+    expect(c.typical).toBeNull();
+  });
+});
+
+describe('typicalMonthlyRent', () => {
+  const byMonth = new Map([
+    ['2025-08', [rent('a', '2025-08-02', 2000)]],
+    ['2025-09', [rent('b', '2025-09-02', 2200)]],
+    ['2025-10', [rent('c', '2025-10-02', 2400)]],
+    // The doubled month must not be allowed to raise the bar it is judged by.
+    ['2025-11', [rent('d', '2025-11-02', 2200), rent('e', '2025-11-09', 2200)]],
+  ]);
+
+  it('reads the median of the single-payment months', () => {
+    expect(typicalMonthlyRent(byMonth, '2025-11')).toBe(2200);
+  });
+
+  it('says nothing when there is only one clean month', () => {
+    expect(typicalMonthlyRent(new Map([['2025-08', [rent('a', '2025-08-02', 2000)]]]), '2025-09')).toBeNull();
   });
 });

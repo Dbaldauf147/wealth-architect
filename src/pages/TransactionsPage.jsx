@@ -17,21 +17,6 @@ function fmt(n) {
   }).format(n);
 }
 
-// Collisions the user has looked at and decided are real — two tenants, or a
-// tenant catching up. Kept on the device rather than in the synced settings:
-// it is a record of having read a warning, not a fact about the finances.
-const RENT_DISMISS_KEY = 'rentDupeDismissed:v1';
-
-function loadRentDismissed() {
-  try { return new Set(JSON.parse(localStorage.getItem(RENT_DISMISS_KEY)) || []); }
-  catch { return new Set(); }
-}
-
-function saveRentDismissed(set) {
-  try { localStorage.setItem(RENT_DISMISS_KEY, JSON.stringify([...set])); }
-  catch { /* private mode — the warning simply comes back */ }
-}
-
 // Stable empty array so non-editing rows receive a referentially constant prop
 // (lets the memoized TransactionRow skip re-rendering on unrelated edits).
 const EMPTY_ARR = [];
@@ -1239,96 +1224,89 @@ const TransactionRow = memo(function TransactionRow({
   );
 });
 
+/* A month of rent, as a bar.
+
+   The clash and its neighbours are the whole argument: "two payments in
+   December" says nothing about whether the hole is in November or January, and
+   that is what decides between pushing the later payment forward and dragging
+   the earlier one back. A run of months makes the doubled bar and the empty one
+   obvious at a glance, which a paragraph never did.
+
+   The doubled bar is drawn in two pieces — what stays and what the button would
+   move — and the month it would land in carries a dashed ghost of the same
+   amount, so the proposal is a shape rather than a sentence. */
+function RentBar({ month, collision, scale, money, showYear }) {
+  const isCollision = month.role === 'collision';
+  const isTarget = month.role === 'after';
+  const moving = collision.suggestedDate ? collision.moveAmount : 0;
+  const staying = isCollision ? Math.max(month.total - moving, 0) : month.total;
+  const ghost = isTarget ? moving : 0;
+  const pct = (v) => `${Math.max(0, (v / scale) * 100)}%`;
+  // Which piece is on top, so only the data end gets rounded corners.
+  const top = ghost > 0 ? 'ghost' : (isCollision && moving > 0) ? 'moving' : 'fill';
+
+  // The bar is the shape; the hover carries the detail a shape can't — which
+  // payments, on what days, described how. That is what exposes a false
+  // positive: a parking reimbursement caught by the word "rent" is only
+  // recognisable by what it says.
+  const title = [
+    `${month.label} — ${money(month.total)}`,
+    ...month.payments.map(p => `${formatDate(p.date)}   ${money(p.amount)}   ${p.description || ''}`.trim()),
+    month.payments.length ? '' : 'no rent credited',
+  ].filter(Boolean).join('\n');
+
+  const [y, m] = month.key.split('-');
+  const short = new Date(Date.UTC(Number(y), Number(m) - 1, 1))
+    .toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' });
+
+  return (
+    <div className={styles.rentBarCol} title={title}>
+      <div className={styles.rentBarStack}>
+        {isCollision && (
+          <div className={styles.rentBarValue}>{money(month.total)}</div>
+        )}
+        {ghost > 0 && (
+          <div
+            className={`${styles.rentBarGhost} ${top === 'ghost' ? styles.rentBarTop : ''}`}
+            style={{ height: pct(ghost) }}
+          />
+        )}
+        {isCollision && moving > 0 && (
+          <div
+            className={`${styles.rentBarMoving} ${top === 'moving' ? styles.rentBarTop : ''}`}
+            style={{ height: pct(moving) }}
+          />
+        )}
+        {staying > 0 ? (
+          <div
+            className={[
+              styles.rentBarFill,
+              isCollision ? styles.rentBarFillCollision : '',
+              top === 'fill' ? styles.rentBarTop : '',
+            ].filter(Boolean).join(' ')}
+            style={{ height: pct(staying) }}
+          />
+        ) : ghost > 0 ? null : (
+          // A month with no rent in it is the point of the chart, not a gap in
+          // it — a hairline on the baseline says "measured, and it was zero".
+          // Skipped under the ghost, which would otherwise float off the axis.
+          <div className={styles.rentBarEmpty} />
+        )}
+      </div>
+      <div className={`${styles.rentBarLabel} ${isCollision ? styles.rentBarLabelCollision : ''}`}>
+        {showYear ? `${short} '${String(y).slice(2)}` : short}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Two rent payments credited to one month.
  *
  * Shown rather than fixed, because the same data has two readings: a payment
  * that drifted across a month boundary wants moving, and two tenants — or a
  * tenant clearing arrears — is genuinely two payments and must be left alone.
- * Both payments are laid out with their dates and amounts so the difference is
- * visible before anything is changed.
  */
-/* One month of rent, as a box.
-
-   Three of these sit side by side — the month before the clash, the doubled
-   month, and the month the move would fill. Seeing all three is what makes the
-   decision possible: "two payments in December" says nothing about whether the
-   hole is in November or January, and that is exactly what decides between
-   pushing the later payment forward and dragging the earlier one back. */
-function RentMonthBox({ month, collision, money }) {
-  const isCollision = month.role === 'collision';
-  const isTarget = month.role === 'after';
-  const moved = collision.suggestedDate ? collision.moveAmount : 0;
-  // What the month is worth if the proposed move is taken. Only the two months
-  // the payment travels between change.
-  const after = isCollision ? month.total - moved : isTarget ? month.total + moved : month.total;
-  const changes = moved > 0 && (isCollision || isTarget);
-
-  return (
-    <div className={[
-      styles.rentMonth,
-      isCollision ? styles.rentMonthCollision : '',
-      isTarget && changes ? styles.rentMonthTarget : '',
-    ].filter(Boolean).join(' ')}>
-      <div className={styles.rentMonthLabel}>
-        {isCollision && (
-          <span className="material-symbols-outlined" style={{ fontSize: 13 }}>error</span>
-        )}
-        {month.label}
-      </div>
-
-      <div className={styles.rentMonthTotal}>
-        {changes ? (
-          <>
-            <span className={styles.rentMonthWas}>{money(month.total)}</span>
-            <span className={styles.rentMonthArrow}>→</span>
-            {money(after)}
-          </>
-        ) : money(month.total)}
-      </div>
-
-      <div className={styles.rentMonthMeta}>
-        {month.payments.length === 0
-          ? 'no rent credited'
-          : `${month.payments.length} payment${month.payments.length === 1 ? '' : 's'}`}
-      </div>
-
-      {month.payments.length > 0 ? (
-        <div className={styles.rentMonthList}>
-          {month.payments.map(p => {
-            const leaving = isCollision && p === collision.later && changes;
-            return (
-              <div key={txnKey(p)} className={styles.rentMonthEntry} title={p.description || ''}>
-                <div className={`${styles.rentMonthRow} ${leaving ? styles.rentMonthRowMoving : ''}`}>
-                  <span className={styles.rentMonthDate}>{formatDate(p.date)}</span>
-                  {leaving && (
-                    <span className="material-symbols-outlined" style={{ fontSize: 13 }}>east</span>
-                  )}
-                  <span className={styles.rentMonthAmount}>{money(p.amount)}</span>
-                </div>
-                {/* The description is what exposes a false positive — a parking
-                    reimbursement or a fee caught by the word "rent" is only
-                    recognisable by what it says. */}
-                <div className={styles.rentMonthDesc}>{p.description || '—'}</div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        !isTarget && <div className={styles.rentMonthEmpty}>nothing landed here</div>
-      )}
-
-      {isTarget && changes && (
-        <div className={styles.rentMonthIncoming}>
-          <span className="material-symbols-outlined" style={{ fontSize: 13 }}>south_east</span>
-          <span className={styles.rentMonthDate}>{formatDate(collision.suggestedDate)}</span>
-          <span className={styles.rentMonthAmount}>{money(moved)}</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function RentCollisionNotice({ collisions, onMove, onDismiss }) {
   if (!collisions.length) return null;
 
@@ -1337,83 +1315,102 @@ function RentCollisionNotice({ collisions, onMove, onDismiss }) {
   }).format(Number(n) || 0);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
-      {collisions.map(c => (
-        <div key={c.key} style={{
-          padding: '14px 16px',
-          background: 'rgba(232, 163, 23, 0.07)',
-          border: '1px solid rgba(232, 163, 23, 0.3)',
-          borderRadius: 'var(--radius-xl)',
-        }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6,
-            fontFamily: 'var(--font-headline)', fontSize: 13, fontWeight: 700,
-            color: 'var(--color-text-primary)',
-          }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 17 }}>event_repeat</span>
-            {c.payments.length} rent payments land in {c.month}
-          </div>
+    <div className={styles.rentNotices}>
+      {collisions.map(c => {
+        // Headroom above the tallest bar so the value label and the usual-rent
+        // line have somewhere to sit.
+        const peak = Math.max(
+          ...c.series.map(m => m.total + (m.role === 'after' ? c.moveAmount : 0)),
+          c.typical || 0,
+          1,
+        );
+        const scale = peak * 1.22;
 
-          <div style={{
-            fontSize: 12.5, lineHeight: 1.55, color: 'var(--color-text-secondary)',
-            maxWidth: '78ch', marginBottom: 10,
-          }}>
-            {money(c.total)} of rent is credited to {c.month}, which doubles that month
-            and leaves a hole in another. Moving the later one forward puts it in{' '}
-            <strong>{c.suggestedMonth}</strong>, keeping the same day of the month.
-            {' '}If instead the <em>earlier</em> one is last month&apos;s rent arriving late, edit
-            its date in the table below — and if these really are two separate payments,
-            dismiss this.
-          </div>
+        return (
+          <div key={c.key} className={styles.rentNotice}>
+            <div className={styles.rentNoticeHead}>
+              <span className="material-symbols-outlined" style={{ fontSize: 17 }}>event_repeat</span>
+              {c.payments.length} rent payments land in {c.month}
+              <span className={styles.rentNoticeFigure}>
+                {money(c.total)}
+                {c.typical ? ` vs ${money(c.typical)} usual` : ''}
+              </span>
+            </div>
 
-          <div className={styles.rentMonths}>
-            {c.months.map(m => (
-              <RentMonthBox key={m.key} month={m} collision={c} money={money} />
-            ))}
-          </div>
+            <div className={styles.rentPlot}>
+              {c.typical > 0 && (
+                <div
+                  className={styles.rentTypicalLine}
+                  style={{ bottom: `${(c.typical / scale) * 100}%` }}
+                >
+                  <span className={styles.rentTypicalLabel}>usual {money(c.typical)}</span>
+                </div>
+              )}
+              {c.series.map((m, i) => (
+                <RentBar
+                  key={m.key}
+                  month={m}
+                  collision={c}
+                  scale={scale}
+                  money={money}
+                  showYear={i === 0 || m.key.endsWith('-01')}
+                />
+              ))}
+            </div>
 
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              onClick={() => onMove(c)}
-              disabled={!c.suggestedDate}
-              style={{
-                padding: '7px 14px', fontFamily: 'var(--font-headline)', fontSize: 12,
-                fontWeight: 600, color: '#fff', background: 'var(--color-secondary)',
-                border: '1px solid var(--color-secondary)', borderRadius: 'var(--radius-lg)',
-                cursor: c.suggestedDate ? 'pointer' : 'not-allowed',
-              }}
-            >
-              Move {formatDate(c.later.date)} → {formatDate(c.suggestedDate)}
-            </button>
-            <button
-              type="button"
-              onClick={() => onDismiss(c.key)}
-              style={{
-                padding: '7px 14px', fontFamily: 'var(--font-headline)', fontSize: 12,
-                fontWeight: 600, color: 'var(--color-text-secondary)',
-                background: 'var(--color-surface)', border: 'var(--border-medium)',
-                borderRadius: 'var(--radius-lg)', cursor: 'pointer',
-              }}
-            >
-              These are both real
-            </button>
+            <div className={styles.rentPayments}>
+              {c.payments.map(p => {
+                const leaving = p === c.later && !!c.suggestedDate;
+                return (
+                  <span
+                    key={txnKey(p)}
+                    className={`${styles.rentPaymentChip} ${leaving ? styles.rentPaymentChipMoving : ''}`}
+                  >
+                    <span className={styles.rentPaymentDate}>{formatDate(p.date)}</span>
+                    <span className={styles.rentPaymentAmount}>{money(p.amount)}</span>
+                    <span className={styles.rentPaymentDesc}>{p.description || '—'}</span>
+                    {leaving && (
+                      <span className="material-symbols-outlined" style={{ fontSize: 13 }}>east</span>
+                    )}
+                  </span>
+                );
+              })}
+            </div>
+
+            <div className={styles.rentActions}>
+              <button
+                type="button"
+                className={styles.rentMoveBtn}
+                onClick={() => onMove(c)}
+                disabled={!c.suggestedDate}
+                title={`Credits this payment to ${c.suggestedMonth} instead, keeping the same day of the month. If it is the earlier payment that arrived late, edit its date in the table below instead.`}
+              >
+                Move {formatDate(c.later.date)} → {formatDate(c.suggestedDate)}
+              </button>
+              <button
+                type="button"
+                className={styles.rentKeepBtn}
+                onClick={() => onDismiss(c.key)}
+                title={`Two tenants, or a tenant clearing arrears, is genuinely two payments. ${c.month} stays as it is and this warning does not come back.`}
+              >
+                These are both real
+              </button>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, splitTags, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View, cardPromos, promoTags } = useData();
-  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, tagForSplit, untagSplit, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns, setActiveTxnView, setShowAccounts, setPareto8020View, setPromoTagForTransactions } = useDataActions();
-  const [rentDismissed, setRentDismissed] = useState(loadRentDismissed);
+  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, splitTags, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View, rentDupeDismissed, cardPromos, promoTags } = useData();
+  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, tagForSplit, untagSplit, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns, setActiveTxnView, setShowAccounts, setPareto8020View, dismissRentCollision, setPromoTagForTransactions } = useDataActions();
   // Run over every transaction, not the filtered view — a rent clash is a fact
   // about the ledger and shouldn't disappear because the search box is narrow.
   const rentCollisions = useMemo(
-    () => findRentCollisions(transactions, (k) => rentDismissed.has(k)),
-    [transactions, rentDismissed],
+    () => findRentCollisions(transactions, (k) => rentDupeDismissed.has(k)),
+    [transactions, rentDupeDismissed],
   );
   const [editingSubId, setEditingSubId] = useState(null);
   const [subSearchText, setSubSearchText] = useState('');
@@ -2592,12 +2589,7 @@ export function TransactionsPage() {
           // by hand in the table are the same override rather than two.
           updateTransactionDate(c.later.transactionId, c.suggestedDate, txnKey(c.later));
         }}
-        onDismiss={(key) => setRentDismissed(prev => {
-          const next = new Set(prev);
-          next.add(key);
-          saveRentDismissed(next);
-          return next;
-        })}
+        onDismiss={dismissRentCollision}
       />
 
       {/* Filter Bar */}
