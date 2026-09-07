@@ -70,6 +70,7 @@ const BudgetsPage = lazy(() => import('./pages/BudgetsPage').then(m => ({ defaul
 const RecurringPage = lazy(() => import('./pages/RecurringPage').then(m => ({ default: m.RecurringPage })));
 const CashFlowPage = lazy(() => import('./pages/CashFlowPage').then(m => ({ default: m.CashFlowPage })));
 const CardPromosPage = lazy(() => import('./pages/CardPromosPage').then(m => ({ default: m.CardPromosPage })));
+const SplitwisePage = lazy(() => import('./pages/SplitwisePage').then(m => ({ default: m.SplitwisePage })));
 const TrendsPage = lazy(() => import('./pages/TrendsPage').then(m => ({ default: m.TrendsPage })));
 const NetWorthPage = lazy(() => import('./pages/NetWorthPage').then(m => ({ default: m.NetWorthPage })));
 const ShortTermLoanPage = lazy(() => import('./pages/ShortTermLoanPage').then(m => ({ default: m.ShortTermLoanPage })));
@@ -152,6 +153,7 @@ const NAV_ITEMS = [
   { id: 'assets', label: 'Assets & Liabilities', icon: 'account_balance' },
   { id: 'cards', label: 'Cards Overview', icon: 'credit_card' },
   { id: 'promos', label: 'Card Promotions', icon: 'redeem' },
+  { id: 'splitwise', label: 'Splitwise', icon: 'group' },
   { id: 'loan', label: 'Short-Term Loan', icon: 'request_quote' },
 ];
 
@@ -200,6 +202,7 @@ export function App() {
       case 'assets': return <AssetsPage />;
       case 'cards': return <CardsPage />;
       case 'promos': return <CardPromosPage />;
+      case 'splitwise': return <SplitwisePage />;
       case 'home': return <HomeBuyingPage />;
       case 'loan': return <ShortTermLoanPage />;
       case 'settings': return <SettingsPage />;

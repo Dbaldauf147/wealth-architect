@@ -15,6 +15,12 @@ import {
 import { normalizeEmailSections } from '../lib/renderWeeklyEmail';
 import { SEED_PROMOS } from '../lib/cardPromos';
 import {
+  normalizeExpenses as normalizeSplitwiseExpenses,
+  summarizeBalances as summarizeSplitwiseBalances,
+  summarizeExpenses as summarizeSplitwiseExpenses,
+  attachTransactionMatches,
+} from '../lib/splitwise';
+import {
   makeScrambler, scrambleTransactions, scrambleBalances, scrambleBalanceHistory,
   scrambleRobinhood, scrambleCustomItems, scrambleLoan, scrambleAccountMaps,
   scrambleHiddenCards, scramblePaymentPrefs, scrambleNotes,
@@ -169,6 +175,18 @@ const loadCalendarSyncPrefs = () => {
   return { ...DEFAULT_CALENDAR_SYNC_PREFS, ...(stored || {}) };
 };
 const saveCalendarSyncPrefs = (v) => saveJSON('calendarSyncPrefs', v);
+// Splitwise. Only the preferences are stored — the balances and expenses
+// themselves are live data read through /api/splitwise on every load, never
+// cached into the config doc, because a stale 'you are owed $340' is worse
+// than no number at all. `inNetWorth` is a toggle rather than a constant
+// because a split charge is already on a card statement, so counting the
+// receivable too is a defensible choice but not the only one.
+const DEFAULT_SPLITWISE_PREFS = { inNetWorth: true, days: 90 };
+const loadSplitwisePrefs = () => {
+  const stored = loadJSON('splitwisePrefs', null);
+  return { ...DEFAULT_SPLITWISE_PREFS, ...(stored || {}) };
+};
+const saveSplitwisePrefs = (v) => saveJSON('splitwisePrefs', v);
 // Weekly-email section order + visibility — synced via Firestore so the server
 // cron renders sections in the user's chosen order. Stored as [{id, enabled}];
 // normalizeEmailSections fills in defaults / drops unknown ids.
@@ -450,6 +468,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.netWorthLiquidCategories, remote.netWorthLiquidCategories],
     [merged.paymentReminderPrefs, remote.paymentReminderPrefs],
     [merged.calendarSyncPrefs, remote.calendarSyncPrefs],
+    [merged.splitwisePrefs, remote.splitwisePrefs],
     [merged.savedTxnViews, remote.savedTxnViews],
     [merged.txnColumnWidths, remote.txnColumnWidths],
     [merged.categoryColors, remote.categoryColors],
@@ -505,7 +524,7 @@ const EMPTY_LOCALS = {
   dateOverrides: {}, transactionNotes: {}, splitTags: {}, accountNicknames: {}, accountGroups: {},
   assetClasses: {}, netWorthCategories: {}, netWorthLiquidCategories: {}, netWorthPrefs: null,
   customAssets: [], customLiabilities: [], customAssetClasses: [],
-  hiddenCards: [], paymentReminderPrefs: {}, calendarSyncPrefs: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
+  hiddenCards: [], paymentReminderPrefs: {}, calendarSyncPrefs: {}, splitwisePrefs: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
   cardPromos: null, promoTags: {},
   hiddenCategories: new Set(), rangeExcludedCategories: [], rangeExcludedSeeded: false, shortTermLoan: null, robinhoodTrades: null,
   organizedCategories: new Set(), incomeCategories: new Set(), savedTxnViews: {},
@@ -540,6 +559,7 @@ function readLocalConfig() {
     hiddenCards: loadHiddenCards(),
     paymentReminderPrefs: loadPaymentReminderPrefs(),
     calendarSyncPrefs: loadCalendarSyncPrefs(),
+    splitwisePrefs: loadSplitwisePrefs(),
     weeklyEmailSections: loadJSON('weeklyEmailSections', null),
     weeklyEmailDay: loadJSON('weeklyEmailDay', null),
     customCategories: loadCustomCategories(),
@@ -597,6 +617,7 @@ function mergeConfig(remote, locals) {
     hiddenCards: unionStringArray(locals.hiddenCards, remote.hiddenCards),
     paymentReminderPrefs: { ...DEFAULT_PAYMENT_REMINDER_PREFS, ...(remote.paymentReminderPrefs || {}), ...(locals.paymentReminderPrefs || {}) },
     calendarSyncPrefs: { ...DEFAULT_CALENDAR_SYNC_PREFS, ...(remote.calendarSyncPrefs || {}), ...(locals.calendarSyncPrefs || {}) },
+    splitwisePrefs: { ...DEFAULT_SPLITWISE_PREFS, ...(remote.splitwisePrefs || {}), ...(locals.splitwisePrefs || {}) },
     weeklyEmailSections: normalizeEmailSections(locals.weeklyEmailSections || remote.weeklyEmailSections),
     weeklyEmailDay: locals.weeklyEmailDay || remote.weeklyEmailDay || null,
     customCategories: unionStringArray(locals.customCategories, remote.customCategories),
@@ -654,6 +675,7 @@ function buildSyncPayload(v) {
     hiddenCards: v.hiddenCards,
     paymentReminderPrefs: v.paymentReminderPrefs,
     calendarSyncPrefs: v.calendarSyncPrefs,
+    splitwisePrefs: v.splitwisePrefs,
     weeklyEmailSections: v.weeklyEmailSections,
     weeklyEmailDay: v.weeklyEmailDay ?? null,
     customCategories: v.customCategories,
@@ -761,6 +783,11 @@ export function DataProvider({ children }) {
   const [hiddenCards, setHiddenCards] = useState(loadHiddenCards);
   const [paymentReminderPrefs, setPaymentReminderPrefs] = useState(loadPaymentReminderPrefs);
   const [calendarSyncPrefs, setCalendarSyncPrefs] = useState(loadCalendarSyncPrefs);
+  const [splitwisePrefs, setSplitwisePrefs] = useState(loadSplitwisePrefs);
+  // Live Splitwise data. Deliberately not persisted anywhere: a balance is
+  // only worth showing if it is current.
+  const [splitwiseRaw, setSplitwiseRaw] = useState(null);
+  const [splitwiseLoading, setSplitwiseLoading] = useState(true);
   const [weeklyEmailSections, setWeeklyEmailSections] = useState(loadWeeklyEmailSections);
   const [weeklyEmailDay, setWeeklyEmailDay] = useState(loadWeeklyEmailDay);
   // Purchase alerts pushed from the phone, newest first. Server-written, so
@@ -819,6 +846,7 @@ export function DataProvider({ children }) {
     setHiddenCards(m.hiddenCards); saveHiddenCards(m.hiddenCards);
     setPaymentReminderPrefs(m.paymentReminderPrefs); savePaymentReminderPrefs(m.paymentReminderPrefs);
     setCalendarSyncPrefs(m.calendarSyncPrefs); saveCalendarSyncPrefs(m.calendarSyncPrefs);
+    setSplitwisePrefs(m.splitwisePrefs); saveSplitwisePrefs(m.splitwisePrefs);
     setWeeklyEmailSections(m.weeklyEmailSections); saveWeeklyEmailSections(m.weeklyEmailSections);
     setWeeklyEmailDay(m.weeklyEmailDay); saveWeeklyEmailDay(m.weeklyEmailDay);
     setCustomCategories(m.customCategories); saveCustomCategories(m.customCategories);
@@ -919,7 +947,7 @@ export function DataProvider({ children }) {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
       transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, cardPromos, promoTags, assetClasses,
       netWorthCategories, netWorthLiquidCategories, netWorthPrefs, customAssets,
-      customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay,
+      customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, splitwisePrefs, weeklyEmailSections, weeklyEmailDay,
       customCategories, hiddenCategories, rangeExcludedCategories, rangeExcludedSeeded, shortTermLoan, robinhoodTrades, organizedCategories,
       incomeCategories, savedTxnViews, chartHiddenCats, chartHiddenSubs, txnColumnWidths: columnWidths,
       categoryColors, visibleColumns, activeTxnView, showAccounts, pareto8020View,
@@ -968,6 +996,7 @@ export function DataProvider({ children }) {
     hiddenCards,
     paymentReminderPrefs,
     calendarSyncPrefs,
+    splitwisePrefs,
     weeklyEmailSections,
     weeklyEmailDay,
     customCategories,
@@ -1069,6 +1098,60 @@ export function DataProvider({ children }) {
   const allTransactionsRef = useRef(allTransactions);
   allTransactionsRef.current = allTransactions;
 
+  /* Pull Splitwise, and read it from this account's point of view.
+
+     The route returns raw Splitwise JSON; what any of it means is decided in
+     lib/splitwise so the page, the mobile tab and the tests can't disagree. */
+  const loadSplitwise = useCallback(async (days) => {
+    setSplitwiseLoading(true);
+    try {
+      const res = await fetch(`/api/splitwise?days=${encodeURIComponent(days || 90)}`);
+      const data = await res.json();
+      setSplitwiseRaw(data && typeof data === 'object' ? data : { connected: false, error: 'Splitwise sent nothing back' });
+    } catch (err) {
+      // A dead route must not take the rest of the app down with it — every
+      // other number on the page is still good.
+      setSplitwiseRaw({ connected: false, error: `Could not reach Splitwise: ${err.message}` });
+    } finally {
+      setSplitwiseLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadSplitwise(splitwisePrefs.days); }, [loadSplitwise, splitwisePrefs.days]);
+
+
+  const splitwise = useMemo(() => {
+    const raw = splitwiseRaw;
+    const base = {
+      loading: splitwiseLoading,
+      connected: !!raw?.connected,
+      error: raw?.error || null,
+      asOf: raw?.asOf || null,
+      user: raw?.user || null,
+      days: raw?.days || splitwisePrefs.days,
+      balances: summarizeSplitwiseBalances({ friends: [], groups: [], defaultCurrency: 'USD' }),
+      expenses: [],
+      summary: summarizeSplitwiseExpenses([]),
+    };
+    if (!raw || !raw.connected || raw.error) return base;
+
+    const currency = raw.user?.default_currency || 'USD';
+    const expenses = attachTransactionMatches(
+      normalizeSplitwiseExpenses(raw.expenses, raw.user?.id),
+      transactions,
+    );
+    return {
+      ...base,
+      balances: summarizeSplitwiseBalances({
+        friends: raw.friends,
+        groups: raw.groups,
+        defaultCurrency: currency,
+      }),
+      expenses,
+      summary: summarizeSplitwiseExpenses(expenses),
+    };
+  }, [splitwiseRaw, splitwiseLoading, splitwisePrefs.days, transactions]);
+
   // Merge user-entered customs into the sheet-derived balances so every
   // consumer (Overview Net Worth, Asset Allocation, etc.) sees them
   // automatically. Recomputes totals + netWorth so custom entries are
@@ -1077,6 +1160,21 @@ export function DataProvider({ children }) {
     if (!rawBalances) return rawBalances;
     const assets = [...(rawBalances.assets || []), ...(customAssets || [])];
     const liabilities = [...(rawBalances.liabilities || []), ...(customLiabilities || [])];
+    // What Splitwise says you are net owed, as one line. It goes in on the side
+    // it actually falls on rather than always as an asset, so a month where you
+    // owe people reads as the liability it is. Worth knowing: the charge behind
+    // a receivable is usually already on a card statement, so this line and that
+    // spend describe the same money from two ends — which is why it is a toggle.
+    const swNet = splitwisePrefs.inNetWorth ? (splitwise.connected ? splitwise.balances.net : 0) : 0;
+    if (Math.abs(swNet) >= 0.005) {
+      const row = {
+        name: swNet > 0 ? 'Splitwise — owed to you' : 'Splitwise — you owe',
+        balance: Math.abs(swNet),
+        updated: 'Splitwise',
+        splitwise: true,
+      };
+      if (swNet > 0) assets.push(row); else liabilities.push(row);
+    }
     const totalAssets = assets.reduce((s, a) => s + (a.balance || 0), 0);
     const totalLiabilities = liabilities.reduce((s, l) => s + (l.balance || 0), 0);
     const merged = {
@@ -1089,7 +1187,7 @@ export function DataProvider({ children }) {
     };
     // Scrambled after the customs merge so user-entered assets are covered too.
     return scrambler ? scrambleBalances(merged, scrambler) : merged;
-  }, [rawBalances, customAssets, customLiabilities, scrambler]);
+  }, [rawBalances, customAssets, customLiabilities, scrambler, splitwise, splitwisePrefs.inNetWorth]);
 
   // Used inside loadData() so we can suppress the error surface when the
   // background refresh fails but cached data is still on screen — better
@@ -1133,6 +1231,13 @@ export function DataProvider({ children }) {
       setSyncing(false);
     }
   }, []);
+
+  // The sync button means "make everything on screen current", which now
+  // includes the balances owed to and by other people.
+  const refreshAll = useCallback(() => {
+    loadSplitwise(splitwisePrefs.days);
+    return loadData();
+  }, [loadSplitwise, splitwisePrefs.days, loadData]);
 
   // Block first paint on the Firestore config hydration *only* when
   // localStorage had no rules to render with — that's the case where a
@@ -1441,6 +1546,14 @@ export function DataProvider({ children }) {
     setCalendarSyncPrefs(prev => {
       const next = { ...prev, ...(patch || {}) };
       saveCalendarSyncPrefs(next);
+      return next;
+    });
+  }, []);
+
+  const updateSplitwisePrefs = useCallback((patch) => {
+    setSplitwisePrefs(prev => {
+      const next = { ...prev, ...(patch || {}) };
+      saveSplitwisePrefs(next);
       return next;
     });
   }, []);
@@ -2105,7 +2218,7 @@ export function DataProvider({ children }) {
   }, [spendAlerts, transactions, updateTransactionCategory]);
 
   const actions = useMemo(() => ({
-    refresh: loadData,
+    refresh: refreshAll,
     setPrivacyMode,
     updateTransactionCategory,
     updateTransactionSubcategory,
@@ -2167,6 +2280,7 @@ export function DataProvider({ children }) {
     dismissRentCollision,
     updatePaymentReminderPrefs,
     updateCalendarSyncPrefs,
+    updateSplitwisePrefs,
     updateWeeklyEmailSections,
     updateWeeklyEmailDay,
     renameGroup,
@@ -2174,7 +2288,7 @@ export function DataProvider({ children }) {
     toggleHideTransaction,
     getMatchCount,
   }), [
-    loadData,
+    refreshAll,
     setPrivacyMode,
     updateTransactionCategory,
     updateTransactionSubcategory,
@@ -2236,6 +2350,7 @@ export function DataProvider({ children }) {
     dismissRentCollision,
     updatePaymentReminderPrefs,
     updateCalendarSyncPrefs,
+    updateSplitwisePrefs,
     updateWeeklyEmailSections,
     updateWeeklyEmailDay,
     renameGroup,
@@ -2293,6 +2408,8 @@ export function DataProvider({ children }) {
     hiddenCards: shownHiddenCards,
     paymentReminderPrefs: shownPaymentPrefs,
     calendarSyncPrefs,
+    splitwisePrefs,
+    splitwise,
     weeklyEmailSections,
     weeklyEmailDay,
     hiddenTransactions: shownHiddenTransactions,
@@ -2331,6 +2448,8 @@ export function DataProvider({ children }) {
     customAssetClasses,
     netWorthPrefs,
     calendarSyncPrefs,
+    splitwisePrefs,
+    splitwise,
     weeklyEmailSections,
     weeklyEmailDay,
     hiddenIds,
