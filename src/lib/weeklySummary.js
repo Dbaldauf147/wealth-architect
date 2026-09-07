@@ -458,7 +458,18 @@ export function monthlyTrends({ transactions, weekEnd }) {
  *  `accountNicknames` and `accountGroups` are optional maps applied to
  *  user-visible account names so the email matches the in-app naming.
  *  Group membership takes precedence over individual nicknames. */
-export function buildWeeklySummary({ transactions, start, end, asOf = new Date(), accountNicknames = {}, accountGroups = {}, rangeExcludedCategories = [], cardMap = {}, cardPromos = null, promoTags = null }) {
+/* Everything in the summary is anchored to the week being reported, not to the
+   moment the mail happens to go out.
+
+   These are different weeks whenever the two are more than a few hours apart,
+   which is always: the cron sends on the user's chosen day, and the report
+   covers the last *completed* Mon–Sun week. Defaulting `asOf` to `new Date()`
+   meant the header said one week while the "This Week vs Normal" panel, the
+   month comparison and the Above Normal Range section all described the day the
+   mail was sent — an email could state a weekly total smaller than one of the
+   top merchants it listed for that same week. `asOf` stays overridable so a
+   caller can still ask what the world looked like at some other moment. */
+export function buildWeeklySummary({ transactions, start, end, asOf = end, accountNicknames = {}, accountGroups = {}, rangeExcludedCategories = [], cardMap = {}, cardPromos = null, promoTags = null }) {
   const inRange = (transactions || []).filter(t => withinRange(t, start, end) && !isTransferLike(t));
   // Prior week of the same length for week-over-week comparison
   const spanMs = end.getTime() - start.getTime();
