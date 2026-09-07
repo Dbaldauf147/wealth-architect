@@ -7,9 +7,32 @@ function money(n) {
   return `${sign}$${abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+/* A date-only string is parsed as UTC midnight, and every timezone west of
+   Greenwich then renders it as the day before — a charge on the 24th printed
+   as "Aug 23" in the mail. Pin those to local noon so the calendar day
+   survives; timestamps that carry a real instant are left alone. */
+function emailDate(value) {
+  if (!value) return null;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [y, m, d] = value.split('-').map(Number);
+    return new Date(y, m - 1, d, 12);
+  }
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function shortDate(iso) {
-  const d = new Date(iso);
+  const d = emailDate(iso);
+  if (!d) return String(iso ?? '');
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// Table cells want "Aug 24", not "Aug 24, 2026" — the section is a 30-day
+// window, so the year is noise in every row.
+function dayMonth(iso) {
+  const d = emailDate(iso);
+  if (!d) return String(iso ?? '');
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 function escapeHtml(s) {
@@ -388,30 +411,53 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
       </td>
     </tr>` : '';
 
-  parts.suboptimalCards = (suboptimalCards && suboptimalCards.items && suboptimalCards.items.length) ? `
+  /* One row per charge, one fact per column.
+
+     This was a two-column layout with the category, the amount and the card all
+     run together in a grey sub-line, which reads fine for one row and turns to
+     soup at six. A real table also lets the date carry its own column, which is
+     what separates two genuine same-price charges from one booked twice. */
+  parts.suboptimalCards = (suboptimalCards && suboptimalCards.items && suboptimalCards.items.length) ? (() => {
+    const th = 'padding:0 10px 6px 0;text-align:left;font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#94a3b8;border-bottom:1px solid #e2e8f0;white-space:nowrap;';
+    const thR = th.replace('text-align:left', 'text-align:right');
+    const td = 'padding:8px 10px 8px 0;font-size:12px;color:#334155;border-bottom:1px solid #f1f5f9;vertical-align:top;';
+    const tdR = td.replace('font-size', 'text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;font-size');
+
+    const rows = suboptimalCards.items.map(item => `
+            <tr>
+              <td style="${td}white-space:nowrap;color:#94a3b8;">${escapeHtml(dayMonth(item.date))}</td>
+              <td style="${td}font-weight:600;color:#111;">${escapeHtml(item.description)}</td>
+              <td style="${td}color:#64748b;">${escapeHtml(item.categoryLabel)}</td>
+              <td style="${tdR}">${money(item.spend)}</td>
+              <td style="${td}white-space:nowrap;">${escapeHtml(item.usedLabel)} <span style="color:#94a3b8;">(${item.usedRate}%)</span></td>
+              <td style="${td}white-space:nowrap;">${escapeHtml(item.bestLabel)} <span style="color:#16a34a;font-weight:600;">(${item.bestRate}%)</span></td>
+              <td style="${tdR}font-weight:700;color:#b91c1c;">-${money(item.missed)}</td>
+            </tr>`).join('');
+
+    return `
     <tr>
       <td style="padding:0 28px 20px;">
         <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
           <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:4px;">Suboptimal Card Usage</div>
           <div style="font-size:12px;color:#64748b;margin-bottom:14px;">Charges in the last 30 days that would have earned more on another card. <strong>${money(suboptimalCards.totalMissed)}</strong> left on the table across ${suboptimalCards.evaluatedCount} charge${suboptimalCards.evaluatedCount === 1 ? '' : 's'}.</div>
-          <table role="presentation" width="100%" style="border-collapse:collapse;font-size:12px;">
-            ${suboptimalCards.items.map(item => `
+          <table role="presentation" width="100%" style="border-collapse:collapse;">
             <tr>
-              <td style="padding:6px 8px 6px 0;vertical-align:top;">
-                <div style="font-size:12.5px;font-weight:600;color:#111;">${escapeHtml(item.description)}</div>
-                <div style="font-size:11px;color:#94a3b8;margin-top:2px;">${escapeHtml(item.categoryLabel)} · ${money(item.spend)} on ${escapeHtml(item.usedLabel)} (${item.usedRate}%)</div>
-              </td>
-              <td style="padding:6px 0;vertical-align:top;text-align:right;white-space:nowrap;">
-                <div style="font-size:12.5px;font-weight:700;color:#b91c1c;font-variant-numeric:tabular-nums;">-${money(item.missed)}</div>
-                <div style="font-size:11px;color:#64748b;margin-top:2px;">${escapeHtml(item.bestLabel)} pays ${item.bestRate}%</div>
-              </td>
-            </tr>`).join('')}
+              <th style="${th}">Date</th>
+              <th style="${th}">Merchant</th>
+              <th style="${th}">Category</th>
+              <th style="${thR}">Spend</th>
+              <th style="${th}">Charged to</th>
+              <th style="${th}">Better card</th>
+              <th style="${thR}">Missed</th>
+            </tr>
+            ${rows}
           </table>
           ${suboptimalCards.moreCount ? `<div style="font-size:11px;color:#94a3b8;margin-top:10px;font-style:italic;">and ${suboptimalCards.moreCount} more on the Card Promotions tab.</div>` : ''}
           ${suboptimalCards.unknownCount ? `<div style="font-size:11px;color:#94a3b8;margin-top:6px;font-style:italic;">${suboptimalCards.unknownCount} card account${suboptimalCards.unknownCount === 1 ? ' is' : 's are'} unassigned, so their charges were not checked.</div>` : ''}
         </div>
       </td>
-    </tr>` : '';
+    </tr>`;
+  })() : '';
 
   /* Card credits: what each benefit is worth, how much of it is claimed, and
      the most recent charge that counted toward it.
