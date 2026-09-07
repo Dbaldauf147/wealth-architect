@@ -39,8 +39,10 @@ export function SettingsPage() {
   const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay, rangeExcludedCategories, cardPromos } = useData();
   const { refresh, updatePaymentReminderPrefs, updateCalendarSyncPrefs, updateWeeklyEmailSections, updateWeeklyEmailDay, toggleRangeExcludedCategory } = useDataActions();
   // Send day is synced via DataContext (Firestore) so the cron reads it; fall
-  // back to Sunday for display when nothing has been chosen yet.
-  const sendDay = weeklyEmailDay || 'Sun';
+  // back to Monday for display when nothing has been chosen yet, matching the
+  // cron's own default in api/weekly-summary.js — if these two disagree the
+  // page highlights a day the mail does not actually go out on.
+  const sendDay = weeklyEmailDay || 'Mon';
   const SECTION_LABELS = Object.fromEntries(WEEKLY_EMAIL_SECTIONS.map(s => [s.id, s.label]));
   const [emailPrefs, setEmailPrefs] = useState(loadEmailPrefs);
   const [sendStatus, setSendStatus] = useState(null); // null | 'sending' | 'ok' | 'err'

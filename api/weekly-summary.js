@@ -116,13 +116,18 @@ export default async function handler(req, res) {
     const recipientOverride = req.body?.recipient;
 
     // Firestore config (synced from the website). Read first so the send-day
-    // gate can honor the day the user picked in Settings; env var and 'sun' are
+    // gate can honor the day the user picked in Settings; env var and 'mon' are
     // fallbacks when nothing is set.
+    //
+    // Monday, not Sunday: the report covers the last *completed* Mon–Sun week,
+    // and Sunday morning is the one moment that week has not finished yet. A
+    // Sunday send therefore reports the week that ended six days earlier, while
+    // Monday reports the one that ended the previous night.
     const config = await fetchCategoryConfig();
 
     // Cron-invoked calls come as GET from Vercel. If not a test, gate on day-of-week.
     if (!isTest) {
-      const configuredDay = ((config && config.weeklyEmailDay) || process.env.WEEKLY_EMAIL_DAY || 'sun').toLowerCase().slice(0, 3);
+      const configuredDay = ((config && config.weeklyEmailDay) || process.env.WEEKLY_EMAIL_DAY || 'mon').toLowerCase().slice(0, 3);
       const configuredIdx = DAY_MAP[configuredDay] ?? 0;
       const todayIdx = inTodayInZone(process.env.WEEKLY_EMAIL_TZ || 'America/New_York');
       if (configuredIdx !== todayIdx) {
