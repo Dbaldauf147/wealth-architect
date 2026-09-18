@@ -14,6 +14,7 @@ import {
 } from '../lib/categorize';
 import { normalizeEmailSections } from '../lib/renderWeeklyEmail';
 import { SEED_PROMOS } from '../lib/cardPromos';
+import { keepRentDismissals } from '../lib/rentDuplicates';
 import {
   normalizeExpenses as normalizeSplitwiseExpenses,
   summarizeBalances as summarizeSplitwiseBalances,
@@ -928,6 +929,10 @@ export function DataProvider({ children }) {
       const serialized = serializeConfig(adopted);
       if (serialized === lastSyncedRef.current) return; // our own echo / no change
       lastSyncedRef.current = serialized;
+      // Rent dismissals only ever grow, so one missing from the remote copy was
+      // overwritten by a stale save, not undone. Keep ours; since that leaves
+      // state ahead of lastSyncedRef, the writer puts it back for everyone.
+      adopted.rentDupeDismissed = keepRentDismissals(loadRentDupeDismissed(), adopted.rentDupeDismissed);
       applyConfig(adopted);
     }, (err) => {
       console.warn('Firestore onSnapshot failed:', err);
