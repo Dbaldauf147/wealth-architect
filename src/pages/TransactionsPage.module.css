@@ -1913,6 +1913,11 @@
   white-space: nowrap;
 }
 
+.rentBarValueQuiet {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
 .rentBarLabel {
   padding-top: 5px;
   font-size: 10px;

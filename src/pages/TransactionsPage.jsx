@@ -1262,9 +1262,11 @@ function RentBar({ month, collision, scale, money, showYear }) {
   return (
     <div className={styles.rentBarCol} title={title}>
       <div className={styles.rentBarStack}>
-        {isCollision && (
-          <div className={styles.rentBarValue}>{money(month.total)}</div>
-        )}
+        {/* Every month carries its figure, so a gap next door reads as a
+            number and not just a short bar. The collision's stays the loud one. */}
+        <div className={`${styles.rentBarValue} ${isCollision ? '' : styles.rentBarValueQuiet}`}>
+          {money(month.total)}
+        </div>
         {ghost > 0 && (
           <div
             className={`${styles.rentBarGhost} ${top === 'ghost' ? styles.rentBarTop : ''}`}
