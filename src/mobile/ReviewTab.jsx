@@ -4,11 +4,11 @@ import { ruleMatches } from '../lib/categorize';
 import {
   buildHistoryIndex, suggestCategories, ruleDescriptionFor, LOW_CONFIDENCE,
 } from '../lib/suggest';
-import { buildReviewQueue, reviewStats, SORTS } from '../lib/reviewQueue';
+import { buildReviewQueue, reviewStats, latestTransactionDate, SORTS } from '../lib/reviewQueue';
 import { ALL_CATEGORIES, getCategoryIcon, catColor, catBg, SUBCATEGORIES } from '../lib/categories';
 import { CategorySheet, SubcategorySheet } from './CategorySheet';
 import { AlertsStrip } from './AlertsStrip';
-import { fmt, fmtCompact, fmtRelative } from './format';
+import { fmt, fmtCompact, fmtRelative, fmtDate, parseDate } from './format';
 import styles from './MobileApp.module.css';
 
 // How far a card has to travel before the swipe counts, and how long the undo
@@ -63,6 +63,9 @@ export function ReviewTab({ sort, onSortChange, askSub }) {
     [actionable, sort, skipped],
   );
   const stats = useMemo(() => reviewStats(actionable), [actionable]);
+  // Over every transaction, keyed or not: this answers "how fresh is the
+  // data", not "how big is the backlog".
+  const latest = useMemo(() => latestTransactionDate(transactions), [transactions]);
   const history = useMemo(() => buildHistoryIndex(actionable), [actionable]);
 
   const usage = useMemo(() => {
@@ -257,7 +260,7 @@ export function ReviewTab({ sort, onSortChange, askSub }) {
           onCategorize={categorizeAlert}
           onDismiss={dismissAlert}
         />
-        <ProgressStrip stats={stats} sort={sort} onSortChange={onSortChange} />
+        <ProgressStrip stats={stats} latest={latest} sort={sort} onSortChange={onSortChange} />
         <div className={styles.empty}>
           <span className={`material-symbols-outlined ${styles.emptyIcon}`}>
             {everythingDone ? 'task_alt' : 'inbox'}
@@ -321,7 +324,7 @@ export function ReviewTab({ sort, onSortChange, askSub }) {
         onCategorize={categorizeAlert}
         onDismiss={dismissAlert}
       />
-      <ProgressStrip stats={stats} sort={sort} onSortChange={onSortChange} />
+      <ProgressStrip stats={stats} latest={latest} sort={sort} onSortChange={onSortChange} />
 
       <div className={styles.deck}>
         {queue.length > 1 && <div className={styles.cardBehind} aria-hidden="true" />}
@@ -506,7 +509,7 @@ export function ReviewTab({ sort, onSortChange, askSub }) {
   );
 }
 
-function ProgressStrip({ stats, sort, onSortChange }) {
+function ProgressStrip({ stats, latest, sort, onSortChange }) {
   const order = ['impact', 'newest', 'oldest'];
   const next = () => onSortChange(order[(order.indexOf(sort) + 1) % order.length]);
   return (
@@ -531,8 +534,29 @@ function ProgressStrip({ stats, sort, onSortChange }) {
           ? `${fmtCompact(stats.amount)} unaccounted for · ${Math.round(stats.percentDone * 100)}% done`
           : `${stats.categorized.toLocaleString()} transactions filed`}
       </div>
+      {latest && (
+        <div className={styles.progressAmount} style={{ marginTop: 2 }}>
+          Latest transaction: {fmtLatest(latest)}
+        </div>
+      )}
     </div>
   );
+}
+
+/* "Sep 16 · 2 days ago" — the date to check against the bank, and the gap to
+   tell at a glance whether the sync has stalled. Counted in days all the way
+   out, because "41 days ago" is the number that says something is broken.
+   Year only once it's not this one. */
+function fmtLatest(value, now = new Date()) {
+  const d = parseDate(value);
+  if (!d) return '';
+  const date = d.getFullYear() === now.getFullYear()
+    ? fmtDate(d)
+    : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const startOf = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((startOf(now) - startOf(d)) / 86_400_000);
+  const ago = days <= 0 ? 'today' : days === 1 ? 'yesterday' : `${days.toLocaleString()} days ago`;
+  return `${date} · ${ago}`;
 }
 
 function UndoToast({ undo, onUndo, onDismiss, onSub }) {

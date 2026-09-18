@@ -117,6 +117,27 @@ export function reviewStats(transactions) {
   };
 }
 
+/* The date of the newest transaction in the data — the nearest thing there
+   is to "when did the sheet last sync". Returned as the transaction's own
+   `date` value, so the caller formats it the way every other date on screen is
+   formatted. Looks at every transaction, categorized or not, since freshness is
+   about the feed rather than the backlog. A date more than a day past `now` is
+   a typo or a scheduled payment, not evidence of a recent sync, so it doesn't
+   count. */
+export function latestTransactionDate(transactions, now = Date.now()) {
+  const ceiling = now + 86_400_000;
+  let latest = null;
+  let latestMs = 0;
+  for (const t of transactions || []) {
+    const ms = timeOf(t);
+    if (ms && ms <= ceiling && ms > latestMs) {
+      latest = t.date;
+      latestMs = ms;
+    }
+  }
+  return latest;
+}
+
 /* Transactions the user has categorized most recently, newest first — the
    "did I get that one right?" list. `overrides` is the map of manual
    decisions, so their own calls sort ahead of whatever the sheet said. */

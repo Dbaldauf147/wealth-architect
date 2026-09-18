@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { buildReviewQueue, reviewStats, recentlyCategorized, needsReview, SORTS } from './reviewQueue';
+import {
+  buildReviewQueue, reviewStats, recentlyCategorized, needsReview, latestTransactionDate, SORTS,
+} from './reviewQueue';
 
 const TXNS = [
   { transactionId: 'n1', date: '2026-08-20', description: 'BLUE BOTTLE COFFEE 442', amount: -7.1, category: '' },
@@ -96,5 +98,32 @@ describe('recentlyCategorized', () => {
 
   it('leaves out anything still needing review', () => {
     expect(recentlyCategorized(TXNS, {}).every(t => !needsReview(t))).toBe(true);
+  });
+});
+
+describe('latestTransactionDate', () => {
+  const now = new Date('2026-09-18T12:00:00').getTime();
+
+  it('returns the newest date across categorized and uncategorized alike', () => {
+    expect(latestTransactionDate(TXNS, now)).toBe('2026-08-20');
+    const withNewerFiled = [...TXNS, { date: '2026-09-02', category: 'Groceries' }];
+    expect(latestTransactionDate(withNewerFiled, now)).toBe('2026-09-02');
+  });
+
+  it('compares mixed sheet formats and ignores future or unparseable dates', () => {
+    const txns = [
+      { date: '9/10/2026' },
+      { date: '2026-09-04' },
+      { date: '2027-01-01' },
+      { date: 'not a date' },
+      { date: '' },
+    ];
+    expect(latestTransactionDate(txns, now)).toBe('9/10/2026');
+  });
+
+  it('is null with nothing to go on', () => {
+    expect(latestTransactionDate([], now)).toBeNull();
+    expect(latestTransactionDate(null, now)).toBeNull();
+    expect(latestTransactionDate([{ date: 'garbage' }], now)).toBeNull();
   });
 });
