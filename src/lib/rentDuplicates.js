@@ -19,6 +19,22 @@
 import { isRentIncome, cashFlowMonthKey } from './cashflowExport.js';
 import { txnFallbackKey } from './categorize.js';
 
+/**
+ * The dismissals to keep when another device's copy of the settings arrives.
+ *
+ * "These are both real" is only ever added — nothing on the site takes one
+ * back — so a snapshot that lacks one is not a retraction. It is a device that
+ * wrote the whole settings doc from a copy made before the answer was given
+ * (an old tab, a stale build of the phone app, or two saves crossing), and
+ * adopting it verbatim is what made an answered warning come straight back.
+ * So the union, always.
+ */
+export function keepRentDismissals(local, remote) {
+  const out = new Set(local || []);
+  for (const k of remote || []) out.add(k);
+  return out;
+}
+
 /** 'YYYY-MM' → 'August 2026'. */
 export function monthLabel(key) {
   if (!key) return '';

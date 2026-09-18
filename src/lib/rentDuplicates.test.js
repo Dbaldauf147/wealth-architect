@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { findRentCollisions, shiftForwardOneMonth, nextMonthKey, typicalMonthlyRent } from './rentDuplicates.js';
+import {
+  findRentCollisions, shiftForwardOneMonth, nextMonthKey, typicalMonthlyRent, keepRentDismissals,
+} from './rentDuplicates.js';
 
 const rent = (id, date, amount, description = 'Zelle payment for rent') => ({
   transactionId: id, date, amount, description, category: 'Rent',
@@ -161,5 +163,33 @@ describe('typicalMonthlyRent', () => {
 
   it('says nothing when there is only one clean month', () => {
     expect(typicalMonthlyRent(new Map([['2025-08', [rent('a', '2025-08-02', 2000)]]]), '2025-09')).toBeNull();
+  });
+});
+
+describe('keepRentDismissals', () => {
+  it('keeps an answer the incoming copy was written without', () => {
+    // A stale device saved the whole doc before "both real" was clicked.
+    const kept = keepRentDismissals(new Set(['rent-dupe:2025-06']), []);
+    expect([...kept]).toEqual(['rent-dupe:2025-06']);
+  });
+
+  it('takes answers given on the other device too', () => {
+    const kept = keepRentDismissals(new Set(['rent-dupe:2025-06']), ['rent-dupe:2025-11', 'rent-dupe:2025-06']);
+    expect([...kept].sort()).toEqual(['rent-dupe:2025-06', 'rent-dupe:2025-11']);
+  });
+
+  it('copes with nothing on either side', () => {
+    expect(keepRentDismissals(null, undefined).size).toBe(0);
+  });
+
+  it('keeps a dismissed month out of the warnings after the merge', () => {
+    const txns = [
+      rent('a', '2025-04-02', 2000), rent('b', '2025-05-02', 2000),
+      rent('c', '2025-06-02', 2000), rent('d', '2025-06-12', 2000),
+      rent('e', '2025-07-02', 2000),
+    ];
+    expect(findRentCollisions(txns).map(c => c.key)).toEqual(['rent-dupe:2025-06']);
+    const kept = keepRentDismissals(new Set(['rent-dupe:2025-06']), []);
+    expect(findRentCollisions(txns, k => kept.has(k))).toEqual([]);
   });
 });
