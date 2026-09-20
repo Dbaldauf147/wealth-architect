@@ -97,6 +97,85 @@ export function isPromoCompleted(p, asOf = new Date()) {
   return d ? d >= start : true;
 }
 
+/** Add one period to a date, clamping the day so a cycle anchored on the 31st
+ *  lands on the 30th (or the 28th) rather than skidding into the next month —
+ *  Jan 31 + 1 month is Feb 28, not Mar 3. */
+function addPeriod(date, period) {
+  const d = new Date(date);
+  const day = d.getDate();
+  const months = period === 'monthly' ? 1 : period === 'quarterly' ? 3 : 12;
+  d.setDate(1);
+  d.setMonth(d.getMonth() + months);
+  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, lastDay));
+  return d;
+}
+
+function startOfDay(v) {
+  const d = v instanceof Date ? new Date(v) : new Date(v);
+  if (isNaN(d)) return null;
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/** When this benefit next refreshes — the day the allowance goes back to full.
+ *
+ *  An explicit `renewsOn` is treated as an anniversary rather than a one-off
+ *  date: a card whose travel credit resets on the account anniversary keeps
+ *  resetting on it, so a date that has already passed rolls forward by the
+ *  period instead of showing as overdue forever. Without one, the reset is the
+ *  start of the next calendar cycle, which is how `periodWindowStart` already
+ *  decides what "used this cycle" means — the two have to agree or the table
+ *  would show a credit refilling on a day the usage number ignores.
+ *
+ *  One-time benefits never come back, so they have no next date. */
+export function nextResetDate(promo, asOf = new Date()) {
+  const period = (promo && promo.period) || 'one-time';
+  if (period !== 'monthly' && period !== 'quarterly' && period !== 'annual') return null;
+  const today = startOfDay(asOf);
+  const anchor = parseISODate(promo && promo.renewsOn);
+  if (anchor) {
+    let d = anchor;
+    // A far-past anniversary would otherwise spin here; 600 periods is longer
+    // than any real card has existed.
+    for (let i = 0; i < 600 && d < today; i++) d = addPeriod(d, period);
+    return d;
+  }
+  const start = periodWindowStart(period, asOf);
+  return start ? addPeriod(start, period) : null;
+}
+
+/** When this benefit was last touched, and how we know.
+ *
+ *  Two different kinds of evidence, and the checkbox wins: ticking a benefit
+ *  off by hand is a statement about the benefit, while a matching charge is an
+ *  inference from the ledger. Returns null when there is neither — a benefit
+ *  nobody has used and nobody has tagged.
+ *
+ *  Unlike the "used" number this is not bounded to the current cycle: a monthly
+ *  credit that went unused this month is exactly when the last-used date earns
+ *  its place in the table. */
+export function lastUsedFor(promo, transactions, promoTags, asOf = new Date()) {
+  if (!promo) return null;
+  const completedAt = parseISODate(promo.completedAt);
+  if (completedAt && isPromoCompleted(promo, asOf)) {
+    return { date: completedAt, source: 'completed', description: '', amount: 0 };
+  }
+  const last = matchingTransactions(promo, transactions, promoTags)[0] || null;
+  if (last) {
+    return {
+      date: last._date,
+      source: 'transaction',
+      description: last.description || '',
+      amount: Math.abs(Number(last.amount) || 0),
+    };
+  }
+  // A completion stamped in an earlier cycle still answers "when did I last use
+  // this", even though it no longer counts toward the current allowance.
+  if (completedAt) return { date: completedAt, source: 'completed-prior', description: '', amount: 0 };
+  return null;
+}
+
 function normalizeDesc(s) {
   return (s || '').toLowerCase().trim().replace(/[\s\-–—]+/g, ' ');
 }

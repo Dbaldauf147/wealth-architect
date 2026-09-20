@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react';
+import { Fragment, useMemo, useState, useCallback } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import {
   REWARD_CATEGORIES, CARD_KEYS, CARD_LABELS, CARD_COLORS, BOFA_CHOICE, POINT_VALUE_CENTS,
@@ -8,7 +8,7 @@ import {
 // page shows. The page is no longer the only thing that knows what a promo is.
 import {
   SEED_PROMOS, isPromoCompleted, promoHasAutoMatch, promoIsTracked, autoUsedForPromo,
-  matchingTransactions, periodWindowStart,
+  matchingTransactions, periodWindowStart, nextResetDate, lastUsedFor,
 } from '../lib/cardPromos';
 
 function fmt(n) {
@@ -90,6 +90,33 @@ function shortDate(iso) {
   return `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
 }
 
+function longDate(d) {
+  if (!d) return '—';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/** Whole days from today to `d` — negative for the past. Both ends are floored
+ *  to midnight so "tomorrow" reads as 1 day whatever time it is now. */
+function daysFromToday(d, asOf = new Date()) {
+  if (!d) return null;
+  const a = new Date(asOf); a.setHours(0, 0, 0, 0);
+  const b = new Date(d); b.setHours(0, 0, 0, 0);
+  return Math.round((b - a) / 86400000);
+}
+
+function relativeDayLabel(days) {
+  if (days == null) return '';
+  if (days === 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  if (days === -1) return 'yesterday';
+  if (days > 0) return `in ${days} days`;
+  const ago = -days;
+  if (ago < 45) return `${ago} days ago`;
+  const months = Math.round(ago / 30);
+  if (months < 18) return `${months} mo ago`;
+  return `${Math.round(ago / 365)} yr ago`;
+}
+
 export function CardPromosPage() {
   const { transactions, accountNicknames, accountGroups, cardMap, cardPromos: promos, promoTags } = useData();
   const { setCardForAccount, setCardPromos, setPromoTagForTransactions, clearPromoTagsFor } = useDataActions();
@@ -139,6 +166,15 @@ export function CardPromosPage() {
   const promoMatches = useMemo(() => {
     const map = new Map();
     for (const p of promos) map.set(p.id, matchingTransactions(p, transactions, promoTags));
+    return map;
+  }, [promos, transactions, promoTags]);
+
+  // "When did I last touch this" per promo, for the table's Last used column.
+  // Separate from promoMatches because a completion tick counts as a use even
+  // when no transaction ever matched.
+  const promoLastUsed = useMemo(() => {
+    const map = new Map();
+    for (const p of promos) map.set(p.id, lastUsedFor(p, transactions, promoTags));
     return map;
   }, [promos, transactions, promoTags]);
 
@@ -345,238 +381,314 @@ export function CardPromosPage() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {cardPromos.map(p => {
-                const isEditing = editingId === p.id;
-                const usedNow = effectiveUsed.get(p.id) || 0;
-                const isDone = isPromoCompleted(p);
-                const isAuto = promoHasAutoMatch(p) && !isDone;
-                const matches = promoMatches.get(p.id) || [];
-                const taggedCount = matches.filter(m => m._tagged).length;
-                const cycleStart = periodWindowStart(p.period);
-                const isExpanded = expandedId === p.id;
-                const pct = p.value > 0 ? Math.min(1, usedNow / Number(p.value)) : 0;
-                const remaining = Math.max(0, (Number(p.value) || 0) - usedNow);
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
+                <thead>
+                  <tr>
+                    <th scope="col" style={{ ...promoThStyle, width: 30 }}><span style={srOnlyStyle}>Used</span></th>
+                    <th scope="col" style={promoThStyle}>Reward</th>
+                    <th scope="col" style={promoThStyle}>Last used</th>
+                    <th scope="col" style={promoThStyle}>Next up</th>
+                    <th scope="col" style={{ ...promoThStyle, textAlign: 'right' }}>Amount</th>
+                    <th scope="col" style={{ ...promoThStyle, width: 36 }}><span style={srOnlyStyle}>Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cardPromos.map(p => {
+                    const isEditing = editingId === p.id;
+                    const usedNow = effectiveUsed.get(p.id) || 0;
+                    const isDone = isPromoCompleted(p);
+                    const isAuto = promoHasAutoMatch(p) && !isDone;
+                    const matches = promoMatches.get(p.id) || [];
+                    const taggedCount = matches.filter(m => m._tagged).length;
+                    const cycleStart = periodWindowStart(p.period);
+                    const isExpanded = expandedId === p.id;
+                    const pct = p.value > 0 ? Math.min(1, usedNow / Number(p.value)) : 0;
+                    const remaining = Math.max(0, (Number(p.value) || 0) - usedNow);
 
-                if (isEditing) {
-                  return (
-                    <div key={p.id} style={{ border: `2px solid ${cardColor}`, borderRadius: 8, padding: 12, background: 'var(--color-surface-alt)' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
-                        <LabeledInput label="Card" value={editDraft.card} onChange={v => setEditDraft({ ...editDraft, card: v })} />
-                        <LabeledInput label="Name" value={editDraft.name} onChange={v => setEditDraft({ ...editDraft, name: v })} />
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 8, marginBottom: 8 }}>
-                        <LabeledInput label="Total $" type="number" value={editDraft.value} onChange={v => setEditDraft({ ...editDraft, value: v })} />
-                        <LabeledInput label="Used $ (manual)" type="number" value={editDraft.used} onChange={v => setEditDraft({ ...editDraft, used: v })} />
-                        <LabeledInput label="Completed on" type="date" value={editDraft.completedAt} onChange={v => setEditDraft({ ...editDraft, completedAt: v })} />
-                        <div>
-                          <div style={labelStyle}>Period</div>
-                          <select value={editDraft.period || 'annual'} onChange={e => setEditDraft({ ...editDraft, period: e.target.value })} style={inputStyle}>
-                            <option value="annual">Annual</option>
-                            <option value="monthly">Monthly</option>
-                            <option value="quarterly">Quarterly</option>
-                            <option value="one-time">One-time</option>
-                          </select>
-                        </div>
-                        <LabeledInput label="Renews on" type="date" value={editDraft.renewsOn} onChange={v => setEditDraft({ ...editDraft, renewsOn: v })} />
-                        <div>
-                          <div style={labelStyle}>Color</div>
-                          <input type="color" value={editDraft.color || '#475569'} onChange={e => setEditDraft({ ...editDraft, color: e.target.value })} style={{ ...inputStyle, padding: 2, height: 34 }} />
-                        </div>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
-                        <LabeledInput label="Auto-track Subcategory" value={editDraft.matchSubcategory} onChange={v => setEditDraft({ ...editDraft, matchSubcategory: v })} />
-                        <LabeledInput label="Or Category" value={editDraft.matchCategory} onChange={v => setEditDraft({ ...editDraft, matchCategory: v })} />
-                        <LabeledInput label="Or Merchant contains" value={editDraft.matchDescription} onChange={v => setEditDraft({ ...editDraft, matchDescription: v })} />
-                      </div>
-                      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 8 }}>
-                        Marking a promo complete (the checkbox on the row, or "Completed on" above) wins over everything below and counts the full value. Otherwise: if any match field is set — or any transaction is tagged to this promo from the Transactions page — "used" auto-sums the absolute value of those transactions in the current cycle (manual "Used $" is ignored). A hand-tag always wins over the match fields, including another promo's, so a charge only ever counts once. Sign doesn't matter — tag the original travel charge (negative) to track redeemable spend, or tag the statement credit (positive) to track actual redemption. Multiple match fields are OR'd. "Merchant contains" matches anywhere in the transaction's merchant text.
-                      </div>
-                      <LabeledInput label="Notes" value={editDraft.notes} onChange={v => setEditDraft({ ...editDraft, notes: v })} />
-                      <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
-                        <button onClick={cancelEdit} style={btnSecondaryStyle}>Cancel</button>
-                        <button onClick={saveEdit} style={btnPrimaryStyle}>Save</button>
-                      </div>
-                    </div>
-                  );
-                }
-
-                return (
-                  <div key={p.id} style={{
-                    border: isDone ? '1px solid rgba(22,163,74,0.35)' : '1px solid var(--border-ghost)',
-                    background: isDone ? 'rgba(22,163,74,0.04)' : 'transparent',
-                    borderRadius: 8, padding: 14, display: 'flex', gap: 12, alignItems: 'flex-start',
-                  }}>
-                    {/* Manual completion checkbox */}
-                    <button
-                      onClick={() => toggleCompleted(p)}
-                      title={isDone
-                        ? `Marked complete${(() => { const d = parseISODate(p.completedAt); return d ? ` on ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''; })()} — click to reopen`
-                        : 'Mark this benefit as used/completed'}
-                      style={{
-                        flexShrink: 0, marginTop: 1, width: 22, height: 22, borderRadius: 6, cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        border: isDone ? '1px solid #16a34a' : '1.5px solid var(--border-ghost)',
-                        background: isDone ? '#16a34a' : 'var(--color-surface)',
-                        color: isDone ? '#fff' : 'var(--color-text-tertiary)',
-                        padding: 0,
-                      }}
-                    >
-                      <span className="material-symbols-outlined" style={{ fontSize: 15, opacity: isDone ? 1 : 0.35 }}>check</span>
-                    </button>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-                        <div style={{ fontFamily: 'var(--font-headline)', fontSize: 14, fontWeight: 700, textDecoration: isDone ? 'line-through' : 'none', textDecorationColor: 'rgba(22,163,74,0.5)' }}>{p.name}</div>
-                        {isDone && (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'rgba(22,163,74,0.12)', color: '#16a34a', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>task_alt</span>
-                            Completed
-                          </span>
-                        )}
-                        <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'var(--color-surface-alt)', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                          {p.period}
-                        </span>
-                        {p.renewsOn && (() => {
-                          const d = new Date(p.renewsOn + 'T00:00:00');
-                          if (isNaN(d)) return null;
-                          const today = new Date();
-                          today.setHours(0, 0, 0, 0);
-                          const days = Math.round((d - today) / 86400000);
-                          const dateLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                          const tip = days > 0
-                            ? `Renews in ${days} day${days === 1 ? '' : 's'} (${dateLabel})`
-                            : days === 0
-                              ? `Renews today (${dateLabel})`
-                              : `Renewal date passed ${-days} day${days === -1 ? '' : 's'} ago (${dateLabel})`;
-                          return (
-                            <span title={tip} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'rgba(232, 163, 23, 0.12)', color: '#a36b00', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                              <span className="material-symbols-outlined" style={{ fontSize: 12 }}>event_repeat</span>
-                              Renews {dateLabel}
-                            </span>
-                          );
-                        })()}
-                        {isAuto && (() => {
-                          const parts = [];
-                          if (p.matchSubcategory) parts.push(`subcategory “${p.matchSubcategory}”`);
-                          if (p.matchCategory) parts.push(`category “${p.matchCategory}”`);
-                          if (p.matchDescription) parts.push(`description contains “${p.matchDescription}”`);
-                          return (
-                            <span title={`Auto-tracked from ${parts.join(' OR ')}`}
-                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'rgba(0,88,190,0.08)', color: 'var(--color-secondary, #0058be)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                              <span className="material-symbols-outlined" style={{ fontSize: 12 }}>autorenew</span>
-                              Auto
-                            </span>
-                          );
-                        })()}
-                        {taggedCount > 0 && (
-                          <span title={`${taggedCount} transaction${taggedCount === 1 ? '' : 's'} tagged to this benefit from the Transactions page`}
-                                style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'rgba(124,58,237,0.1)', color: '#7c3aed', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>sell</span>
-                            {taggedCount} tagged
-                          </span>
-                        )}
-                      </div>
-                      {p.notes && <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 8, lineHeight: 1.4 }}>{p.notes}</div>}
-                      <div style={{ height: 6, background: 'var(--color-surface-alt)', borderRadius: 3, overflow: 'hidden', marginBottom: 4 }}>
-                        <div style={{ height: '100%', width: `${pct * 100}%`, background: pct >= 1 ? '#16a34a' : cardColor, transition: 'width 0.2s' }} />
-                      </div>
-                      <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
-                        {isDone ? (
-                          <span style={{ color: '#16a34a', fontWeight: 600 }}>
-                            Logged as completed{(() => {
-                              const d = parseISODate(p.completedAt);
-                              return d ? ` on ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : '';
-                            })()} · {fmt(p.value)} counted
-                          </span>
-                        ) : (
-                          <>{fmt(usedNow)} used · <strong style={{ color: remaining > 0 ? '#16a34a' : 'var(--color-text-tertiary)' }}>{fmt(remaining)} remaining</strong> of {fmt(p.value)}</>
-                        )}
-                      </div>
-                      {matches.length > 0 && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => setExpandedId(isExpanded ? null : p.id)}
-                            style={{
-                              marginTop: 6, padding: 0, border: 'none', background: 'transparent',
-                              cursor: 'pointer', fontSize: 11.5, fontWeight: 600,
-                              color: 'var(--color-secondary, #0058be)',
-                              display: 'inline-flex', alignItems: 'center', gap: 3,
-                            }}
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
-                              {isExpanded ? 'expand_less' : 'expand_more'}
-                            </span>
-                            {matches.length} counted transaction{matches.length === 1 ? '' : 's'}
-                          </button>
-                          {isExpanded && (
-                            <div style={{ marginTop: 6, border: '1px solid var(--border-ghost)', borderRadius: 6, overflow: 'hidden' }}>
-                              {matches.slice(0, 40).map((m, mi) => {
-                                // Only spend inside the current cycle feeds the "used"
-                                // number above; older hits are shown dimmed so the list
-                                // and the total can't look like they disagree.
-                                const inCycle = cycleStart ? m._date >= cycleStart : true;
-                                return (
-                                  <div
-                                    key={m.transactionId || mi}
-                                    style={{
-                                      display: 'flex', alignItems: 'center', gap: 8,
-                                      padding: '6px 8px', fontSize: 11.5,
-                                      borderTop: mi === 0 ? 'none' : '1px solid var(--border-ghost)',
-                                      opacity: inCycle ? 1 : 0.5,
-                                    }}
-                                  >
-                                    <span style={{ color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-                                      {shortDate(m._date.toISOString())}
-                                    </span>
-                                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                      {m.description || '(no description)'}
-                                    </span>
-                                    {m._tagged && (
-                                      <span title="Tagged by hand" className="material-symbols-outlined" style={{ fontSize: 13, color: '#7c3aed' }}>sell</span>
-                                    )}
-                                    <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                                      {fmtCents(Math.abs(Number(m.amount) || 0))}
-                                    </span>
-                                    {m._tagged && (
-                                      <button
-                                        type="button"
-                                        onClick={() => setPromoTagForTransactions(m.transactionId, null)}
-                                        title="Remove this tag"
-                                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--color-text-tertiary)', lineHeight: 0, padding: 0 }}
-                                      >
-                                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
-                                      </button>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                              {matches.length > 40 && (
-                                <div style={{ padding: '6px 8px', fontSize: 11, color: 'var(--color-text-tertiary)', borderTop: '1px solid var(--border-ghost)' }}>
-                                  + {matches.length - 40} more
+                    // The editor takes the whole width: six columns of inputs don't fit
+                    // the reading columns, and nothing else on the row matters while
+                    // you're editing it.
+                    if (isEditing) {
+                      return (
+                        <tr key={p.id}>
+                          <td colSpan={6} style={{ padding: '8px 0', borderBottom: '1px solid var(--border-ghost)' }}>
+                            <div style={{ border: `2px solid ${cardColor}`, borderRadius: 8, padding: 12, background: 'var(--color-surface-alt)' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                                <LabeledInput label="Card" value={editDraft.card} onChange={v => setEditDraft({ ...editDraft, card: v })} />
+                                <LabeledInput label="Name" value={editDraft.name} onChange={v => setEditDraft({ ...editDraft, name: v })} />
+                              </div>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 8, marginBottom: 8 }}>
+                                <LabeledInput label="Total $" type="number" value={editDraft.value} onChange={v => setEditDraft({ ...editDraft, value: v })} />
+                                <LabeledInput label="Used $ (manual)" type="number" value={editDraft.used} onChange={v => setEditDraft({ ...editDraft, used: v })} />
+                                <LabeledInput label="Completed on" type="date" value={editDraft.completedAt} onChange={v => setEditDraft({ ...editDraft, completedAt: v })} />
+                                <div>
+                                  <div style={labelStyle}>Period</div>
+                                  <select value={editDraft.period || 'annual'} onChange={e => setEditDraft({ ...editDraft, period: e.target.value })} style={inputStyle}>
+                                    <option value="annual">Annual</option>
+                                    <option value="monthly">Monthly</option>
+                                    <option value="quarterly">Quarterly</option>
+                                    <option value="one-time">One-time</option>
+                                  </select>
                                 </div>
+                                <LabeledInput label="Renews on" type="date" value={editDraft.renewsOn} onChange={v => setEditDraft({ ...editDraft, renewsOn: v })} />
+                                <div>
+                                  <div style={labelStyle}>Color</div>
+                                  <input type="color" value={editDraft.color || '#475569'} onChange={e => setEditDraft({ ...editDraft, color: e.target.value })} style={{ ...inputStyle, padding: 2, height: 34 }} />
+                                </div>
+                              </div>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+                                <LabeledInput label="Auto-track Subcategory" value={editDraft.matchSubcategory} onChange={v => setEditDraft({ ...editDraft, matchSubcategory: v })} />
+                                <LabeledInput label="Or Category" value={editDraft.matchCategory} onChange={v => setEditDraft({ ...editDraft, matchCategory: v })} />
+                                <LabeledInput label="Or Merchant contains" value={editDraft.matchDescription} onChange={v => setEditDraft({ ...editDraft, matchDescription: v })} />
+                              </div>
+                              <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 8 }}>
+                                Marking a promo complete (the checkbox on the row, or "Completed on" above) wins over everything below and counts the full value. Otherwise: if any match field is set — or any transaction is tagged to this promo from the Transactions page — "used" auto-sums the absolute value of those transactions in the current cycle (manual "Used $" is ignored). A hand-tag always wins over the match fields, including another promo's, so a charge only ever counts once. Sign doesn't matter — tag the original travel charge (negative) to track redeemable spend, or tag the statement credit (positive) to track actual redemption. Multiple match fields are OR'd. "Merchant contains" matches anywhere in the transaction's merchant text. "Renews on" is the anniversary the Next up column counts from — leave it blank to reset on the calendar cycle.
+                              </div>
+                              <LabeledInput label="Notes" value={editDraft.notes} onChange={v => setEditDraft({ ...editDraft, notes: v })} />
+                              <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
+                                <button onClick={cancelEdit} style={btnSecondaryStyle}>Cancel</button>
+                                <button onClick={saveEdit} style={btnPrimaryStyle}>Save</button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    const lastUsed = promoLastUsed.get(p.id);
+                    const nextReset = nextResetDate(p);
+                    const daysToReset = daysFromToday(nextReset);
+                    // Money still on the table with the cycle about to roll over is the
+                    // one thing here worth chasing, so it gets the only colour.
+                    const expiringSoon = remaining > 0 && daysToReset != null && daysToReset <= 14;
+
+                    return (
+                      <Fragment key={p.id}>
+                        <tr style={{ background: isDone ? 'rgba(22,163,74,0.045)' : 'transparent' }}>
+                          <td style={{ ...promoTdStyle, paddingRight: 0, verticalAlign: 'top' }}>
+                            <button
+                              onClick={() => toggleCompleted(p)}
+                              title={isDone
+                                ? `Marked complete${(() => { const d = parseISODate(p.completedAt); return d ? ` on ${longDate(d)}` : ''; })()} — click to reopen`
+                                : 'Mark this benefit as used/completed'}
+                              style={{
+                                flexShrink: 0, width: 22, height: 22, borderRadius: 6, cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                border: isDone ? '1px solid #16a34a' : '1.5px solid rgba(120, 120, 135, 0.4)',
+                                background: isDone ? '#16a34a' : 'var(--color-surface)',
+                                color: isDone ? '#fff' : 'var(--color-text-tertiary)',
+                                padding: 0,
+                              }}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 15, opacity: isDone ? 1 : 0.35 }}>check</span>
+                            </button>
+                          </td>
+
+                          {/* Reward */}
+                          <td style={{ ...promoTdStyle, verticalAlign: 'top', minWidth: 240 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              <span style={{ fontFamily: 'var(--font-headline)', fontSize: 13.5, fontWeight: 700, textDecoration: isDone ? 'line-through' : 'none', textDecorationColor: 'rgba(22,163,74,0.5)' }}>{p.name}</span>
+                              <span style={badgeStyle('var(--color-surface-alt)', 'var(--color-text-tertiary)')}>{p.period}</span>
+                              {isDone && (
+                                <span style={badgeStyle('rgba(22,163,74,0.12)', '#16a34a')}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>task_alt</span>
+                                  Done
+                                </span>
+                              )}
+                              {isAuto && (() => {
+                                const parts = [];
+                                if (p.matchSubcategory) parts.push(`subcategory “${p.matchSubcategory}”`);
+                                if (p.matchCategory) parts.push(`category “${p.matchCategory}”`);
+                                if (p.matchDescription) parts.push(`description contains “${p.matchDescription}”`);
+                                return (
+                                  <span title={`Auto-tracked from ${parts.join(' OR ')}`} style={badgeStyle('rgba(0,88,190,0.08)', 'var(--color-secondary, #0058be)')}>
+                                    <span className="material-symbols-outlined" style={{ fontSize: 12 }}>autorenew</span>
+                                    Auto
+                                  </span>
+                                );
+                              })()}
+                              {taggedCount > 0 && (
+                                <span title={`${taggedCount} transaction${taggedCount === 1 ? '' : 's'} tagged to this benefit from the Transactions page`} style={badgeStyle('rgba(124,58,237,0.1)', '#7c3aed')}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>sell</span>
+                                  {taggedCount} tagged
+                                </span>
                               )}
                             </div>
-                          )}
-                        </>
-                      )}
-                      {matches.length === 0 && !isDone && !promoIsTracked(p, promoTags) && (
-                        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--color-text-tertiary)' }}>
-                          Tracked by hand. Tag transactions to it from the Transactions page, or set a match rule in Edit.
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
-                      <button onClick={() => startEdit(p)} style={iconBtnStyle} title="Edit">
-                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>edit</span>
-                      </button>
-                      <button onClick={() => deletePromo(p.id)} style={{ ...iconBtnStyle, color: '#ba1a1a' }} title="Delete">
-                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+                            {p.notes && <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 3, lineHeight: 1.4 }}>{p.notes}</div>}
+                            {matches.length > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => setExpandedId(isExpanded ? null : p.id)}
+                                style={{
+                                  marginTop: 4, padding: 0, border: 'none', background: 'transparent',
+                                  cursor: 'pointer', fontSize: 11.5, fontWeight: 600,
+                                  color: 'var(--color-secondary, #0058be)',
+                                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                                }}
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                                  {isExpanded ? 'expand_less' : 'expand_more'}
+                                </span>
+                                {matches.length} counted transaction{matches.length === 1 ? '' : 's'}
+                              </button>
+                            ) : !isDone && !promoIsTracked(p, promoTags) && (
+                              <div
+                                title="Tag transactions to this benefit from the Transactions page, or set a match rule in Edit, and the amount fills in by itself."
+                                style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: 12 }}>touch_app</span>
+                                Tracked by hand
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Last used */}
+                          <td style={{ ...promoTdStyle, verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                            {lastUsed ? (
+                              <div title={lastUsed.source === 'transaction'
+                                ? `${lastUsed.description || 'Matching charge'} — ${fmtCents(lastUsed.amount)}`
+                                : lastUsed.source === 'completed'
+                                  ? 'Ticked off by hand this cycle'
+                                  : 'Ticked off by hand in an earlier cycle — no longer counts toward this one'}>
+                                <div style={{ fontSize: 12.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{longDate(lastUsed.date)}</div>
+                                <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 1 }}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>
+                                    {lastUsed.source === 'transaction' ? 'receipt_long' : 'check_circle'}
+                                  </span>
+                                  {relativeDayLabel(daysFromToday(lastUsed.date))}
+                                </div>
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>Not yet</span>
+                            )}
+                          </td>
+
+                          {/* Next up */}
+                          <td style={{ ...promoTdStyle, verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                            {nextReset ? (
+                              <div title={p.renewsOn
+                                ? 'Resets on the anniversary set in Edit'
+                                : `Resets at the start of the next ${p.period} cycle`}>
+                                <div style={{ fontSize: 12.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: expiringSoon ? '#a36b00' : 'inherit' }}>
+                                  {longDate(nextReset)}
+                                </div>
+                                <div style={{ fontSize: 11, color: expiringSoon ? '#a36b00' : 'var(--color-text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 1, fontWeight: expiringSoon ? 700 : 400 }}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>
+                                    {expiringSoon ? 'hourglass_bottom' : 'event_repeat'}
+                                  </span>
+                                  {expiringSoon ? `${fmt(remaining)} expires ${relativeDayLabel(daysToReset)}` : relativeDayLabel(daysToReset)}
+                                </div>
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }} title="One-time benefit — it doesn't come back">One-time</span>
+                            )}
+                          </td>
+
+                          {/* Amount */}
+                          <td style={{ ...promoTdStyle, verticalAlign: 'top', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                              {fmt(usedNow)}
+                              <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 500 }}> of {fmt(p.value)}</span>
+                            </div>
+                            <div style={{ height: 5, width: 104, marginLeft: 'auto', marginTop: 5, background: 'var(--color-surface-alt)', borderRadius: 3, overflow: 'hidden' }}>
+                              <div style={{ height: '100%', width: `${pct * 100}%`, background: pct >= 1 ? '#16a34a' : cardColor, transition: 'width 0.2s' }} />
+                            </div>
+                            <div style={{ fontSize: 11, marginTop: 3, fontWeight: 600, color: remaining > 0 ? '#16a34a' : 'var(--color-text-tertiary)' }}>
+                              {remaining > 0 ? `${fmt(remaining)} left` : 'Fully used'}
+                            </div>
+                          </td>
+
+                          <td style={{ ...promoTdStyle, verticalAlign: 'top' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <button onClick={() => startEdit(p)} style={iconBtnStyle} title="Edit">
+                                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>edit</span>
+                              </button>
+                              <button onClick={() => deletePromo(p.id)} style={{ ...iconBtnStyle, color: '#ba1a1a' }} title="Delete">
+                                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+
+                        {/* The charges behind the number, on their own full-width row so
+                            the reading columns above keep their alignment. */}
+                        {isExpanded && matches.length > 0 && (
+                          <tr>
+                            <td colSpan={6} style={{ padding: '0 10px 10px 40px', borderBottom: '1px solid var(--border-ghost)' }}>
+                              <div style={{ border: '1px solid var(--border-ghost)', borderRadius: 6, overflow: 'hidden' }}>
+                                {matches.slice(0, 40).map((m, mi) => {
+                                  // Only spend inside the current cycle feeds the "used"
+                                  // number above; older hits are shown dimmed so the list
+                                  // and the total can't look like they disagree.
+                                  const inCycle = cycleStart ? m._date >= cycleStart : true;
+                                  return (
+                                    <div
+                                      key={m.transactionId || mi}
+                                      style={{
+                                        display: 'flex', alignItems: 'center', gap: 8,
+                                        padding: '6px 8px', fontSize: 11.5,
+                                        borderTop: mi === 0 ? 'none' : '1px solid var(--border-ghost)',
+                                        opacity: inCycle ? 1 : 0.5,
+                                      }}
+                                    >
+                                      <span style={{ color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                                        {shortDate(m._date.toISOString())}
+                                      </span>
+                                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {m.description || '(no description)'}
+                                      </span>
+                                      {m._tagged && (
+                                        <span title="Tagged by hand" className="material-symbols-outlined" style={{ fontSize: 13, color: '#7c3aed' }}>sell</span>
+                                      )}
+                                      <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                        {fmtCents(Math.abs(Number(m.amount) || 0))}
+                                      </span>
+                                      {m._tagged && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setPromoTagForTransactions(m.transactionId, null)}
+                                          title="Remove this tag"
+                                          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--color-text-tertiary)', lineHeight: 0, padding: 0 }}
+                                        >
+                                          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                                {matches.length > 40 && (
+                                  <div style={{ padding: '6px 8px', fontSize: 11, color: 'var(--color-text-tertiary)', borderTop: '1px solid var(--border-ghost)' }}>
+                                    + {matches.length - 40} more
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td style={{ ...promoTdStyle, borderBottom: 'none' }} />
+                    <td colSpan={3} style={{ ...promoTdStyle, borderBottom: 'none', fontSize: 12, fontWeight: 700 }}>
+                      Total — {cardPromos.length} benefit{cardPromos.length === 1 ? '' : 's'}
+                    </td>
+                    <td style={{ ...promoTdStyle, borderBottom: 'none', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                        {fmt(cardUsed)}
+                        <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 500 }}> of {fmt(cardValue)}</span>
+                      </div>
+                      <div style={{ fontSize: 11, marginTop: 3, fontWeight: 600, color: cardValue - cardUsed > 0 ? '#16a34a' : 'var(--color-text-tertiary)' }}>
+                        {cardValue - cardUsed > 0 ? `${fmt(cardValue - cardUsed)} left` : 'Fully used'}
+                      </div>
+                    </td>
+                    <td style={{ ...promoTdStyle, borderBottom: 'none' }} />
+                  </tr>
+                </tfoot>
+              </table>
             </div>
           </div>
         );
@@ -830,6 +942,20 @@ function LabeledInput({ label, value, onChange, type = 'text' }) {
       <input type={type} value={value ?? ''} onChange={e => onChange(e.target.value)} style={inputStyle} />
     </div>
   );
+}
+
+/* The benefits table. Shares the column rhythm of the other tables on this page
+   (Suboptimal Card Usage, the rate grid) so the page reads as one thing. */
+const promoThStyle = { padding: '8px 10px', textAlign: 'left', fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', borderBottom: '1px solid var(--border-ghost)', whiteSpace: 'nowrap' };
+const promoTdStyle = { padding: '10px', fontSize: 12.5, borderBottom: '1px solid var(--border-ghost)' };
+const srOnlyStyle = { position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0 };
+
+function badgeStyle(bg, color) {
+  return {
+    display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700,
+    padding: '2px 6px', borderRadius: 4, background: bg, color,
+    textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap',
+  };
 }
 
 const labelStyle = { fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', marginBottom: 4 };
