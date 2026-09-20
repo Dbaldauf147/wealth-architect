@@ -10,6 +10,8 @@ import {
   summarizeCardPromos,
   promoIsTracked,
   promoTagCounts,
+  nextResetDate,
+  lastUsedFor,
 } from './cardPromos.js';
 
 // A fixed "now" so cycle boundaries are assertable: Tue 2026-08-25.
@@ -271,5 +273,86 @@ describe('promo tags', () => {
     expect(s.items[0]).toMatchObject({ id: 'manual', used: 450, tracked: true, taggedCount: 1 });
     // A $469 benefit with $450 tagged to it still has $19 left.
     expect(s.items[0].remaining).toBe(19);
+  });
+});
+
+describe('nextResetDate', () => {
+  it('rolls a monthly credit to the first of next month', () => {
+    expect(nextResetDate({ period: 'monthly' }, NOW)).toEqual(new Date(2026, 8, 1));
+  });
+
+  it('rolls a quarterly credit to the start of the next quarter', () => {
+    expect(nextResetDate({ period: 'quarterly' }, NOW)).toEqual(new Date(2026, 9, 1));
+  });
+
+  it('rolls an annual credit to next January 1', () => {
+    expect(nextResetDate({ period: 'annual' }, NOW)).toEqual(new Date(2027, 0, 1));
+  });
+
+  it('has no next date for a one-time benefit', () => {
+    expect(nextResetDate({ period: 'one-time' }, NOW)).toBeNull();
+    expect(nextResetDate({}, NOW)).toBeNull();
+  });
+
+  it('honours an explicit renewal date that is still ahead', () => {
+    expect(nextResetDate({ period: 'annual', renewsOn: '2026-11-04' }, NOW)).toEqual(new Date(2026, 10, 4));
+  });
+
+  it('treats a passed renewal date as an anniversary and rolls it forward', () => {
+    // An anniversary in March has already gone by on Aug 25 — the next one is
+    // March of next year, not a date permanently in the past.
+    expect(nextResetDate({ period: 'annual', renewsOn: '2026-03-14' }, NOW)).toEqual(new Date(2027, 2, 14));
+  });
+
+  it('rolls a passed monthly anniversary to the same day next month', () => {
+    expect(nextResetDate({ period: 'monthly', renewsOn: '2026-08-06' }, NOW)).toEqual(new Date(2026, 8, 6));
+  });
+
+  it('clamps a month-end anniversary instead of skidding into the next month', () => {
+    // Jan 31 + 1 month is Feb 28, not Mar 3.
+    expect(nextResetDate({ period: 'monthly', renewsOn: '2026-01-31' }, new Date(2026, 1, 1)))
+      .toEqual(new Date(2026, 1, 28));
+  });
+
+  it('returns today when the renewal lands on today', () => {
+    expect(nextResetDate({ period: 'monthly', renewsOn: '2026-08-25' }, NOW)).toEqual(new Date(2026, 7, 25));
+  });
+});
+
+describe('lastUsedFor', () => {
+  const txns = [
+    { transactionId: 't1', date: '2026-07-12', description: 'Lyft ride', amount: -9 },
+    { transactionId: 't2', date: '2026-08-10', description: 'Lyft ride', amount: -6 },
+  ];
+
+  it('reports the newest matching charge', () => {
+    const last = lastUsedFor(lyftPromo, txns, null, NOW);
+    expect(last).toMatchObject({ source: 'transaction', description: 'Lyft ride', amount: 6 });
+    expect(last.date).toEqual(new Date('2026-08-10'));
+  });
+
+  it('is null when nothing has been used or tagged', () => {
+    expect(lastUsedFor(manualPromo, txns, null, NOW)).toBeNull();
+  });
+
+  it('prefers a completion mark over a matching charge', () => {
+    const p = { ...lyftPromo, completedAt: '2026-08-20' };
+    const last = lastUsedFor(p, txns, null, NOW);
+    expect(last.source).toBe('completed');
+    expect(last.date).toEqual(new Date(2026, 7, 20));
+  });
+
+  it('still reports a completion from an earlier cycle, flagged as prior', () => {
+    // Ticked in July, so it no longer counts toward August's allowance — but it
+    // is still the honest answer to "when did I last use this".
+    const p = { ...manualPromo, period: 'monthly', completedAt: '2026-07-04' };
+    const last = lastUsedFor(p, [], null, NOW);
+    expect(last.source).toBe('completed-prior');
+    expect(last.date).toEqual(new Date(2026, 6, 4));
+  });
+
+  it('finds a hand-tagged charge on a promo with no match rules', () => {
+    const last = lastUsedFor(manualPromo, txns, { t2: 'manual' }, NOW);
+    expect(last).toMatchObject({ source: 'transaction', amount: 6 });
   });
 });
