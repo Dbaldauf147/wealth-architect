@@ -1,5 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../contexts/DataContext';
+import { buildWedgeBands, axisTicks, OTHER_LABEL } from '../lib/wedgeChart';
+import { monthLabelShort, monthLabel } from '../lib/netWorthSnapshot';
 import styles from './TrendsPage.module.css';
 
 function fmt(n) {
@@ -58,11 +60,185 @@ function Sparkline({ series, flagged }) {
   );
 }
 
+/* How many categories keep their own wedge before the tail rolls into "Other". */
+const WEDGE_TOP_N = 8;
+const WEDGE_PREF_KEY = 'wa-trends-wedge';
+
+const CHART_H = 300;
+const CHART_MIN_W = 320;
+/* Roughly what a "Sep 26" tick needs before its neighbour starts touching it. */
+const MONTH_LABEL_W = 52;
+
+/* Track the rendered width of an element, so the chart can draw at 1:1 instead
+   of scaling a fixed viewBox — a scaled viewBox shrinks the axis text along
+   with everything else, and on a phone that lands somewhere around 5px. */
+function useMeasuredWidth(initial) {
+  const ref = useRef(null);
+  const [width, setWidth] = useState(initial);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const apply = () => setWidth(Math.max(CHART_MIN_W, Math.round(el.clientWidth || initial)));
+    apply();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [initial]);
+  return [ref, width];
+}
+
+function fmtAxis(n) {
+  if (!n) return '$0';
+  if (Math.abs(n) >= 1000) {
+    const k = n / 1000;
+    return '$' + (Math.abs(k) >= 10 ? Math.round(k) : k.toFixed(1).replace(/\.0$/, '')) + 'k';
+  }
+  return '$' + Math.round(n);
+}
+
+/* Stacked-area ("wedge") view of monthly spend by category.
+
+   Drawn as one polygon per band rather than a line per category: the question
+   this answers is how the total splits and how that split moves, and a stack
+   shows both at once. Straight edges, not smoothed — the data is monthly, and
+   a spline would invent spend between the points that nobody made. */
+function WedgeChart({ months, bands, max }) {
+  const [wrapRef, chartW] = useMeasuredWidth(760);
+  const pad = { top: 12, right: 14, bottom: 34, left: chartW < 480 ? 44 : 60 };
+  const innerW = chartW - pad.left - pad.right;
+  const innerH = CHART_H - pad.top - pad.bottom;
+  const { top, ticks } = axisTicks(max, chartW < 480 ? 3 : 4);
+
+  const x = (i) => months.length === 1
+    ? pad.left + innerW / 2
+    : pad.left + (i / (months.length - 1)) * innerW;
+  const y = (v) => top > 0
+    ? pad.top + innerH - (v / top) * innerH
+    : pad.top + innerH;
+
+  // A single month has no width to sweep, so give each band a slab instead of
+  // a degenerate zero-width polygon.
+  const slab = months.length === 1 ? Math.min(120, innerW) / 2 : 0;
+
+  function bandPath(band) {
+    if (months.length === 1) {
+      const cx = x(0);
+      return `M ${cx - slab} ${y(band.lower[0])} L ${cx - slab} ${y(band.upper[0])} L ${cx + slab} ${y(band.upper[0])} L ${cx + slab} ${y(band.lower[0])} Z`;
+    }
+    const upper = band.upper.map((v, i) => `${x(i)} ${y(v)}`);
+    const lower = band.lower.map((v, i) => `${x(i)} ${y(v)}`).reverse();
+    return `M ${upper.join(' L ')} L ${lower.join(' L ')} Z`;
+  }
+
+  // Every month's full breakdown, for the hover strip's tooltip. Native SVG
+  // <title> is what the rest of this app uses for chart detail, and it keeps
+  // working on a touch-and-hold where a custom hover layer would not.
+  const monthTip = (i) => {
+    const lines = bands
+      .map(b => ({ cat: b.cat, v: b.values[i] }))
+      .filter(b => b.v > 0)
+      .sort((a, b) => b.v - a.v)
+      .map(b => `${b.cat}: ${fmt(b.v)}`);
+    const total = bands.reduce((s, b) => s + b.values[i], 0);
+    return [`${monthLabel(months[i])} — ${fmt(total)} total`, ...lines].join('\n');
+  };
+
+  // Label every month when there is room, otherwise thin them out evenly —
+  // driven by the measured width, so a phone drops to every other month
+  // instead of overprinting twelve of them on top of each other.
+  const roomFor = Math.max(2, Math.floor(innerW / MONTH_LABEL_W));
+  const labelEvery = Math.max(1, Math.ceil(months.length / roomFor));
+
+  return (
+    <div ref={wrapRef} className={styles.chartWrap}>
+      <svg
+        width="100%"
+        height={CHART_H}
+        viewBox={`0 0 ${chartW} ${CHART_H}`}
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        aria-label={`Stacked monthly spending by category, ${monthLabel(months[0])} to ${monthLabel(months[months.length - 1])}`}
+        style={{ display: 'block' }}
+      >
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line
+              x1={pad.left} y1={y(t)} x2={chartW - pad.right} y2={y(t)}
+              stroke="var(--color-text-tertiary)" strokeOpacity={t === 0 ? 0.35 : 0.18} strokeWidth={1}
+            />
+            <text
+              x={pad.left - 8} y={y(t) + 4} textAnchor="end" fontSize={11}
+              fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)"
+            >
+              {fmtAxis(t)}
+            </text>
+          </g>
+        ))}
+
+        {bands.map(band => (
+          <path
+            key={band.cat}
+            d={bandPath(band)}
+            fill={band.color}
+            fillOpacity={0.82}
+            stroke="var(--color-surface)"
+            strokeWidth={0.75}
+          />
+        ))}
+
+        {/* Transparent per-month strips carrying the tooltip and a hover tint. */}
+        {months.map((m, i) => {
+          const half = months.length === 1 ? slab : innerW / (months.length - 1) / 2;
+          const x0 = Math.max(pad.left, x(i) - half);
+          const x1 = Math.min(chartW - pad.right, x(i) + half);
+          return (
+            <rect
+              key={m}
+              className={styles.monthHover}
+              x={x0} y={pad.top} width={Math.max(1, x1 - x0)} height={innerH}
+            >
+              <title>{monthTip(i)}</title>
+            </rect>
+          );
+        })}
+
+        {months.map((m, i) => (
+          i % labelEvery === 0 || i === months.length - 1 ? (
+            <text
+              key={m}
+              x={x(i)} y={CHART_H - 12}
+              textAnchor={i === 0 ? 'start' : i === months.length - 1 ? 'end' : 'middle'}
+              fontSize={10.5} fill="var(--color-text-tertiary)" fontFamily="var(--font-headline)"
+            >
+              {monthLabelShort(m)}
+            </text>
+          ) : null
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 export function TrendsPage() {
   const { transactions, loading } = useData();
   const [windowId, setWindowId] = useState('3v3');
   const [flaggedOnly, setFlaggedOnly] = useState(false);
   const [sort, setSort] = useState({ col: 'deltaAbs', dir: 'desc' });
+  // The chart is a view preference, not account data — it stays in this
+  // browser rather than going through the Firestore config everything else
+  // syncs with. Remembered so the toggle survives a reload.
+  const [showWedge, setShowWedge] = useState(() => {
+    try { return localStorage.getItem(WEDGE_PREF_KEY) !== '0'; } catch { return true; }
+  });
+
+  function toggleWedge() {
+    setShowWedge(v => {
+      const next = !v;
+      try { localStorage.setItem(WEDGE_PREF_KEY, next ? '1' : '0'); } catch { /* private mode */ }
+      return next;
+    });
+  }
 
   const opts = WINDOW_OPTIONS.find(w => w.id === windowId) || WINDOW_OPTIONS[0];
 
@@ -142,6 +318,14 @@ export function TrendsPage() {
     return list;
   }, [data.rows, flaggedOnly, sort]);
 
+  /* The chart deliberately ignores the "Flagged only" filter: a stack built
+     from a subset of categories reads as a total that it isn't. It shows the
+     whole spend, and the table below stays the place to narrow things down. */
+  const wedge = useMemo(
+    () => buildWedgeBands({ months: data.months || [], rows: data.rows || [], topN: WEDGE_TOP_N }),
+    [data.months, data.rows],
+  );
+
   function toggleSort(col, defaultDir) {
     setSort(prev => {
       if (prev.col === col) return { col, dir: prev.dir === 'asc' ? 'desc' : 'asc' };
@@ -202,17 +386,60 @@ export function TrendsPage() {
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          className={`${styles.toggleBtn} ${flaggedOnly ? styles.toggleBtnActive : ''}`}
-          onClick={() => setFlaggedOnly(v => !v)}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
-            {flaggedOnly ? 'check_box' : 'check_box_outline_blank'}
-          </span>
-          Flagged only
-        </button>
+        <div className={styles.controlButtons}>
+          <button
+            type="button"
+            className={`${styles.toggleBtn} ${showWedge ? styles.toggleBtnActive : ''}`}
+            onClick={toggleWedge}
+            aria-pressed={showWedge}
+            title="Show a stacked-area chart of monthly spend by category"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+              {showWedge ? 'check_box' : 'check_box_outline_blank'}
+            </span>
+            Wedge chart
+          </button>
+          <button
+            type="button"
+            className={`${styles.toggleBtn} ${flaggedOnly ? styles.toggleBtnActive : ''}`}
+            onClick={() => setFlaggedOnly(v => !v)}
+            aria-pressed={flaggedOnly}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+              {flaggedOnly ? 'check_box' : 'check_box_outline_blank'}
+            </span>
+            Flagged only
+          </button>
+        </div>
       </div>
+
+      {showWedge && !loading && wedge.bands.length > 0 && (
+        <div className={styles.chartCard}>
+          <div className={styles.chartHead}>
+            <div className={styles.chartTitle}>Spending Over Time by Category</div>
+            <div className={styles.chartSub}>
+              {monthLabelShort(data.months[0])} – {monthLabelShort(data.months[data.months.length - 1])}
+              {' · '}every category, stacked · hover a month for the breakdown
+            </div>
+          </div>
+          <WedgeChart months={data.months} bands={wedge.bands} max={wedge.max} />
+          <div className={styles.legend}>
+            {wedge.bands.map(b => (
+              <div key={b.cat} className={styles.legendItem} title={
+                b.cat === OTHER_LABEL
+                  ? `${b.rolledUp} smaller categories · ${fmt(b.avg)}/mo`
+                  : `${fmt(b.avg)}/mo over this window`
+              }>
+                <span className={styles.legendSwatch} style={{ background: b.color }} />
+                <span className={styles.legendLabel}>
+                  {b.cat === OTHER_LABEL ? `Other (${b.rolledUp})` : b.cat}
+                </span>
+                <span className={styles.legendValue}>{fmt(b.avg)}/mo</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className={styles.emptyState}>Loading transactions...</div>
