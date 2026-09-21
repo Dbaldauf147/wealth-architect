@@ -29,6 +29,11 @@ import {
 
 const CONFIG_DOC_PATH = ['config', 'default'];
 const ALERTS_PATH = 'spendAlerts';
+// What each day-before payment reminder actually told you it would be. Written
+// by the cron that sends the email (Admin SDK, so rules don't apply to it);
+// read here so the Cards schedule can show the emailed figure rather than a
+// re-derivation of it. See firestore.rules.
+const PAYMENT_REMINDERS_PATH = 'paymentReminders';
 // One document per purchase, and every device reads the collection, so the
 // subscription is capped rather than left to grow without limit.
 const ALERTS_LIMIT = 60;
@@ -795,6 +800,7 @@ export function DataProvider({ children }) {
   // there is nothing to hydrate from localStorage — an alert that has not
   // reached Firestore does not exist.
   const [spendAlerts, setSpendAlerts] = useState([]);
+  const [paymentReminders, setPaymentReminders] = useState([]);
   const [rawBalances, setRawBalances] = useState(initialCache?.balances || null);
   const [balanceHistory, setBalanceHistory] = useState(initialCache?.balanceHistory || []);
   // Only true on the first cold load when we have nothing on disk to show.
@@ -891,6 +897,24 @@ export function DataProvider({ children }) {
         // down for — the rest of it does not depend on alerts existing.
         console.warn('Purchase alerts unavailable:', err?.message || err);
         setSpendAlerts([]);
+      },
+    );
+    return unsub;
+  }, []);
+
+  /* The reminder emails that have gone out, newest first. Small and slow-moving
+     — one document per card per payment — so the whole collection is fine to
+     hold. Same failure posture as the alerts above: a missing rule leaves the
+     Cards schedule falling back to a reconstructed estimate, which is a labelled
+     downgrade rather than a broken page. */
+  useEffect(() => {
+    const q = query(collection(db, PAYMENT_REMINDERS_PATH), orderBy('sentAt', 'desc'), limit(200));
+    const unsub = onSnapshot(
+      q,
+      (snap) => setPaymentReminders(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      (err) => {
+        console.warn('Payment reminder history unavailable:', err?.message || err);
+        setPaymentReminders([]);
       },
     );
     return unsub;
@@ -2369,6 +2393,7 @@ export function DataProvider({ children }) {
   const reads = useMemo(() => ({
     transactions,
     spendAlerts,
+    paymentReminders,
     balances,
     balanceHistory: shownBalanceHistory,
     analytics,
@@ -2427,6 +2452,7 @@ export function DataProvider({ children }) {
   }), [
     transactions,
     spendAlerts,
+    paymentReminders,
     balances,
     analytics,
     loading,

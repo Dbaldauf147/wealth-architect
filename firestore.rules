@@ -42,6 +42,15 @@ service cloud.firestore {
     match /spendAlerts/{doc} {
       allow read, write: if true;
     }
+    // What each day-before payment reminder email said it would be, written by
+    // the cron through the Admin SDK (which bypasses these rules). The browser
+    // reads it to show the emailed figure next to the payment that actually
+    // landed; it never writes, so a stray client write can't rewrite history
+    // after the fact — which would defeat the point of recording it.
+    match /paymentReminders/{doc} {
+      allow read: if true;
+      allow write: if false;
+    }
     match /{document=**} {
       allow read, write: if false;
     }

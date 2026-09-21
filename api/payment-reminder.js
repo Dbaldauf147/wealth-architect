@@ -56,6 +56,35 @@ async function fetchConfig() {
   }
 }
 
+/* One document per card per payment date, so a re-run of the same day's cron
+   overwrites rather than duplicating. Stores the charge lines as well as the
+   total: "these are the charges that add up to that number" is only answerable
+   later if the lines are kept with it. */
+async function recordReminderSent(payload) {
+  const db = getFirestoreDb();
+  if (!db) return;
+  const sentAt = new Date().toISOString();
+  const dateKey = payload.tomorrowDateKey;
+  await Promise.all((payload.cardsDueTomorrow || []).map(card => {
+    const slug = String(card.name || 'card').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    return db.collection('paymentReminders').doc(`${slug}__${dateKey}`).set({
+      card: card.name,
+      displayName: card.displayName || card.name,
+      dateKey,
+      amount: card.amount,
+      sentAt,
+      charges: (card.charges || []).map(t => ({
+        date: t.date || '',
+        description: t.description || '',
+        category: t.category || '',
+        account: t.account || '',
+        amount: Number(t.amount) || 0,
+        transactionId: t.transactionId || '',
+      })),
+    });
+  }));
+}
+
 async function fetchSheet(tabName, range) {
   const apiKey = process.env.SHEETS_API_KEY;
   const sheetId = process.env.SHEETS_SHEET_ID;
@@ -302,6 +331,22 @@ export default async function handler(req, res) {
       subject,
       html,
       attachments,
+    });
+
+    // Record what this email actually said, before returning. The Cards
+    // schedule compares the emailed figure against the payment that lands, and
+    // re-deriving it later can't reproduce it: a charge that reaches the sheet
+    // after the email has gone counts in the re-derivation and never counted
+    // here. That gap is the thing worth seeing, so it has to be captured at the
+    // moment of sending.
+    //
+    // Deliberately its own collection, not a field on config/default — the
+    // website writes that doc back whole, so a server-written field there is
+    // wiped by the next save from any device.
+    await recordReminderSent(payload).catch(err => {
+      // Never fail a sent email over its own bookkeeping. The schedule falls
+      // back to a reconstructed estimate, which it labels as such.
+      console.warn('Payment reminder history write failed:', err?.message || err);
     });
 
     return res.status(200).json({

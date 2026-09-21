@@ -2,6 +2,8 @@ import { Fragment, useCallback, useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { buildCardSchedule } from '../lib/cardSchedule';
 import { computeCardLookback } from '../lib/cashflowExport';
+import { comparePaymentForCard, buildChargeSheets } from '../lib/paymentReconcile';
+import { downloadXlsx } from '../lib/xlsx';
 import styles from './CardsPage.module.css';
 
 function fmt(n) {
@@ -48,7 +50,7 @@ function parseAccountName(s) {
 }
 
 export function CardsPage() {
-  const { transactions, balances, accountNicknames, accountNumbers, accountGroups, loading, hiddenCards } = useData();
+  const { transactions, balances, accountNicknames, accountNumbers, accountGroups, loading, hiddenCards, paymentReminders } = useData();
   const { setAccountNickname, toggleHideCard } = useDataActions();
   const [view, setView] = useState('schedule');
   const [scheduleView, setScheduleView] = useState('calendar');
@@ -254,6 +256,67 @@ export function CardsPage() {
     () => buildCardSchedule({ cards: creditCards, transactions: cardTransactions }),
     [creditCards, cardTransactions],
   );
+
+  /* Expected vs actual for each card's most recent payment.
+     "Expected" is what the reminder email said, when we recorded one for that
+     card and date; otherwise it's reconstructed from the ledger and labelled
+     as such, because a re-derivation can't see the charges that arrived after
+     the email went out — which is usually the very reason the two differ. */
+  const comparisons = useMemo(() => {
+    const byCard = new Map();
+    for (const t of cardTransactions) {
+      const acct = (t.account || '').trim();
+      if (!acct) continue;
+      if (!byCard.has(acct)) byCard.set(acct, []);
+      byCard.get(acct).push(t);
+    }
+    const out = new Map();
+    for (const card of creditCards) {
+      const txs = byCard.get(card.name) || [];
+      // Match a recorded reminder to this card's last payment by date: the
+      // email goes out the day before, so the record is keyed to the payment's
+      // own day.
+      const payDates = txs
+        .filter(t => /credit card payments?/i.test(t.category || '') && Number(t.amount) > 0)
+        .map(t => String(t.date).slice(0, 10))
+        .sort();
+      const lastKey = payDates[payDates.length - 1] || null;
+      const recorded = lastKey
+        ? (paymentReminders || []).find(r => r.card === card.name && r.dateKey === lastKey) || null
+        : null;
+      out.set(card.name, comparePaymentForCard({ transactions: txs, recorded }));
+    }
+    return out;
+  }, [cardTransactions, creditCards, paymentReminders]);
+
+  const downloadCharges = useCallback((cardName, kind) => {
+    const cmp = comparisons.get(cardName);
+    if (!cmp) return;
+    const side = kind === 'expected' ? cmp.expected : cmp.actual;
+    if (!side) return;
+    const label = displayName(cardName) || cardName;
+    const meta = kind === 'expected'
+      ? {
+        'Figure source': side.source === 'emailed' ? 'As sent in the reminder email' : 'Reconstructed from the ledger',
+        'Email sent': side.sentAt ? new Date(side.sentAt).toLocaleString('en-US') : '',
+        'Window start': side.windowStart ? fmtDateFull(side.windowStart) : '',
+        'Window end': side.windowEnd ? fmtDateFull(side.windowEnd) : '',
+      }
+      : {
+        'Payment date': fmtDateFull(side.date),
+        'Reconciled': side.matched ? 'Yes — these charges sum to the payment' : 'No — statement window could not be recovered',
+        'Statement closed': side.closeDate ? fmtDateFull(side.closeDate) : '',
+      };
+    const sheets = buildChargeSheets({
+      cardName: label,
+      kind,
+      figure: kind === 'expected' ? side.amount : side.amount,
+      charges: side.charges,
+      meta,
+    });
+    const slug = String(label).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'card';
+    downloadXlsx(sheets, `${slug}-${kind}-charges.xlsx`);
+  }, [comparisons, displayName]);
 
   // ── Look-back view data ───────────────────────────────────────────────────
   // The retrospective mirror of the Schedule's "charges since last payment":
@@ -1016,6 +1079,8 @@ export function CardsPage() {
             <tr>
               <th>Card</th>
               <th>Last Payment</th>
+              <th title="What the day-before reminder email said this payment would be. Click to download the charges behind it.">Expected</th>
+              <th title="What actually left your account. Click to download the charges that add up to it.">Actual</th>
               <th>Next (est.)</th>
               <th>In</th>
               <th>Charges</th>
@@ -1026,7 +1091,7 @@ export function CardsPage() {
           <tbody>
             {sortedSchedule.length === 0 ? (
               <tr>
-                <td colSpan={7} style={{ textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
+                <td colSpan={9} style={{ textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
                   No credit card accounts found in liabilities
                 </td>
               </tr>
@@ -1049,14 +1114,71 @@ export function CardsPage() {
                         </div>
                       </div>
                     </td>
-                    <td>
-                      {s.lastPayment ? (
-                        <span>
-                          <span style={{ color: 'var(--color-text-secondary)' }}>{fmtDate(s.lastPayment.date)}</span>
-                          <span style={{ marginLeft: 8, fontWeight: 600 }}>{fmt(s.lastPayment.amount)}</span>
-                        </span>
-                      ) : '—'}
+                    <td style={{ color: 'var(--color-text-secondary)' }}>
+                      {s.lastPayment ? fmtDate(s.lastPayment.date) : '—'}
                     </td>
+                    {(() => {
+                      const cmp = comparisons.get(s.card);
+                      const exp = cmp && cmp.expected;
+                      const act = cmp && cmp.actual;
+                      // The download is the point of the cell, so the number is
+                      // the button rather than carrying one beside it.
+                      const figureButton = (kind, amount, enabled, tip) => (
+                        <button
+                          type="button"
+                          disabled={!enabled}
+                          title={tip}
+                          onClick={(e) => { e.stopPropagation(); downloadCharges(s.card, kind); }}
+                          className={styles.figureBtn}
+                        >
+                          {fmt(amount)}
+                          {enabled && (
+                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>download</span>
+                          )}
+                        </button>
+                      );
+                      return (
+                        <>
+                          <td>
+                            {exp ? (
+                              <>
+                                {figureButton('expected', exp.amount, (exp.charges || []).length > 0,
+                                  exp.source === 'emailed'
+                                    ? 'As sent in the reminder email — download the charges behind it'
+                                    : 'Reconstructed from the ledger — download the charges behind it')}
+                                <div className={styles.figureNote}>
+                                  {exp.source === 'emailed' ? 'emailed' : 'reconstructed'}
+                                </div>
+                              </>
+                            ) : '—'}
+                          </td>
+                          <td>
+                            {act ? (
+                              <>
+                                {figureButton('actual', act.amount, (act.charges || []).length > 0,
+                                  act.matched
+                                    ? 'These charges sum exactly to the payment — download them'
+                                    : 'Statement window could not be recovered, so these charges do not sum to the payment')}
+                                {cmp.variance != null && Math.abs(cmp.variance) >= 1 && (
+                                  <div
+                                    className={styles.figureNote}
+                                    style={{ color: cmp.variance > 0 ? '#ba1a1a' : '#16a34a', fontWeight: 700 }}
+                                    title={`${fmt(Math.abs(cmp.variance))} ${cmp.variance > 0 ? 'more' : 'less'} than expected`}
+                                  >
+                                    {cmp.variance > 0 ? '+' : '−'}{fmt(Math.abs(cmp.variance))}
+                                  </div>
+                                )}
+                                {!act.matched && (
+                                  <div className={styles.figureNote} title="The charges we can see don't add up to this payment, so the export is a best effort rather than the statement.">
+                                    unreconciled
+                                  </div>
+                                )}
+                              </>
+                            ) : '—'}
+                          </td>
+                        </>
+                      );
+                    })()}
                     <td>{s.nextPaymentDate ? fmtDate(s.nextPaymentDate) : '—'}</td>
                     <td style={{ color: 'var(--color-text-secondary)' }}>
                       {s.daysUntilNext != null ? `${s.daysUntilNext}d` : '—'}
@@ -1073,7 +1195,7 @@ export function CardsPage() {
                   </tr>
                   {isOpen && (
                     <tr>
-                      <td colSpan={7} className={styles.expandedCell}>
+                      <td colSpan={9} className={styles.expandedCell}>
                         {s.chargesSinceLast.length === 0 ? (
                           <div className={styles.emptyDrill}>
                             {s.lastPayment
