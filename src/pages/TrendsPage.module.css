@@ -253,3 +253,94 @@
     font-size: 22px;
   }
 }
+
+.controlButtons {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chartCard {
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xs);
+  padding: 20px;
+}
+
+.chartWrap {
+  width: 100%;
+}
+
+.chartHead {
+  margin-bottom: 14px;
+}
+
+.chartTitle {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin-bottom: 4px;
+}
+
+.chartSub {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+/* Invisible until pointed at — the tint is the only cue that the strip under
+   the cursor is the one the tooltip is describing. */
+.monthHover {
+  fill: var(--color-text-primary);
+  fill-opacity: 0;
+  cursor: crosshair;
+}
+
+.monthHover:hover {
+  fill-opacity: 0.05;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: var(--border-ghost);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.legendSwatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.legendLabel {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+
+.legendValue {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-headline);
+  font-weight: 700;
+}
+
+@media (max-width: 768px) {
+  .chartCard {
+    padding: 14px;
+  }
+  .legend {
+    gap: 6px 12px;
+  }
+}
