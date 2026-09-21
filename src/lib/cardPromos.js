@@ -128,12 +128,19 @@ function startOfDay(v) {
  *  decides what "used this cycle" means — the two have to agree or the table
  *  would show a credit refilling on a day the usage number ignores.
  *
- *  One-time benefits never come back, so they have no next date. */
+ *  One-time benefits have no cycle, so they get a next date only when one was
+ *  set by hand — and that date is returned as-is, past or future. */
 export function nextResetDate(promo, asOf = new Date()) {
   const period = (promo && promo.period) || 'one-time';
-  if (period !== 'monthly' && period !== 'quarterly' && period !== 'annual') return null;
-  const today = startOfDay(asOf);
   const anchor = parseISODate(promo && promo.renewsOn);
+  if (period !== 'monthly' && period !== 'quarterly' && period !== 'annual') {
+    // A one-time benefit never refills, so there is no cycle to derive from —
+    // but a date set by hand still answers "when is the next one": Global Entry
+    // comes round every four years, which is no period this app models. Shown
+    // exactly as given, never rolled forward, because nothing says how far.
+    return anchor || null;
+  }
+  const today = startOfDay(asOf);
   if (anchor) {
     let d = anchor;
     // A far-past anniversary would otherwise spin here; 600 periods is longer
