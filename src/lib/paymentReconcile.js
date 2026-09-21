@@ -207,6 +207,13 @@ export function reconcilePayments({ payments, charges, tolerance = 0.01 }) {
  *  that arrived in the sheet after the email went out is counted here and
  *  wasn't counted there. Callers that hold the recorded figure should prefer
  *  it and use this only as the fallback.
+ *
+ *  Deliberately still "since the previous payment", even though cardSchedule no
+ *  longer projects that way. This reproduces what the email SAID, and every
+ *  payment it can be asked about predates that change — emails sent afterwards
+ *  record their own figure, so the reconstruction is only ever reached for the
+ *  older rows. Updating it to the statement window would make it describe a
+ *  number those emails never contained.
  */
 export function reconstructExpected({ payment, prevPayment, charges }) {
   if (!payment) return null;

@@ -382,7 +382,7 @@ function buildCardSheet(transactions, asOf, accountGroups, accountNicknames) {
       s.cadenceDays,
       s.nextPaymentDate ? s.nextPaymentDate.toISOString().slice(0, 10) : '',
       MB(s.estimatedNextAmount),
-      s.chargesSinceLast.length,
+      s.nextPaymentCharges.length,
     ]);
   }
   rows.push([]);
@@ -391,7 +391,7 @@ function buildCardSheet(transactions, asOf, accountGroups, accountNicknames) {
   rows.push(headerRow(['Card', 'Date', 'Description', 'Category', 'Subcategory', 'Amount'], [5]));
   for (const s of schedule) {
     const label = dispName(s.card, accountGroups, accountNicknames);
-    for (const t of s.chargesSinceLast) {
+    for (const t of s.nextPaymentCharges) {
       rows.push([
         label,
         t.date || '',

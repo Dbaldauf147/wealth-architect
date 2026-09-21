@@ -1,13 +1,43 @@
 /* Per-card payment schedule — projects each card's next CC payment date and
-   surfaces the charges since the last payment that will roll into it.
+   the charges that payment will actually cover.
 
-   Approximation v1: we don't have statement-close events, only payment events.
-   Treats "charges since last payment" as "charges in the next payment." Off by
-   a few days for users who don't pay in full, accurate enough for users who do. */
+   Those charges are NOT the ones since your last payment. A card bills on a
+   lag: the statement closes, and you pay it weeks later. So the payment coming
+   up settles a statement that closed around the time of your *previous*
+   payment, and the spending you've done since then belongs to the statement
+   after it. Summing "since the last payment" reports next month's bill as if
+   it were this month's — a whole cycle early.
 
+   The window is recovered rather than guessed. paymentReconcile finds, for each
+   past payment, the run of charges that sums to it exactly, which yields the day
+   each statement closed. One cycle on from the last recovered close is the
+   statement the next payment settles.
+
+   Where no window can be recovered, the gap between the two most recent
+   payments stands in — still a cycle back, which is the part that was wrong.
+   `windowSource` says which of the three applied, and `statementClosed` says
+   whether the window is complete: once it is, the figure is the bill rather
+   than an estimate of it. */
+
+import { paymentsOf, chargesOf, reconcilePayments } from './paymentReconcile.js';
+
+function addDays(d, n) {
+  const out = new Date(d);
+  out.setDate(out.getDate() + n);
+  return out;
+}
+
+/* A bare "2026-09-12" is UTC midnight to `new Date`, which is the 11th in any
+   US timezone — dates here were landing a day early throughout the schedule.
+   It also has to agree with paymentReconcile, which parses local days: the
+   statement window comes from there while the charges are filtered here, and a
+   boundary that disagrees by a day puts a charge on the wrong statement. */
 function parseDate(v) {
   if (!v) return null;
-  const d = new Date(v);
+  if (v instanceof Date) return isNaN(v) ? null : v;
+  const str = String(v);
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(str.slice(0, 10)) && str.length <= 10;
+  const d = dateOnly ? new Date(`${str.slice(0, 10)}T00:00:00`) : new Date(str);
   return isNaN(d) ? null : d;
 }
 
@@ -207,24 +237,86 @@ export function buildCardSchedule({ cards, transactions, asOf = new Date() }) {
       ? Math.max(0, Math.round((nextPaymentDate - asOf) / 86400000))
       : null;
 
-    // Charges (and refunds) on the card since the last payment, newest first.
-    // Excludes the CC-payment transactions themselves.
-    const sinceDate = lastPayment ? lastPayment.date : null;
-    const chargesSinceLast = txs
+    /* The statement the NEXT payment settles.
+
+       Best: a recovered close date, rolled forward one statement cycle (which
+       is measured from the close dates themselves, not from the payment dates —
+       a payment can slip a few days without the statement moving).
+
+       Next best: the gap between the two most recent payments. That lands
+       within a few days of the real window and, crucially, is a cycle back from
+       "since the last payment".
+
+       Last resort — a card with one payment and nothing reconciled — keeps the
+       old behaviour, because there is nothing to shift by. */
+    const reconPayments = paymentsOf(txs);
+    const reconCharges = chargesOf(txs);
+    const reconciliation = reconPayments.length
+      ? reconcilePayments({ payments: reconPayments, charges: reconCharges })
+      : [];
+    const closes = reconciliation.filter(r => r.matched && r.closeDate).map(r => r.closeDate);
+    const lastEntry = reconciliation[reconciliation.length - 1];
+
+    let statementOpen = null;   // exclusive
+    let statementClose = null;  // inclusive
+    let windowSource = 'since-last-payment';
+
+    if (lastEntry && lastEntry.matched && lastEntry.closeDate) {
+      let cycleDays = cadenceDays;
+      if (closes.length >= 2) {
+        const span = (closes[closes.length - 1] - closes[0]) / 86400000;
+        cycleDays = Math.max(1, Math.round(span / (closes.length - 1)));
+      }
+      /* The recovered close date is the last charge that was ON the statement,
+         not the day it closed — the real close is somewhere between that charge
+         and the next one that wasn't. Rolling a cycle forward from the charge
+         date undershoots by however long that gap is, so the midpoint stands in
+         as the point estimate.
+
+         Both ends use it, which is safe precisely because the midpoint sits
+         between two consecutive charges: nothing is dated inside that gap, so
+         moving the boundary there excludes exactly what the raw close date
+         excluded, while the window reads like the statement period it is
+         rather than starting at whatever day the last charge happened to be. */
+      const firstAfter = reconCharges.find(c => c._date > lastEntry.closeDate);
+      const refinedClose = firstAfter
+        ? new Date(Math.floor((lastEntry.closeDate.getTime() + firstAfter._date.getTime()) / 2))
+        : lastEntry.closeDate;
+      const refinedDay = new Date(refinedClose.getFullYear(), refinedClose.getMonth(), refinedClose.getDate());
+      statementOpen = refinedDay;
+      statementClose = addDays(refinedDay, cycleDays);
+      windowSource = 'reconciled';
+    } else if (payments.length >= 2) {
+      statementOpen = payments[payments.length - 2].date;
+      statementClose = payments[payments.length - 1].date;
+      windowSource = 'payment-gap';
+    } else if (lastPayment) {
+      statementOpen = lastPayment.date;
+      statementClose = null; // open-ended: everything since
+    }
+
+    // Charges (and refunds) in that window, newest first. The payment rows
+    // themselves are never part of a statement.
+    const nextPaymentCharges = txs
       .filter(t => {
         if (isCreditCardPayment(t)) return false;
         const d = parseDate(t.date);
         if (!d) return false;
-        if (sinceDate && d <= sinceDate) return false;
+        if (statementOpen && d <= statementOpen) return false;
+        if (statementClose && d > statementClose) return false;
         if (d > asOf) return false;
         return true;
       })
       .map(t => ({ ...t, _date: parseDate(t.date) }))
       .sort((a, b) => b._date - a._date);
 
-    // Sum the charges. Charges are negative; refunds are positive. Flipping the
-    // sign gives the net amount that'll be owed on the next payment.
-    const estimatedNextAmount = chargesSinceLast.reduce((s, t) => s + -t.amount, 0);
+    // Charges are negative; refunds positive. Flipping the sign gives what's
+    // owed on them.
+    const estimatedNextAmount = nextPaymentCharges.reduce((s, t) => s + -t.amount, 0);
+
+    // A window that has already ended is a bill, not a projection — nothing
+    // further can land in it.
+    const statementClosed = !!(statementClose && statementClose <= asOf);
 
     return {
       card: card.name,
@@ -235,8 +327,12 @@ export function buildCardSchedule({ cards, transactions, asOf = new Date() }) {
       recurrence: recurrence ? recurrence.label : null,
       nextPaymentDate,
       daysUntilNext,
-      chargesSinceLast,
+      nextPaymentCharges,
       estimatedNextAmount,
+      statementOpen,
+      statementClose,
+      statementClosed,
+      windowSource,
     };
   });
 }
