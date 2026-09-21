@@ -2,7 +2,7 @@ import { Fragment, useCallback, useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { buildCardSchedule } from '../lib/cardSchedule';
 import { computeCardLookback } from '../lib/cashflowExport';
-import { comparePaymentForCard, buildChargeSheets } from '../lib/paymentReconcile';
+import { comparePaymentForCard, buildChargeSheets, buildPaymentHistory } from '../lib/paymentReconcile';
 import { downloadXlsx } from '../lib/xlsx';
 import styles from './CardsPage.module.css';
 
@@ -14,6 +14,12 @@ function fmt(n) {
 function fmtDate(d) {
   if (!d) return '—';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// YYYY-MM-DD from the date's own calendar components, for filenames that sort.
+function fmtDateKey(d) {
+  if (!d) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function fmtDateFull(d) {
@@ -289,10 +295,9 @@ export function CardsPage() {
     return out;
   }, [cardTransactions, creditCards, paymentReminders]);
 
-  const downloadCharges = useCallback((cardName, kind) => {
-    const cmp = comparisons.get(cardName);
-    if (!cmp) return;
-    const side = kind === 'expected' ? cmp.expected : cmp.actual;
+  /* One downloader for both tables: the schedule row and every history row are
+     the same question asked of a different payment. */
+  const downloadFigure = useCallback((cardName, kind, side) => {
     if (!side) return;
     const label = displayName(cardName) || cardName;
     const meta = kind === 'expected'
@@ -304,21 +309,54 @@ export function CardsPage() {
       }
       : {
         'Payment date': fmtDateFull(side.date),
-        'Reconciled': side.matched ? 'Yes — these charges sum to the payment' : 'No — statement window could not be recovered',
+        'Reconciled': side.matched
+          ? (side.anchored
+            ? 'Yes — these charges sum to the payment'
+            : 'Yes — these charges sum to the payment, but the window does not follow on from the previous statement')
+          : 'No — no run of charges sums to this payment',
+        'Statement opened': side.openDate ? fmtDateFull(side.openDate) : '',
         'Statement closed': side.closeDate ? fmtDateFull(side.closeDate) : '',
+        'Charges skipped before the window': (side.skipped || []).length || '',
       };
-    const sheets = buildChargeSheets({
-      cardName: label,
-      kind,
-      figure: kind === 'expected' ? side.amount : side.amount,
-      charges: side.charges,
-      meta,
-    });
+    const sheets = buildChargeSheets({ cardName: label, kind, figure: side.amount, charges: side.charges, meta });
     const slug = String(label).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'card';
-    downloadXlsx(sheets, `${slug}-${kind}-charges.xlsx`);
-  }, [comparisons, displayName]);
+    const stamp = side.date ? `-${fmtDateKey(side.date)}` : '';
+    downloadXlsx(sheets, `${slug}-${kind}${stamp}-charges.xlsx`);
+  }, [displayName]);
 
-  // ── Look-back view data ───────────────────────────────────────────────────
+  const downloadCharges = useCallback((cardName, kind) => {
+    const cmp = comparisons.get(cardName);
+    if (!cmp) return;
+    const side = kind === 'expected' ? cmp.expected : cmp.actual;
+    // The schedule's Expected has no payment date of its own; stamp the file
+    // with the payment it relates to so two downloads can't collide.
+    downloadFigure(cardName, kind, side && kind === 'expected' && cmp.actual
+      ? { ...side, date: cmp.actual.date }
+      : side);
+  }, [comparisons, downloadFigure]);
+
+  /* Every payment on every card, newest first — the schedule row's question
+     asked of the whole history. */
+  const paymentHistory = useMemo(() => {
+    const byCard = new Map();
+    for (const t of cardTransactions) {
+      const acct = (t.account || '').trim();
+      if (!acct) continue;
+      if (!byCard.has(acct)) byCard.set(acct, []);
+      byCard.get(acct).push(t);
+    }
+    const rows = [];
+    for (const card of creditCards) {
+      const recorded = (paymentReminders || []).filter(r => r.card === card.name);
+      for (const row of buildPaymentHistory({ transactions: byCard.get(card.name) || [], recorded })) {
+        rows.push({ ...row, card: card.name, color: card.color || null });
+      }
+    }
+    rows.sort((a, b) => b.date - a.date);
+    return rows;
+  }, [cardTransactions, creditCards, paymentReminders]);
+
+  // ── Look-back view data ─────  // ── Look-back view data ───────────────────────────────────────────────────
   // The retrospective mirror of the Schedule's "charges since last payment":
   // for each card, every past credit-card payment and the charges it covered.
   // A payment is treated as covering the charges between the prior payment and
@@ -1245,6 +1283,118 @@ export function CardsPage() {
                 </Fragment>
               );
             })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Payment history — the schedule's question asked of every past payment.
+          One row per payment, so a card whose actual runs over its estimate
+          every month reads as a pattern rather than as one bad month. */}
+      <div className={styles.matrixCard}>
+        <div className={styles.matrixTitle}>Payment History</div>
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', margin: '-4px 0 12px' }}>
+          Every payment that has posted, newest first. Each figure downloads the charges behind it.
+        </div>
+        <table className={styles.matrixTable}>
+          <thead>
+            <tr>
+              <th>Card</th>
+              <th>Payment</th>
+              <th>Expected</th>
+              <th>Actual</th>
+              <th>Difference</th>
+              <th>Charges</th>
+              <th>Statement window</th>
+            </tr>
+          </thead>
+          <tbody>
+            {paymentHistory.length === 0 ? (
+              <tr>
+                <td colSpan={7} style={{ textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
+                  No payments have posted yet.
+                </td>
+              </tr>
+            ) : paymentHistory.map((h) => (
+              <tr key={`${h.card}-${h.dateKey}`}>
+                <td>
+                  <div className={styles.cardIdent}>
+                    <div className={styles.cardStripe} style={{ background: h.color }} />
+                    <div className={styles.cardName} title={cardNumberTitle(h.card)}>{displayName(h.card)}</div>
+                  </div>
+                </td>
+                <td style={{ color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>{fmtDateFull(h.date)}</td>
+                <td>
+                  {h.expected ? (
+                    <>
+                      <button
+                        type="button"
+                        className={styles.figureBtn}
+                        disabled={(h.expected.charges || []).length === 0}
+                        title={h.expected.source === 'emailed'
+                          ? 'As sent in the reminder email — download the charges behind it'
+                          : 'Reconstructed from the ledger — download the charges behind it'}
+                        onClick={() => downloadFigure(h.card, 'expected', { ...h.expected, date: h.date })}
+                      >
+                        {fmt(h.expected.amount)}
+                        {(h.expected.charges || []).length > 0 && (
+                          <span className="material-symbols-outlined" style={{ fontSize: 13 }}>download</span>
+                        )}
+                      </button>
+                      <div className={styles.figureNote}>
+                        {h.expected.source === 'emailed' ? 'emailed' : 'reconstructed'}
+                      </div>
+                    </>
+                  ) : '—'}
+                </td>
+                <td>
+                  <button
+                    type="button"
+                    className={styles.figureBtn}
+                    disabled={(h.actual.charges || []).length === 0}
+                    title={h.actual.matched
+                      ? 'These charges sum exactly to the payment — download them'
+                      : 'No run of charges sums to this payment, so the export is what it covered rather than the statement'}
+                    onClick={() => downloadFigure(h.card, 'actual', h.actual)}
+                  >
+                    {fmt(h.actual.amount)}
+                    {(h.actual.charges || []).length > 0 && (
+                      <span className="material-symbols-outlined" style={{ fontSize: 13 }}>download</span>
+                    )}
+                  </button>
+                  {!h.actual.matched && (
+                    <div className={styles.figureNote} title="The charges we can see don't add up to this payment, so the export is a best effort rather than the statement.">
+                      unreconciled
+                    </div>
+                  )}
+                </td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  {h.variance == null || Math.abs(h.variance) < 1 ? (
+                    <span style={{ color: 'var(--color-text-tertiary)' }}>—</span>
+                  ) : (
+                    <span style={{ color: h.variance > 0 ? '#ba1a1a' : '#16a34a', fontWeight: 700 }}>
+                      {h.variance > 0 ? '+' : '−'}{fmt(Math.abs(h.variance))}
+                    </span>
+                  )}
+                </td>
+                <td style={{ color: 'var(--color-text-secondary)' }}>{(h.actual.charges || []).length}</td>
+                <td style={{ color: 'var(--color-text-secondary)', whiteSpace: 'nowrap', fontSize: 12 }}>
+                  {h.actual.matched ? (
+                    <>
+                      {fmtDate(h.actual.openDate)} – {fmtDate(h.actual.closeDate)}
+                      {!h.actual.anchored && (
+                        <span
+                          className="material-symbols-outlined"
+                          title={`Doesn't follow on from the previous statement — ${(h.actual.skipped || []).length} earlier charge(s) sit outside it`}
+                          style={{ fontSize: 13, marginLeft: 4, color: '#a36b00', verticalAlign: '-2px' }}
+                        >
+                          error_outline
+                        </span>
+                      )}
+                    </>
+                  ) : '—'}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
