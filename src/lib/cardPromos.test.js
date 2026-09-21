@@ -289,9 +289,16 @@ describe('nextResetDate', () => {
     expect(nextResetDate({ period: 'annual' }, NOW)).toEqual(new Date(2027, 0, 1));
   });
 
-  it('has no next date for a one-time benefit', () => {
+  it('has no next date for a one-time benefit with no date set', () => {
     expect(nextResetDate({ period: 'one-time' }, NOW)).toBeNull();
     expect(nextResetDate({}, NOW)).toBeNull();
+  });
+
+  it('takes a hand-set date on a one-time benefit exactly as given', () => {
+    // Nothing says how far a one-time benefit would roll, so it never rolls —
+    // Global Entry comes round every four years, which is no period we model.
+    expect(nextResetDate({ period: 'one-time', renewsOn: '2030-05-02' }, NOW)).toEqual(new Date(2030, 4, 2));
+    expect(nextResetDate({ period: 'one-time', renewsOn: '2024-05-02' }, NOW)).toEqual(new Date(2024, 4, 2));
   });
 
   it('honours an explicit renewal date that is still ahead', () => {

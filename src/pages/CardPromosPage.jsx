@@ -90,6 +90,13 @@ function shortDate(iso) {
   return `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
 }
 
+/** `YYYY-MM-DD` in local time — what <input type="date"> expects. Going via
+ *  toISOString() would shift the day backwards for anyone west of UTC. */
+function toISODate(d) {
+  if (!d) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function longDate(d) {
   if (!d) return '—';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -133,6 +140,8 @@ export function CardPromosPage() {
   const [view, setView] = useState('csr'); // 'csr' | 'promos'
   // Which promo has its counted-transactions list open.
   const [expandedId, setExpandedId] = useState(null);
+  // Which promo has its "Next up" date open for editing, inline in the table.
+  const [editingNextId, setEditingNextId] = useState(null);
 
   // Charges in the last 30 days that would have earned more on another card.
   // An explicit mapping wins over guessing the card from the account name.
@@ -191,6 +200,22 @@ export function CardPromosPage() {
       if (!groups[p.card]) groups[p.card] = [];
       groups[p.card].push(p);
     }
+    // Soonest to come round first, which is the order you'd act in. A benefit
+    // with no date at all can't be urgent, so it sorts last rather than sorting
+    // as zero; ties go to the bigger benefit.
+    const now = new Date();
+    for (const list of Object.values(groups)) {
+      list.sort((a, b) => {
+        const da = daysFromToday(nextResetDate(a, now), now);
+        const db = daysFromToday(nextResetDate(b, now), now);
+        if (da == null || db == null) {
+          if (da == null && db == null) return (a.name || '').localeCompare(b.name || '');
+          return da == null ? 1 : -1;
+        }
+        if (da !== db) return da - db;
+        return (Number(b.value) || 0) - (Number(a.value) || 0);
+      });
+    }
     return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
   }, [visiblePromos]);
 
@@ -229,6 +254,13 @@ export function CardPromosPage() {
     setPromos(prev => [newPromo, ...prev]);
     setEditingId(newPromo.id);
     setEditDraft(newPromo);
+  }
+
+  // The Next up column edits one field, so it writes that field rather than
+  // going through the whole edit draft — the full form stays the place to
+  // change everything else, and both land on the same `renewsOn`.
+  function setRenewsOn(id, value) {
+    setPromos(prev => prev.map(p => p.id === id ? { ...p, renewsOn: value } : p));
   }
 
   function startEdit(promo) {
@@ -389,6 +421,9 @@ export function CardPromosPage() {
                     <th scope="col" style={promoThStyle}>Reward</th>
                     <th scope="col" style={promoThStyle}>Last used</th>
                     <th scope="col" style={promoThStyle}>Next up</th>
+                    <th scope="col" style={{ ...promoThStyle, textAlign: 'right' }} title="Sorted soonest first">
+                      Days until <span className="material-symbols-outlined" style={{ fontSize: 12, verticalAlign: '-2px' }}>arrow_upward</span>
+                    </th>
                     <th scope="col" style={{ ...promoThStyle, textAlign: 'right' }}>Amount</th>
                     <th scope="col" style={{ ...promoThStyle, width: 36 }}><span style={srOnlyStyle}>Actions</span></th>
                   </tr>
@@ -412,7 +447,7 @@ export function CardPromosPage() {
                     if (isEditing) {
                       return (
                         <tr key={p.id}>
-                          <td colSpan={6} style={{ padding: '8px 0', borderBottom: '1px solid var(--border-ghost)' }}>
+                          <td colSpan={7} style={{ padding: '8px 0', borderBottom: '1px solid var(--border-ghost)' }}>
                             <div style={{ border: `2px solid ${cardColor}`, borderRadius: 8, padding: 12, background: 'var(--color-surface-alt)' }}>
                               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                                 <LabeledInput label="Card" value={editDraft.card} onChange={v => setEditDraft({ ...editDraft, card: v })} />
@@ -564,24 +599,91 @@ export function CardPromosPage() {
                             )}
                           </td>
 
-                          {/* Next up */}
+                          {/* Next up — click to set the date this benefit comes round
+                              again. Writes the same `renewsOn` the Edit form does, so the
+                              two can't drift. */}
                           <td style={{ ...promoTdStyle, verticalAlign: 'top', whiteSpace: 'nowrap' }}>
-                            {nextReset ? (
-                              <div title={p.renewsOn
-                                ? 'Resets on the anniversary set in Edit'
-                                : `Resets at the start of the next ${p.period} cycle`}>
-                                <div style={{ fontSize: 12.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: expiringSoon ? '#a36b00' : 'inherit' }}>
-                                  {longDate(nextReset)}
-                                </div>
-                                <div style={{ fontSize: 11, color: expiringSoon ? '#a36b00' : 'var(--color-text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 1, fontWeight: expiringSoon ? 700 : 400 }}>
-                                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>
-                                    {expiringSoon ? 'hourglass_bottom' : 'event_repeat'}
-                                  </span>
-                                  {expiringSoon ? `${fmt(remaining)} expires ${relativeDayLabel(daysToReset)}` : relativeDayLabel(daysToReset)}
-                                </div>
+                            {editingNextId === p.id ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <input
+                                  type="date"
+                                  autoFocus
+                                  defaultValue={p.renewsOn || (nextReset ? toISODate(nextReset) : '')}
+                                  onChange={e => setRenewsOn(p.id, e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter' || e.key === 'Escape') setEditingNextId(null);
+                                  }}
+                                  onBlur={() => setEditingNextId(null)}
+                                  style={{ ...inputStyle, width: 138, padding: '4px 6px', fontSize: 12 }}
+                                />
+                                {p.renewsOn && (
+                                  <button
+                                    type="button"
+                                    title="Clear — go back to the calendar cycle"
+                                    // The blur that closes the editor would otherwise land
+                                    // before the click ever fires.
+                                    onMouseDown={e => e.preventDefault()}
+                                    onClick={() => { setRenewsOn(p.id, ''); setEditingNextId(null); }}
+                                    style={{ ...iconBtnStyle, width: 24, height: 24, flexShrink: 0 }}
+                                  >
+                                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>backspace</span>
+                                  </button>
+                                )}
                               </div>
                             ) : (
-                              <span style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }} title="One-time benefit — it doesn't come back">One-time</span>
+                              <button
+                                type="button"
+                                onClick={() => setEditingNextId(p.id)}
+                                title={p.renewsOn
+                                  ? 'Set by hand on this row — click to change or clear it'
+                                  : nextReset
+                                    ? `Resets at the start of the next ${p.period} cycle — click to set your own date`
+                                    : 'One-time benefit — click to set a date it comes round again'}
+                                style={{
+                                  border: 'none', background: 'transparent', padding: 0, margin: 0,
+                                  font: 'inherit', color: 'inherit', textAlign: 'left', cursor: 'pointer',
+                                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                                }}
+                              >
+                                {nextReset ? (
+                                  <>
+                                    <span style={{ fontSize: 12.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: expiringSoon ? '#a36b00' : 'inherit' }}>
+                                      {longDate(nextReset)}
+                                    </span>
+                                    <span
+                                      className="material-symbols-outlined"
+                                      title={p.renewsOn ? 'Date set by hand' : 'From the calendar cycle'}
+                                      style={{ fontSize: 13, opacity: 0.5, color: p.renewsOn ? 'var(--color-secondary, #0058be)' : 'inherit' }}
+                                    >
+                                      {p.renewsOn ? 'event_available' : 'event_repeat'}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                    One-time
+                                    <span className="material-symbols-outlined" style={{ fontSize: 13, opacity: 0.6 }}>edit_calendar</span>
+                                  </span>
+                                )}
+                              </button>
+                            )}
+                          </td>
+
+                          {/* Days until — the number the table is sorted on. */}
+                          <td style={{ ...promoTdStyle, verticalAlign: 'top', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                            {daysToReset == null ? (
+                              <span style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }} title="No date set, so nothing to count down to">—</span>
+                            ) : (
+                              <>
+                                <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: expiringSoon ? '#a36b00' : daysToReset < 0 ? 'var(--color-text-tertiary)' : 'inherit' }}>
+                                  {daysToReset < 0 ? `${-daysToReset}d ago` : daysToReset === 0 ? 'Today' : `${daysToReset}d`}
+                                </div>
+                                {expiringSoon && (
+                                  <div style={{ fontSize: 11, marginTop: 2, fontWeight: 700, color: '#a36b00', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                    <span className="material-symbols-outlined" style={{ fontSize: 12 }}>hourglass_bottom</span>
+                                    {fmt(remaining)} at risk
+                                  </div>
+                                )}
+                              </>
                             )}
                           </td>
 
@@ -615,7 +717,7 @@ export function CardPromosPage() {
                             the reading columns above keep their alignment. */}
                         {isExpanded && matches.length > 0 && (
                           <tr>
-                            <td colSpan={6} style={{ padding: '0 10px 10px 40px', borderBottom: '1px solid var(--border-ghost)' }}>
+                            <td colSpan={7} style={{ padding: '0 10px 10px 40px', borderBottom: '1px solid var(--border-ghost)' }}>
                               <div style={{ border: '1px solid var(--border-ghost)', borderRadius: 6, overflow: 'hidden' }}>
                                 {matches.slice(0, 40).map((m, mi) => {
                                   // Only spend inside the current cycle feeds the "used"
@@ -673,7 +775,7 @@ export function CardPromosPage() {
                 <tfoot>
                   <tr>
                     <td style={{ ...promoTdStyle, borderBottom: 'none' }} />
-                    <td colSpan={3} style={{ ...promoTdStyle, borderBottom: 'none', fontSize: 12, fontWeight: 700 }}>
+                    <td colSpan={4} style={{ ...promoTdStyle, borderBottom: 'none', fontSize: 12, fontWeight: 700 }}>
                       Total — {cardPromos.length} benefit{cardPromos.length === 1 ? '' : 's'}
                     </td>
                     <td style={{ ...promoTdStyle, borderBottom: 'none', textAlign: 'right', whiteSpace: 'nowrap' }}>
