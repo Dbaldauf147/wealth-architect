@@ -1245,7 +1245,7 @@ export function CashFlowPage() {
                     const dueLabel = due ? due.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '—';
                     const dueColor = daysUntil == null ? 'var(--color-text-primary)' : daysUntil <= 0 ? expenseColor : daysUntil <= 7 ? '#e8a317' : 'var(--color-text-primary)';
                     const isExpanded = expandedCards.has(cp.card);
-                    const charges = cp.chargesSinceLast || [];
+                    const charges = cp.nextPaymentCharges || [];
                     return (
                       <div key={cp.card} style={{ border: '1px solid var(--border-ghost)', borderRadius: 8, padding: 12 }}>
                         <div

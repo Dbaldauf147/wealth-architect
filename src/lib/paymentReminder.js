@@ -162,7 +162,14 @@ export function buildPaymentReminder(opts) {
       // Line-item backing for the projected amount — the charges since the
       // last payment that sum to it, plus the payment history behind the
       // date projection. Consumed by the Excel attachment builder.
-      charges: entry.chargesSinceLast || [],
+      charges: entry.nextPaymentCharges || [],
+      // Which statement this settles. Without it the email states a figure and
+      // leaves you to work out which month's spending it came from — the thing
+      // that made the old number look wrong even when it was.
+      statementOpen: entry.statementOpen || null,
+      statementClose: entry.statementClose || null,
+      statementClosed: !!entry.statementClosed,
+      windowSource: entry.windowSource || null,
       payments: entry.payments || [],
       lastPayment: entry.lastPayment || null,
       cadenceDays: entry.cadenceDays || null,
@@ -222,6 +229,36 @@ export function renderPaymentReminderHtml(payload, opts = {}) {
   const runway = balance != null ? balance - totalDue : null;
   const runwayColor = runway != null && runway < 0 ? '#ba1a1a' : '#0f172a';
 
+  const shortDate = (d) => {
+    if (!d) return null;
+    const dt = d instanceof Date ? d : new Date(d);
+    return isNaN(dt) ? null : dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
+  /* Cards bill on a lag, so this payment settles a statement that closed weeks
+     ago — not what's been spent since the last payment. Saying so removes the
+     obvious misreading: that the figure should match this month's spending. */
+  const windows = cardsDueTomorrow
+    .map(c => {
+      const open = shortDate(c.statementOpen);
+      const close = shortDate(c.statementClose);
+      if (!open || !close) return null;
+      return `${escapeHtml(c.displayName)}: ${open} – ${close}`;
+    })
+    .filter(Boolean);
+  const allClosed = cardsDueTomorrow.every(c => c.statementClosed);
+  const statementNote = windows.length ? `
+    <div style="margin-top:14px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;color:#475569;line-height:1.6;">
+      <strong style="color:#0f172a;">Statement period${windows.length > 1 ? 's' : ''} being paid</strong><br>
+      ${windows.join('<br>')}
+      <div style="margin-top:6px;color:#64748b;">
+        ${allClosed
+          ? 'These statements have closed, so this is the amount billed — not a projection. Spending since then lands on the next statement.'
+          : 'Spending after this period lands on the next statement, not this payment.'}
+      </div>
+    </div>
+  ` : '';
+
   const cardRows = cardsDueTomorrow.map(c => `
     <tr>
       <td style="padding:10px 12px;border-top:1px solid #e2e8f0;font-family:Arial,sans-serif;font-size:14px;color:#0f172a;">${escapeHtml(c.displayName)}</td>
@@ -259,6 +296,8 @@ export function renderPaymentReminderHtml(payload, opts = {}) {
           </tr>
         </tfoot>
       </table>
+
+      ${statementNote}
 
       ${payingAccount ? `
         <div style="margin-top:20px;padding:14px 16px;background:#f1f5f9;border-radius:8px;">

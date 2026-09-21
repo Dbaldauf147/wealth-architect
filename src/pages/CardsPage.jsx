@@ -1221,10 +1221,29 @@ export function CardsPage() {
                     <td style={{ color: 'var(--color-text-secondary)' }}>
                       {s.daysUntilNext != null ? `${s.daysUntilNext}d` : '—'}
                     </td>
-                    <td style={{ color: 'var(--color-text-secondary)' }}>
-                      {s.chargesSinceLast.length}
+                    <td
+                      style={{ color: 'var(--color-text-secondary)' }}
+                      title="Charges on the statement this payment settles — not everything since your last payment"
+                    >
+                      {s.nextPaymentCharges.length}
                     </td>
-                    <td className={styles.cardFee}>{fmt(s.estimatedNextAmount)}</td>
+                    <td className={styles.cardFee}>
+                      {fmt(s.estimatedNextAmount)}
+                      {/* Which statement this settles. The figure looks wrong
+                          without it — a card bills on a lag, so it won't match
+                          what's been spent since the last payment. */}
+                      {s.statementOpen && s.statementClose && (
+                        <div
+                          className={styles.figureNote}
+                          title={s.windowSource === 'reconciled'
+                            ? 'Window recovered from the charges that summed exactly to past payments'
+                            : 'Approximated from the gap between your last two payments'}
+                        >
+                          {fmtDate(s.statementOpen)} – {fmtDate(s.statementClose)}
+                          {s.statementClosed ? ' · billed' : ' · open'}
+                        </div>
+                      )}
+                    </td>
                     <td style={{ textAlign: 'right' }}>
                       <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--color-text-tertiary)' }}>
                         {isOpen ? 'expand_less' : 'expand_more'}
@@ -1234,7 +1253,7 @@ export function CardsPage() {
                   {isOpen && (
                     <tr>
                       <td colSpan={9} className={styles.expandedCell}>
-                        {s.chargesSinceLast.length === 0 ? (
+                        {s.nextPaymentCharges.length === 0 ? (
                           <div className={styles.emptyDrill}>
                             {s.lastPayment
                               ? `No charges since ${fmtDate(s.lastPayment.date)}.`
@@ -1243,7 +1262,7 @@ export function CardsPage() {
                         ) : (
                           (() => {
                             // Compute running total in chronological order, render newest first.
-                            const oldestFirst = [...s.chargesSinceLast].reverse();
+                            const oldestFirst = [...s.nextPaymentCharges].reverse();
                             let total = 0;
                             const withRunning = oldestFirst.map(t => {
                               total += -t.amount;

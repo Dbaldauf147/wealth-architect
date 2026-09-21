@@ -135,7 +135,7 @@ export function buildCalendarEvents(opts) {
     const dateKey = dateOnlyKey(entry.nextPaymentDate);
     const displayName = nicknames[entry.card] || entry.card;
     const amount = entry.estimatedNextAmount || 0;
-    const chargesCount = entry.chargesSinceLast ? entry.chargesSinceLast.length : 0;
+    const chargesCount = entry.nextPaymentCharges ? entry.nextPaymentCharges.length : 0;
 
     events.push({
       cardKey,
