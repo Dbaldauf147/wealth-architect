@@ -414,11 +414,12 @@ export function CardPromosPage() {
             </div>
 
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
                 <thead>
                   <tr>
                     <th scope="col" style={{ ...promoThStyle, width: 30 }}><span style={srOnlyStyle}>Used</span></th>
                     <th scope="col" style={promoThStyle}>Reward</th>
+                    <th scope="col" style={promoThStyle}>Notes</th>
                     <th scope="col" style={promoThStyle}>Last used</th>
                     <th scope="col" style={promoThStyle}>Next up</th>
                     <th scope="col" style={{ ...promoThStyle, textAlign: 'right' }} title="Sorted soonest first">
@@ -447,7 +448,7 @@ export function CardPromosPage() {
                     if (isEditing) {
                       return (
                         <tr key={p.id}>
-                          <td colSpan={7} style={{ padding: '8px 0', borderBottom: '1px solid var(--border-ghost)' }}>
+                          <td colSpan={8} style={{ padding: '8px 0', borderBottom: '1px solid var(--border-ghost)' }}>
                             <div style={{ border: `2px solid ${cardColor}`, borderRadius: 8, padding: 12, background: 'var(--color-surface-alt)' }}>
                               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                                 <LabeledInput label="Card" value={editDraft.card} onChange={v => setEditDraft({ ...editDraft, card: v })} />
@@ -550,7 +551,6 @@ export function CardPromosPage() {
                                 </span>
                               )}
                             </div>
-                            {p.notes && <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 3, lineHeight: 1.4 }}>{p.notes}</div>}
                             {matches.length > 0 ? (
                               <button
                                 type="button"
@@ -575,6 +575,18 @@ export function CardPromosPage() {
                                 <span className="material-symbols-outlined" style={{ fontSize: 12 }}>touch_app</span>
                                 Tracked by hand
                               </div>
+                            )}
+                          </td>
+
+                          {/* Notes — free text, so it gets a width of its own and wraps
+                              inside it rather than stretching the row. */}
+                          <td style={{ ...promoTdStyle, verticalAlign: 'top', maxWidth: 260, minWidth: 160 }}>
+                            {p.notes ? (
+                              <div title={p.notes} style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', lineHeight: 1.45, whiteSpace: 'normal' }}>
+                                {p.notes}
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', opacity: 0.5 }}>—</span>
                             )}
                           </td>
 
@@ -717,7 +729,7 @@ export function CardPromosPage() {
                             the reading columns above keep their alignment. */}
                         {isExpanded && matches.length > 0 && (
                           <tr>
-                            <td colSpan={7} style={{ padding: '0 10px 10px 40px', borderBottom: '1px solid var(--border-ghost)' }}>
+                            <td colSpan={8} style={{ padding: '0 10px 10px 40px', borderBottom: '1px solid var(--border-ghost)' }}>
                               <div style={{ border: '1px solid var(--border-ghost)', borderRadius: 6, overflow: 'hidden' }}>
                                 {matches.slice(0, 40).map((m, mi) => {
                                   // Only spend inside the current cycle feeds the "used"
@@ -775,7 +787,7 @@ export function CardPromosPage() {
                 <tfoot>
                   <tr>
                     <td style={{ ...promoTdStyle, borderBottom: 'none' }} />
-                    <td colSpan={4} style={{ ...promoTdStyle, borderBottom: 'none', fontSize: 12, fontWeight: 700 }}>
+                    <td colSpan={5} style={{ ...promoTdStyle, borderBottom: 'none', fontSize: 12, fontWeight: 700 }}>
                       Total — {cardPromos.length} benefit{cardPromos.length === 1 ? '' : 's'}
                     </td>
                     <td style={{ ...promoTdStyle, borderBottom: 'none', textAlign: 'right', whiteSpace: 'nowrap' }}>
