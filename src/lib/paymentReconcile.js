@@ -76,16 +76,66 @@ export function owedFor(charges) {
   return round2((charges || []).reduce((s, t) => s + -Number(t.amount), 0));
 }
 
+/** Group charges into whole days, because a statement closes on a day and not
+ *  between two charges that share one. */
+function groupByDay(charges) {
+  const days = [];
+  for (const c of charges) {
+    const key = dayKey(c._date);
+    const last = days[days.length - 1];
+    if (last && last.key === key) last.charges.push(c);
+    else days.push({ key, date: c._date, charges: [c] });
+  }
+  for (const d of days) d.sum = owedFor(d.charges);
+  return days;
+}
+
+/** Find a run of whole days whose charges sum to `target`.
+ *
+ *  Anchored first: a run starting at the beginning of the unconsumed charges is
+ *  the tidy case — each statement picking up exactly where the last one left
+ *  off. Real ledgers aren't that tidy. A card that was already open when the
+ *  sheet starts, a statement paid at something other than the full balance, a
+ *  fee that never reached the ledger — any of these break the chain, and once
+ *  broken every later payment inherits the break.
+ *
+ *  So when the anchored run misses, any run of days is considered, preferring
+ *  the one ending latest (the statement closest to the payment) and, among
+ *  those, the longest. An exact-to-the-cent match on a real amount is not
+ *  something arbitrary charges do by accident, so a hit here is worth having;
+ *  `anchored` records which kind it was, and the charges skipped before an
+ *  unanchored run are reported rather than silently dropped.
+ */
+function findDayWindow(days, target, tolerance) {
+  const n = days.length;
+  if (n === 0) return null;
+  // prefix[i] = owed across days[0..i-1]
+  const prefix = new Array(n + 1).fill(0);
+  for (let i = 0; i < n; i++) prefix[i + 1] = round2(prefix[i] + days[i].sum);
+
+  // Anchored: starts at the first unconsumed day.
+  for (let j = 0; j < n; j++) {
+    if (Math.abs(round2(prefix[j + 1] - prefix[0]) - target) <= tolerance) {
+      return { start: 0, end: j, anchored: true };
+    }
+  }
+  // Otherwise the latest-ending run wins, and the longest among those.
+  for (let j = n - 1; j >= 0; j--) {
+    for (let i = 0; i <= j; i++) {
+      if (Math.abs(round2(prefix[j + 1] - prefix[i]) - target) <= tolerance) {
+        return { start: i, end: j, anchored: false };
+      }
+    }
+  }
+  return null;
+}
+
 /** Walk each payment in turn and find the run of charges that sums to it.
  *
- *  Windows chain: statement periods are contiguous and don't overlap, so each
- *  payment's window starts where the previous one ended. That's also what makes
- *  the result explanatory — if one payment's window reaches back further than
- *  the estimate's did, the charges it swept up are visible.
- *
- *  A window may only end on a day boundary, because a statement does. Without
- *  that, a run could stop halfway through a day and "reconcile" on a total no
- *  statement could ever have shown.
+ *  Windows chain where they can: statement periods are contiguous, so each
+ *  payment's window starts where the previous one ended. That's what makes the
+ *  result explanatory — if one payment's window reaches back further than the
+ *  estimate's did, the charges it swept up are visible.
  *
  *  Unmatched payments still report the charges they'd have covered, flagged
  *  `matched: false` so nothing downstream presents an approximation as exact.
@@ -108,37 +158,37 @@ export function reconcilePayments({ payments, charges, tolerance = 0.01 }) {
       scan += 1;
     }
 
-    let running = 0;
-    let matchEnd = -1;
-    let closeDate = null;
-    for (let i = 0; i < candidates.length; i++) {
-      running += -Number(candidates[i].amount);
-      const lastOfDay = i === candidates.length - 1
-        || dayKey(candidates[i + 1]._date) !== dayKey(candidates[i]._date);
-      if (lastOfDay && Math.abs(round2(running) - target) <= tolerance) {
-        matchEnd = i;
-        closeDate = candidates[i]._date;
-        break;
-      }
-    }
+    const days = groupByDay(candidates);
+    const hit = findDayWindow(days, target, tolerance);
 
-    if (matchEnd >= 0) {
-      const window = candidates.slice(0, matchEnd + 1);
+    if (hit) {
+      const window = [];
+      for (let i = hit.start; i <= hit.end; i++) window.push(...days[i].charges);
+      const skipped = [];
+      for (let i = 0; i < hit.start; i++) skipped.push(...days[i].charges);
       out.push({
         payment,
         charges: window,
         total: owedFor(window),
         matched: true,
-        closeDate,
+        anchored: hit.anchored,
+        skipped,
+        closeDate: days[hit.end].date,
+        openDate: days[hit.start].date,
       });
-      cursor += matchEnd + 1;
+      // Consume through the end of the matched run; anything before it was
+      // skipped and can't belong to a later statement either.
+      cursor += days.slice(0, hit.end + 1).reduce((s, d) => s + d.charges.length, 0);
     } else {
       out.push({
         payment,
         charges: candidates,
         total: owedFor(candidates),
         matched: false,
+        anchored: false,
+        skipped: [],
         closeDate: null,
+        openDate: candidates.length ? candidates[0]._date : null,
       });
       cursor = scan;
     }
@@ -227,6 +277,72 @@ export function comparePaymentForCard({ transactions, recorded = null, tolerance
     variance: expected ? round2(actual.amount - expected.amount) : null,
     reconciliation,
   };
+}
+
+/** Every payment on a card, newest first, each with what it was expected to be
+ *  and what it turned out to be.
+ *
+ *  The per-card row on the schedule answers "what happened last time"; this
+ *  answers "does it always do that". A card whose actual runs above its
+ *  estimate every month is telling you the estimate's window is wrong, which is
+ *  a different problem from one month going badly.
+ *
+ *  `recorded` is the list of reminder records for this card; each payment picks
+ *  up the one matching its own date, so a history built after the records start
+ *  accumulating gets the sent figure for recent rows and a reconstruction for
+ *  older ones.
+ */
+export function buildPaymentHistory({ transactions, recorded = [], tolerance = 0.01 }) {
+  const payments = paymentsOf(transactions);
+  const charges = chargesOf(transactions);
+  if (payments.length === 0) return [];
+
+  const reconciliation = reconcilePayments({ payments, charges, tolerance });
+  const byDate = new Map();
+  for (const r of recorded || []) {
+    if (r && r.dateKey) byDate.set(r.dateKey, r);
+  }
+
+  const rows = reconciliation.map((r, i) => {
+    const prevPayment = i > 0 ? payments[i - 1] : null;
+    const key = dayKey(r.payment._date);
+    const rec = byDate.get(key) || null;
+
+    let expected = reconstructExpected({ payment: r.payment, prevPayment, charges });
+    if (rec && Number.isFinite(Number(rec.amount))) {
+      expected = {
+        amount: round2(rec.amount),
+        charges: Array.isArray(rec.charges) && rec.charges.length
+          ? rec.charges.map(t => ({ ...t, _date: parseDate(t.date), amount: Number(t.amount) })).filter(t => t._date)
+          : [],
+        windowStart: expected ? expected.windowStart : null,
+        windowEnd: expected ? expected.windowEnd : null,
+        source: 'emailed',
+        sentAt: rec.sentAt || null,
+      };
+    }
+
+    return {
+      dateKey: key,
+      date: r.payment._date,
+      actual: {
+        date: r.payment._date,
+        amount: round2(r.payment.amount),
+        charges: r.charges,
+        total: r.total,
+        matched: r.matched,
+        anchored: r.anchored,
+        skipped: r.skipped,
+        closeDate: r.closeDate,
+        openDate: r.openDate,
+      },
+      expected,
+      variance: expected ? round2(round2(r.payment.amount) - expected.amount) : null,
+    };
+  });
+
+  rows.reverse(); // newest first — the one you're asking about is the recent one
+  return rows;
 }
 
 /** Sheets for the .xlsx export behind one of the two figures.

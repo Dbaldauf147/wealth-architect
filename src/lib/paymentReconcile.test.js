@@ -7,6 +7,7 @@ import {
   reconstructExpected,
   comparePaymentForCard,
   buildChargeSheets,
+  buildPaymentHistory,
 } from './paymentReconcile.js';
 
 const pay = (date, amount) => ({ date, amount, category: 'Credit Card Payment', description: 'Payment Thank You', account: 'CHASE CARD (1234)' });
@@ -216,5 +217,89 @@ describe('buildChargeSheets', () => {
   it('says so when the lines do not add up to the figure', () => {
     const [summary] = buildChargeSheets({ cardName: 'X', kind: 'actual', figure: 6915, charges });
     expect(summary.rows).toContainEqual(['Ties out', 'No']);
+  });
+});
+
+describe('reconcilePayments — windows that do not start at the chain', () => {
+  it('finds a statement whose window opens partway through the ledger', () => {
+    // The card was already open when the sheet begins, so the first charges
+    // belong to a statement that was paid before any of this history. An
+    // anchored-only matcher gives up here; the payment is still explainable.
+    const charges = chargesOf([
+      buy('2026-06-01', -812, 'Belongs to an earlier statement'),
+      buy('2026-07-05', -100),
+      buy('2026-07-10', -200),
+    ]);
+    const payments = paymentsOf([pay('2026-08-15', 300)]);
+    const [r] = reconcilePayments({ payments, charges });
+    expect(r.matched).toBe(true);
+    expect(r.anchored).toBe(false);
+    expect(r.total).toBe(300);
+    expect(r.charges.map(c => c.description)).toEqual(['Merchant', 'Merchant']);
+    // What it stepped over is reported, not quietly dropped.
+    expect(r.skipped.map(c => c.amount)).toEqual([-812]);
+  });
+
+  it('prefers the anchored window when both would sum', () => {
+    // 100 + 200 anchored, and 300 alone later. The anchored one is the
+    // statement that actually picks up where the last left off.
+    const charges = chargesOf([buy('2026-07-05', -100), buy('2026-07-10', -200), buy('2026-07-20', -300)]);
+    const payments = paymentsOf([pay('2026-08-15', 300)]);
+    const [r] = reconcilePayments({ payments, charges });
+    expect(r.anchored).toBe(true);
+    expect(r.charges).toHaveLength(2);
+  });
+
+  it('prefers the latest-ending window when no anchored one sums', () => {
+    const charges = chargesOf([buy('2026-06-01', -55), buy('2026-07-05', -300), buy('2026-07-20', -300)]);
+    const payments = paymentsOf([pay('2026-08-15', 300)]);
+    const [r] = reconcilePayments({ payments, charges });
+    expect(r.matched).toBe(true);
+    expect(r.anchored).toBe(false);
+    expect(r.closeDate).toEqual(new Date(2026, 6, 20));
+  });
+});
+
+describe('buildPaymentHistory', () => {
+  const txns = [
+    buy('2026-06-01', -500, 'June'),
+    buy('2026-06-20', -3529, 'Before the July payment'),
+    pay('2026-07-15', 500),
+    buy('2026-07-20', -1386, 'A'),
+    buy('2026-08-01', -2000, 'B'),
+    pay('2026-08-15', 6915),
+  ];
+
+  it('returns one row per payment, newest first', () => {
+    const rows = buildPaymentHistory({ transactions: txns });
+    expect(rows).toHaveLength(2);
+    expect(rows[0].dateKey).toBe('2026-08-15');
+    expect(rows[1].dateKey).toBe('2026-07-15');
+  });
+
+  it('carries expected, actual and the gap for each row', () => {
+    const [latest] = buildPaymentHistory({ transactions: txns });
+    expect(latest.actual.amount).toBe(6915);
+    expect(latest.actual.matched).toBe(true);
+    expect(latest.expected.amount).toBe(3386);
+    expect(latest.variance).toBe(3529);
+  });
+
+  it('uses a recorded figure only on the payment it belongs to', () => {
+    const rows = buildPaymentHistory({
+      transactions: txns,
+      recorded: [{ dateKey: '2026-08-15', amount: 3386, sentAt: '2026-08-14T12:00:00Z', charges: [buy('2026-07-20', -1386, 'A')] }],
+    });
+    expect(rows[0].expected.source).toBe('emailed');
+    expect(rows[1].expected.source).toBe('reconstructed');
+  });
+
+  it('carries the payment date on the actual side, for the export to stamp', () => {
+    const [latest] = buildPaymentHistory({ transactions: txns });
+    expect(latest.actual.date).toEqual(new Date(2026, 7, 15));
+  });
+
+  it('is empty for a card that was never paid', () => {
+    expect(buildPaymentHistory({ transactions: [buy('2026-08-01', -20)] })).toEqual([]);
   });
 });
