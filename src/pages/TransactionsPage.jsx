@@ -5,6 +5,8 @@ import {
   ALL_CATEGORIES, SUBCATEGORIES, CATEGORY_ICONS, getCategoryIcon, catColor, catBg, PALETTE,
 } from '../lib/categories';
 import { findRentCollisions, txnKey } from '../lib/rentDuplicates';
+import { detectCardKey } from '../lib/cardRewards';
+import CardChoiceModal from '../components/CardChoiceModal';
 import styles from './TransactionsPage.module.css';
 
 const PAGE_SIZE = 50;
@@ -634,12 +636,22 @@ function findRecurring(transactions) {
     }));
 }
 
+/* A double-click on a row opens the "right card?" popup — unless it landed on
+   something the row already uses clicks for (inputs, the category and
+   subcategory badges, rule chips, the date picker). Those all show a pointer
+   cursor or are form controls, which is a truer test than a list of classes. */
+function isRowChrome(el) {
+  if (!(el instanceof Element)) return false;
+  if (el.closest('input, select, textarea, button, a, label')) return true;
+  return getComputedStyle(el).cursor === 'pointer';
+}
+
 // Memoized table row. Non-editing rows receive referentially stable props
 // (editing-only state is null/empty unless this row is being edited), so a
 // category edit — which only changes the edited transaction object — re-renders
 // just that one row instead of the whole visible page.
 const TransactionRow = memo(function TransactionRow({
-  t, i, selectedIds, visibleColumns, categoryRules, subcategoryRules, transactionNotes, accountNicknames, editingId, editingSubId, newCategoryText, manageCategoriesMode, renamingCategory, renameText, showHiddenCategories, subSearchText, categoryOptions, hiddenCategoryList, transactions, dropdownRef, subDropdownRef, findMatchingRules, toggleSelect, setEditingRule, setEditingId, setNewCategoryText, setManageCategoriesMode, setRenamingCategory, setRenameText, setShowHiddenCategories, handleCategorySelect, removeCategoryRule, flashSaved, updateTransactionCategory, renameCategory, removeCategory, unhideCategory, setEditingSubId, setSubSearchText, handleSubcategorySelect, removeSubcategoryRule, addSubcategoryRule, updateTransactionDate, updateTransactionNote, setAccountNickname, toggleHideTransaction, splitTag, tagForSplit, untagSplit,
+  t, i, selectedIds, visibleColumns, categoryRules, subcategoryRules, transactionNotes, accountNicknames, editingId, editingSubId, newCategoryText, manageCategoriesMode, renamingCategory, renameText, showHiddenCategories, subSearchText, categoryOptions, hiddenCategoryList, transactions, dropdownRef, subDropdownRef, findMatchingRules, toggleSelect, setEditingRule, setEditingId, setNewCategoryText, setManageCategoriesMode, setRenamingCategory, setRenameText, setShowHiddenCategories, handleCategorySelect, removeCategoryRule, flashSaved, updateTransactionCategory, renameCategory, removeCategory, unhideCategory, setEditingSubId, setSubSearchText, handleSubcategorySelect, removeSubcategoryRule, addSubcategoryRule, updateTransactionDate, updateTransactionNote, setAccountNickname, toggleHideTransaction, splitTag, tagForSplit, untagSplit, onExplainCard,
 }) {
   const icon = getCategoryIcon(t.category);
   const color = catColor(t.category || 'Uncategorized');
@@ -671,7 +683,14 @@ const TransactionRow = memo(function TransactionRow({
     if (res.ok) flashSaved();
   };
   return (
-    <tr className={selectedIds.has(t.transactionId) ? styles.selectedRow : ''}>
+    <tr
+      className={selectedIds.has(t.transactionId) ? styles.selectedRow : ''}
+      onDoubleClick={e => {
+        if (isRowChrome(e.target)) return;
+        window.getSelection?.()?.removeAllRanges();
+        onExplainCard(t);
+      }}
+    >
       <td>
         <input
           type="checkbox"
@@ -1406,7 +1425,7 @@ function RentCollisionNotice({ collisions, onMove, onDismiss }) {
 }
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, splitTags, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View, rentDupeDismissed, cardPromos, promoTags } = useData();
+  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, splitTags, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View, rentDupeDismissed, cardPromos, promoTags, cardMap } = useData();
   const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, tagForSplit, untagSplit, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns, setActiveTxnView, setShowAccounts, setPareto8020View, dismissRentCollision, setPromoTagForTransactions } = useDataActions();
   // Run over every transaction, not the filtered view — a rent clash is a fact
   // about the ledger and shouldn't disappear because the search box is narrow.
@@ -1433,6 +1452,9 @@ export function TransactionsPage() {
   const [pendingRulePattern, setPendingRulePattern] = useState('');
   const [pendingSubRule, setPendingSubRule] = useState(null);
   const [pendingSubRulePattern, setPendingSubRulePattern] = useState('');
+  // The transaction whose "was this the right card?" popup is open.
+  const [cardChoiceTxn, setCardChoiceTxn] = useState(null);
+  const closeCardChoice = useCallback(() => setCardChoiceTxn(null), []);
   const [editingRule, setEditingRule] = useState(null); // { catRules: [...], subRules: [...], txnDescription }
   const [editingAccountName, setEditingAccountName] = useState(null);
   const [editingAccountText, setEditingAccountText] = useState('');
@@ -3633,6 +3655,7 @@ export function TransactionsPage() {
                     splitTag={splitTags[t.transactionId]}
                     tagForSplit={tagForSplit}
                     untagSplit={untagSplit}
+                    onExplainCard={setCardChoiceTxn}
                     editingId={isCatRow ? editingId : null}
                     editingSubId={isSubRow ? editingSubId : null}
                     newCategoryText={isCatRow ? newCategoryText : ''}
@@ -3961,6 +3984,20 @@ export function TransactionsPage() {
       })()}
 
       {/* Edit Rules Dialog */}
+      {cardChoiceTxn && (() => {
+        // Same account → card resolution as the Card Promotions tab: an
+        // explicit mapping wins, otherwise guess from the name or nickname.
+        const acct = cardChoiceTxn.account || '';
+        const shown = (accountGroups && accountGroups[acct]) || (accountNicknames && accountNicknames[acct]) || acct;
+        return (
+          <CardChoiceModal
+            txn={cardChoiceTxn}
+            usedKey={(cardMap && cardMap[acct]) || detectCardKey(acct, shown)}
+            accountName={shown}
+            onClose={closeCardChoice}
+          />
+        );
+      })()}
       {editingRule && (() => {
         const inputStyle = {
           width: '100%', boxSizing: 'border-box', padding: '8px 12px',

@@ -10,6 +10,7 @@ import {
   SEED_PROMOS, isPromoCompleted, promoHasAutoMatch, promoIsTracked, autoUsedForPromo,
   matchingTransactions, periodWindowStart, nextResetDate, lastUsedFor,
 } from '../lib/cardPromos';
+import CardChoiceModal from '../components/CardChoiceModal';
 
 function fmt(n) {
   if (n == null || n === '') return '—';
@@ -816,6 +817,8 @@ export function CardPromosPage() {
    added — not a loss on the rewards already earned. */
 function SuboptimalCharges({ result, cardMap, setCardForAccount, displayName }) {
   const [showAll, setShowAll] = useState(false);
+  const [explaining, setExplaining] = useState(null); // flag whose "why?" popup is open
+  const closeExplain = useCallback(() => setExplaining(null), []);
   const { flagged, totalMissed, totalCharges, evaluatedCount, unknownAccounts, start, end } = result;
   const cardStyle = { background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' };
   const th = { padding: '8px 10px', textAlign: 'left', fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', borderBottom: '1px solid var(--border-ghost)', whiteSpace: 'nowrap' };
@@ -840,7 +843,7 @@ function SuboptimalCharges({ result, cardMap, setCardForAccount, displayName }) 
             Suboptimal Card Usage
           </div>
           <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-            Charges from the last 30 days ({windowLabel}) where another card would have paid more.
+            Charges from the last 30 days ({windowLabel}) where another card would have paid more. Double-click a row for why.
           </div>
         </div>
         {evaluatedCount > 0 && (
@@ -885,7 +888,7 @@ function SuboptimalCharges({ result, cardMap, setCardForAccount, displayName }) 
               </thead>
               <tbody>
                 {rows.map(f => (
-                  <tr key={f.id}>
+                  <tr key={f.id} onDoubleClick={() => setExplaining(f)} title="Double-click for why" style={{ cursor: 'pointer' }}>
                     <td style={{ ...td, color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>{shortDate(f.date)}</td>
                     <td style={{ ...td, fontWeight: 600 }} title={displayName(f.account) || f.account}>{f.description}</td>
                     <td style={{ ...td, color: 'var(--color-text-tertiary)' }}>{f.categoryLabel}</td>
@@ -946,6 +949,15 @@ function SuboptimalCharges({ result, cardMap, setCardForAccount, displayName }) 
         Rates come from the table below, valuing Chase points at {POINT_VALUE_CENTS}¢ and assuming BofA's 3% choice category is {BOFA_CHOICE}.
         Transfers, card payments, rent, investments, and fees are excluded, as are misses worth under 25¢.
       </div>
+
+      {explaining && (
+        <CardChoiceModal
+          txn={explaining.txn}
+          usedKey={explaining.usedKey}
+          accountName={displayName(explaining.account)}
+          onClose={closeExplain}
+        />
+      )}
     </div>
   );
 }
