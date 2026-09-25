@@ -810,6 +810,10 @@ export function DataProvider({ children }) {
   const [syncing, setSyncing] = useState(false);
   const [configHydrated, setConfigHydrated] = useState(false);
   const [error, setError] = useState(null);
+  // A failed refresh while cached numbers are on screen. Kept apart from
+  // `error`, which replaces the page, so the chrome can say the tap did not
+  // land instead of quietly showing the old data as if it were current.
+  const [syncError, setSyncError] = useState(null);
   const [lastSync, setLastSync] = useState(initialCache?.lastSync ? new Date(initialCache.lastSync) : null);
 
   // ── Firestore real-time sync of all per-user categorization state ──────
@@ -1226,18 +1230,26 @@ export function DataProvider({ children }) {
     hasUsableDataRef.current = rawTransactions.length > 0 || !!rawBalances;
   }, [rawTransactions, rawBalances]);
 
+  // Each load takes a ticket; only the newest may write. The mount load and a
+  // tap (or a resume) can overlap, and a slow earlier response landing last
+  // would otherwise put older rows back on screen after the newer ones.
+  const loadSeqRef = useRef(0);
+
   const loadData = useCallback(async () => {
     // If we already have data in memory (from cache), prefer a non-blocking
     // refresh so the UI stays interactive. The "loading" gate is reserved
     // for truly cold loads with nothing to show.
+    const seq = ++loadSeqRef.current;
     setSyncing(true);
     setError(null);
+    setSyncError(null);
     try {
       const [txns, bal, hist] = await Promise.all([
         fetchTransactions(),
         fetchBalances(),
         fetchBalanceHistory(),
       ]);
+      if (seq !== loadSeqRef.current) return;
       const syncedAt = new Date();
       setRawTransactions(txns);
       setRawBalances(bal);
@@ -1250,14 +1262,19 @@ export function DataProvider({ children }) {
         lastSync: syncedAt.toISOString(),
       });
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       console.error('Failed to load sheet data:', err);
       // Only surface the error to consumers when we have nothing else to
       // show. With SWR cached data already on screen, a transient sync
-      // failure shouldn't replace real numbers with an error page.
+      // failure shouldn't replace real numbers with an error page — but it
+      // is still reported, so the old numbers are not mistaken for new ones.
       if (!hasUsableDataRef.current) setError(err.message);
+      else setSyncError(err.message);
     } finally {
-      setDataLoading(false);
-      setSyncing(false);
+      if (seq === loadSeqRef.current) {
+        setDataLoading(false);
+        setSyncing(false);
+      }
     }
   }, []);
 
@@ -2400,6 +2417,7 @@ export function DataProvider({ children }) {
     loading,
     syncing,
     error,
+    syncError,
     lastSync,
     categoryRules,
     subcategoryRules,
@@ -2458,6 +2476,7 @@ export function DataProvider({ children }) {
     loading,
     syncing,
     error,
+    syncError,
     lastSync,
     categoryRules,
     subcategoryRules,
