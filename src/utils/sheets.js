@@ -6,7 +6,10 @@ async function fetchSheet(tabName, range) {
     throw new Error('Missing VITE_SHEETS_API_KEY or VITE_SHEETS_SHEET_ID — set them in .env (and in Vercel env vars for deployments).');
   }
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(tabName)}!${range}?key=${API_KEY}`;
-  const res = await fetch(url);
+  // no-store: the sync button has to reach the sheet, not the browser's HTTP
+  // cache. Installed iOS web apps in particular will hand back an earlier copy
+  // of an identical GET, which made a tap look like it fetched nothing new.
+  const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Sheets API error: ${res.status}`);
   const data = await res.json();
   return data.values || [];

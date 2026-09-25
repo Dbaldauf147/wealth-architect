@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { reviewStats } from '../lib/reviewQueue';
 import { ReviewTab } from './ReviewTab';
@@ -26,6 +26,7 @@ const SORT_KEY = 'mobileReviewSort';
 const ASK_SUB_KEY = 'mobileAskSubcategory';
 const BADGE_KEY = 'mobileHomeBadge';
 const BADGE_ASKED_KEY = 'mobileHomeBadgeAsked';
+const RESUME_SYNC_MS = 2 * 60 * 1000;
 
 function readHashTab() {
   const hash = window.location.hash.replace(/^#/, '');
@@ -58,7 +59,7 @@ export function MobileApp() {
     try { return localStorage.getItem(BADGE_ASKED_KEY) === '1'; } catch { return true; }
   });
   const [installEvent, setInstallEvent] = useState(null);
-  const { transactions, loading, syncing, error, lastSync } = useData();
+  const { transactions, loading, syncing, error, syncError, lastSync } = useData();
   const { refresh } = useDataActions();
 
   // Safe-area insets only resolve when the viewport opts into the notch with
@@ -154,6 +155,26 @@ export function MobileApp() {
   );
   const busy = loading || syncing;
 
+  /* Sync again when the app comes back to the front.
+
+     The sheet is only read on mount, and an installed app is rarely mounted:
+     iOS keeps it suspended for days and resumes it where it was, so without
+     this it shows whatever the sheet held the last time it was cold-started.
+     Throttled so flicking between apps doesn't spend Sheets quota. */
+  const resumeRef = useRef({ refresh, busy, lastSync });
+  useEffect(() => { resumeRef.current = { refresh, busy, lastSync }; }, [refresh, busy, lastSync]);
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      const { refresh: run, busy: running, lastSync: last } = resumeRef.current;
+      if (running) return;
+      if (last && Date.now() - new Date(last).getTime() < RESUME_SYNC_MS) return;
+      run();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
+
   /* Write the backlog onto the icon whenever it moves.
 
      iOS has no periodic background sync, so this is the only moment the count
@@ -240,6 +261,16 @@ export function MobileApp() {
             >
               <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
             </button>
+          </div>
+        )}
+
+        {!error && syncError && !busy && (
+          <div className={styles.install} style={{ background: 'rgba(186,26,26,0.08)', color: 'var(--color-error)' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 19 }}>cloud_off</span>
+            <span>
+              Couldn't reach the sheet ({String(syncError)}).
+              {lastSync ? ` Showing data from ${new Date(lastSync).toLocaleString()}.` : ''}
+            </span>
           </div>
         )}
 
