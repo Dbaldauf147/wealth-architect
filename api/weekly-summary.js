@@ -113,6 +113,9 @@ function inTodayInZone(zone = 'America/New_York') {
 export default async function handler(req, res) {
   try {
     const isTest = req.query?.test === '1' || req.query?.test === 'true';
+    // "Send Weekly Email" in the app: the real email, sent now rather than on
+    // the configured day. Same content and subject as the cron's.
+    const isManual = req.query?.manual === '1' || req.query?.manual === 'true';
     const recipientOverride = req.body?.recipient;
 
     // Firestore config (synced from the website). Read first so the send-day
@@ -125,8 +128,8 @@ export default async function handler(req, res) {
     // Monday reports the one that ended the previous night.
     const config = await fetchCategoryConfig();
 
-    // Cron-invoked calls come as GET from Vercel. If not a test, gate on day-of-week.
-    if (!isTest) {
+    // Cron-invoked calls come as GET from Vercel. Unless sent by hand, gate on day-of-week.
+    if (!isTest && !isManual) {
       const configuredDay = ((config && config.weeklyEmailDay) || process.env.WEEKLY_EMAIL_DAY || 'mon').toLowerCase().slice(0, 3);
       const configuredIdx = DAY_MAP[configuredDay] ?? 0;
       const todayIdx = inTodayInZone(process.env.WEEKLY_EMAIL_TZ || 'America/New_York');

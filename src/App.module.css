@@ -309,6 +309,46 @@
   font-size: 15px;
 }
 
+.sendEmailBtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: 1px solid rgba(198, 198, 205, 0.7);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.sendEmailBtn:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+}
+
+.sendEmailBtn:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.sendEmailBtn :global(.material-symbols-outlined) {
+  font-size: 15px;
+}
+
+.sendEmailOk {
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.sendEmailErr {
+  color: var(--color-error);
+  border-color: var(--color-error);
+}
+
 .headerIcons {
   display: flex;
   align-items: center;
@@ -475,7 +515,29 @@
     flex: 1;
   }
 
-  .newEntryBtn span:not(.material-symbols-outlined) {
+  /* :global — a CSS module would otherwise rename the icon class, and the
+     :not() would then hide the icon along with the label. */
+  .newEntryBtn span:not(:global(.material-symbols-outlined)),
+  .sendEmailBtn span:not(:global(.material-symbols-outlined)) {
+    display: none;
+  }
+
+  .sendEmailBtn {
+    padding: 5px 8px;
+  }
+
+  /* On a narrow screen the search box gives up width, not the buttons —
+     otherwise they squash to slivers. */
+  .newEntryBtn {
+    flex-shrink: 0;
+  }
+
+  .searchInput {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .headerSpacer {
     display: none;
   }
 

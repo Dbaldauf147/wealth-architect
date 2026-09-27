@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, lazy, Suspense, Component } from 'react';
 import styles from './App.module.css';
+import { loadEmailPrefs, sendWeeklyEmail } from './lib/weeklyEmailClient';
 
 function UpdatePill() {
   const [updateAvailable, setUpdateAvailable] = useState(false);
@@ -169,6 +170,41 @@ function getHashView() {
   return hash || 'overview';
 }
 
+/* Sends last week's summary email now — the one the cron sends on the day set
+   in Settings — to the recipient set there. Asks first, since it goes out
+   for real, then reports how it went on the button itself. */
+function SendWeeklyEmailButton() {
+  const [status, setStatus] = useState(null); // null | 'sending' | 'ok' | 'err'
+  const [detail, setDetail] = useState('');
+
+  async function send() {
+    if (status === 'sending') return;
+    const { recipient } = loadEmailPrefs();
+    if (!window.confirm(`Send last week's spending summary to ${recipient}?`)) return;
+    setStatus('sending');
+    const r = await sendWeeklyEmail({ recipient });
+    setStatus(r.ok ? 'ok' : 'err');
+    setDetail(r.ok ? `Sent to ${r.to}` : `Send failed: ${r.error}`);
+    setTimeout(() => { setStatus(null); setDetail(''); }, r.ok ? 4000 : 8000);
+  }
+
+  const icon = { sending: 'hourglass_empty', ok: 'check_circle', err: 'error' }[status] || 'forward_to_inbox';
+  const label = { sending: 'Sending…', ok: 'Sent', err: 'Failed' }[status] || 'Send Weekly Email';
+  return (
+    <button
+      type="button"
+      className={`${styles.sendEmailBtn} ${status === 'ok' ? styles.sendEmailOk : ''} ${status === 'err' ? styles.sendEmailErr : ''}`}
+      onClick={send}
+      disabled={status === 'sending'}
+      title={detail || "Email last week's spending summary now, to the recipient set in Settings"}
+      aria-live="polite"
+    >
+      <span className="material-symbols-outlined">{icon}</span>
+      <span>{label}</span>
+    </button>
+  );
+}
+
 export function App() {
   const [view, setView] = useState(getHashView);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -305,6 +341,8 @@ export function App() {
               placeholder="Search transactions..."
             />
           </div>
+
+          <SendWeeklyEmailButton />
 
           <button className={styles.newEntryBtn}>
             <span className="material-symbols-outlined">add</span>
