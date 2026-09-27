@@ -4,6 +4,7 @@ import { buildWeeklySummary, lastCompletedWeek } from '../lib/weeklySummary';
 import { renderWeeklyEmailHtml, WEEKLY_EMAIL_SECTIONS } from '../lib/renderWeeklyEmail';
 import { previewPaymentReminder, renderPaymentReminderHtml, paymentWorkbookFilename } from '../lib/paymentReminder';
 import { spendByWindow, bandsFor } from '../lib/normalRange';
+import { loadEmailPrefs, saveEmailPrefs, sendWeeklyEmail } from '../lib/weeklyEmailClient';
 import styles from './SettingsPage.module.css';
 
 function relTime(date) {
@@ -18,22 +19,6 @@ function relTime(date) {
 }
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-function loadEmailPrefs() {
-  try {
-    return {
-      recipient: 'baldaufdan@gmail.com',
-      sendDay: 'Sun',
-      ...JSON.parse(localStorage.getItem('weeklyEmailPrefs') || '{}'),
-    };
-  } catch {
-    return { recipient: 'baldaufdan@gmail.com', sendDay: 'Sun' };
-  }
-}
-
-function saveEmailPrefs(prefs) {
-  localStorage.setItem('weeklyEmailPrefs', JSON.stringify(prefs));
-}
 
 export function SettingsPage() {
   const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay, rangeExcludedCategories, cardPromos } = useData();
@@ -110,17 +95,8 @@ export function SettingsPage() {
 
   async function sendTest() {
     setSendStatus('sending');
-    try {
-      const res = await fetch('/api/weekly-summary?test=1', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recipient: emailPrefs.recipient }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setSendStatus('ok');
-    } catch {
-      setSendStatus('err');
-    }
+    const r = await sendWeeklyEmail({ recipient: emailPrefs.recipient, test: true });
+    setSendStatus(r.ok ? 'ok' : 'err');
     setTimeout(() => setSendStatus(null), 4000);
   }
 
