@@ -114,3 +114,43 @@ describe('dates in the email', () => {
     expect(body[0]).toBe('not a date');
   });
 });
+
+describe('Card Promotions section', () => {
+  const promo = (over = {}) => ({
+    id: 'p', card: 'Chase Sapphire Reserve', name: 'Priority Pass Select', period: 'annual',
+    color: null, value: 469, used: 0, remaining: 469, completed: false, completedAt: null,
+    tracked: false, matchCount: 0, taggedCount: 0, lastTransaction: null, ...over,
+  });
+  const promos = (items) => ({
+    cardPromos: {
+      totalValue: 0, totalUsed: 0, remaining: 0, pct: 0, count: items.length,
+      completedCount: items.filter(i => i.completed).length, items, moreCount: 0,
+    },
+  });
+  const rowText = (html, name) => {
+    const i = html.indexOf(name);
+    return html.slice(html.lastIndexOf('<tr>', i), html.indexOf('</tr>', i)).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  };
+
+  it('marks a promo ticked off on the page as done, with the day', () => {
+    const html = render('cardPromos', promos([promo({ completed: true, completedAt: '2026-09-20', used: 469, remaining: 0 })]));
+    const row = rowText(html, 'Priority Pass Select');
+    expect(row).toContain('Marked done Sep 20, 2026');
+    expect(row).toContain('Done');
+    expect(row).not.toContain('Tracked by hand');
+    expect(html).toContain('1 marked done');
+  });
+
+  it('does not call a promo with no value set "Fully used"', () => {
+    const html = render('cardPromos', promos([promo({ name: '$150 in Dining', value: 0, remaining: 0 })]));
+    const row = rowText(html, '$150 in Dining');
+    expect(row).toContain('No value set');
+    expect(row).not.toContain('Fully used');
+    expect(row).not.toContain('Done');
+  });
+
+  it('still reports a credit used up by charges as fully used', () => {
+    const html = render('cardPromos', promos([promo({ used: 469, remaining: 0, tracked: true })]));
+    expect(rowText(html, 'Priority Pass Select')).toContain('Fully used');
+  });
+});
