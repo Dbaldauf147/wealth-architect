@@ -318,6 +318,7 @@ export function summarizeCardPromos({ promos, transactions, asOf = new Date(), l
   const tagCounts = promoTagCounts(promoTags);
   const rows = list.map((p) => {
     const value = Number(p.value) || 0;
+    const completed = isPromoCompleted(p, asOf);
     const used = effectiveUsedFor(p, transactions, asOf, promoTags);
     const matches = matchingTransactions(p, transactions, promoTags);
     const last = matches[0] || null;
@@ -333,7 +334,9 @@ export function summarizeCardPromos({ promos, transactions, asOf = new Date(), l
       // Never report more used than the promo is worth — a $300 credit with
       // $900 of matching travel is used up, not 300% used.
       remaining: Math.max(0, value - Math.min(used, value)),
-      completed: isPromoCompleted(p, asOf),
+      completed,
+      // The day it was ticked off, for "Marked done Sep 20" in the email.
+      completedAt: completed ? (p.completedAt || null) : null,
       tracked: promoIsTracked(p, promoTags),
       matchCount: matches.length,
       taggedCount: tagCounts[p.id] || 0,

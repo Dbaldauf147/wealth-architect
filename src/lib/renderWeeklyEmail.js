@@ -474,7 +474,10 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
     const promoRows = cardPromos.items.map(item => {
       const capped = Math.min(item.used, item.value);
       const pct = item.value > 0 ? Math.min(100, Math.round((capped / item.value) * 100)) : 0;
-      const done = item.remaining <= 0;
+      // Marked done on the page, or used up by matching charges. A promo with
+      // no dollar value set has nothing remaining, but it isn't "used" either.
+      const done = item.completed || (item.value > 0 && item.remaining <= 0);
+      const noValue = !done && !(item.value > 0);
       const barColor = done ? '#16a34a' : (item.color || '#0058be');
       const last = item.lastTransaction;
 
@@ -483,7 +486,9 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
       // never been used, and one whose last hit predates the current cycle is
       // the case actually worth flagging.
       let lastLine;
-      if (!last) {
+      if (item.completed) {
+        lastLine = `<span style="color:#16a34a;font-weight:600;">&#10003; Marked done${item.completedAt ? ` ${shortDate(item.completedAt)}` : ''}</span>`;
+      } else if (!last) {
         lastLine = item.tracked ? 'No matching charge yet' : 'Tracked by hand — no match rule set';
       } else {
         const acct = last.account ? ` · ${escapeHtml(last.account)}` : '';
@@ -496,16 +501,18 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
       return `
             <tr>
               <td style="padding:8px 8px 8px 0;vertical-align:top;">
-                <div style="font-size:12.5px;font-weight:600;color:#111;">${escapeHtml(item.name)}</div>
+                <div style="font-size:12.5px;font-weight:600;color:#111;">${item.completed ? '<span style="color:#16a34a;">&#10003;</span> ' : ''}${escapeHtml(item.name)}</div>
                 <div style="font-size:11px;color:#94a3b8;margin-top:2px;">${escapeHtml(item.card)} · ${escapeHtml(item.period)}</div>
                 <div style="font-size:11px;color:#64748b;margin-top:4px;">${lastLine}</div>
               </td>
               <td style="padding:8px 0;vertical-align:top;text-align:right;white-space:nowrap;width:156px;">
-                <div style="font-size:12.5px;font-weight:700;color:#111;font-variant-numeric:tabular-nums;">${money(capped)} <span style="color:#64748b;font-weight:400;">of ${money(item.value)}</span></div>
+                ${noValue
+                  ? '<div style="font-size:11px;color:#94a3b8;">No value set</div>'
+                  : `<div style="font-size:12.5px;font-weight:700;color:#111;font-variant-numeric:tabular-nums;">${money(capped)} <span style="color:#64748b;font-weight:400;">of ${money(item.value)}</span></div>
                 <div style="background:#f1f5f9;border-radius:4px;height:6px;overflow:hidden;margin-top:6px;">
-                  <div style="background:${barColor};height:6px;width:${Math.max(pct, 2)}%;"></div>
+                  <div style="background:${barColor};height:6px;width:${done ? 100 : Math.max(pct, 2)}%;"></div>
                 </div>
-                <div style="font-size:11px;color:${done ? '#16a34a' : '#64748b'};margin-top:4px;">${done ? 'Fully used' : money(item.remaining) + ' left'}</div>
+                <div style="font-size:11px;color:${done ? '#16a34a' : '#64748b'};margin-top:4px;">${item.completed ? 'Done' : done ? 'Fully used' : money(item.remaining) + ' left'}</div>`}
               </td>
             </tr>`;
     }).join('');
