@@ -7,6 +7,7 @@ import { InsightsTab } from './InsightsTab';
 import { SearchTab } from './SearchTab';
 import { SplitsTab } from './SplitsTab';
 import { RulesTab } from './RulesTab';
+import { loadEmailPrefs, sendWeeklyEmail } from '../lib/weeklyEmailClient';
 import { applyBadge, clearBadge, badgeBlocker, requestBadgePermission } from './appBadge';
 import styles from './MobileApp.module.css';
 
@@ -155,6 +156,21 @@ export function MobileApp() {
   );
   const busy = loading || syncing;
 
+  /* Same send as the desktop header's "Send Weekly Email": last week's summary,
+     now, to the recipient set in Settings. A phone has no tooltips, so the
+     outcome is a banner under the header rather than a hover title. */
+  const [emailSend, setEmailSend] = useState(null); // null | { state: 'sending'|'ok'|'err', text }
+  const sendEmail = useCallback(async () => {
+    const { recipient } = loadEmailPrefs();
+    if (!window.confirm(`Send last week's spending summary to ${recipient}?`)) return;
+    setEmailSend({ state: 'sending', text: `Sending the weekly email to ${recipient}…` });
+    const r = await sendWeeklyEmail({ recipient });
+    setEmailSend(r.ok
+      ? { state: 'ok', text: `Weekly email sent to ${r.to}.` }
+      : { state: 'err', text: `Weekly email failed: ${r.error}` });
+    setTimeout(() => setEmailSend(null), r.ok ? 4000 : 8000);
+  }, []);
+
   /* Sync again when the app comes back to the front.
 
      The sheet is only read on mount, and an installed app is rarely mounted:
@@ -211,6 +227,17 @@ export function MobileApp() {
         </button>
         <button
           className={styles.iconBtn}
+          onClick={sendEmail}
+          disabled={emailSend?.state === 'sending'}
+          aria-label="Send weekly email"
+          title="Send weekly email"
+        >
+          <span className={`material-symbols-outlined ${emailSend?.state === 'sending' ? styles.spin : ''}`}>
+            {emailSend?.state === 'sending' ? 'progress_activity' : 'forward_to_inbox'}
+          </span>
+        </button>
+        <button
+          className={styles.iconBtn}
           onClick={() => go(tab === 'rules' ? 'review' : 'rules')}
           aria-label={tab === 'rules' ? 'Back to reviewing' : 'Rules'}
           title={tab === 'rules' ? 'Back to reviewing' : 'Rules'}
@@ -261,6 +288,21 @@ export function MobileApp() {
             >
               <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
             </button>
+          </div>
+        )}
+
+        {emailSend && (
+          <div
+            className={styles.install}
+            role="status"
+            style={emailSend.state === 'err'
+              ? { background: 'rgba(186,26,26,0.08)', color: 'var(--color-error)' }
+              : emailSend.state === 'ok' ? { background: 'rgba(0,150,104,0.08)', color: 'var(--color-success)' } : undefined}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 19 }}>
+              {emailSend.state === 'err' ? 'error' : emailSend.state === 'ok' ? 'check_circle' : 'forward_to_inbox'}
+            </span>
+            <span>{emailSend.text}</span>
           </div>
         )}
 
