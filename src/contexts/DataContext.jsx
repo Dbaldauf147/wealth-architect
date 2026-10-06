@@ -247,6 +247,11 @@ const loadCardMap = () => {
 };
 const saveCardMap = (v) => saveJSON('cardMap', v);
 
+// Statement closing day per card account (1–31), set on the Transactions
+// page's Statement column when the estimate from payments is wrong.
+const loadStatementCloseDays = () => loadJSON('statementCloseDays', {}) || {};
+const saveStatementCloseDays = (v) => saveJSON('statementCloseDays', v);
+
 // Card promotions — the credits each card gives back. Same story as cardMap
 // above: these lived in localStorage, written straight from CardPromosPage, so
 // the weekly-email cron (which reads Firestore, not a browser) had no way to
@@ -469,6 +474,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.accountNicknames, remote.accountNicknames],
     [merged.accountGroups, remote.accountGroups],
     [merged.cardMap, remote.cardMap],
+    [merged.statementCloseDays, remote.statementCloseDays],
     [merged.promoTags, remote.promoTags],
     [merged.assetClasses, remote.assetClasses],
     [merged.netWorthCategories, remote.netWorthCategories],
@@ -554,6 +560,7 @@ function readLocalConfig() {
     accountNicknames: loadAccountNicknames(),
     accountGroups: loadAccountGroups(),
     cardMap: loadCardMap(),
+    statementCloseDays: loadStatementCloseDays(),
     cardPromos: loadCardPromos(),
     promoTags: loadPromoTags(),
     assetClasses: loadAssetClasses(),
@@ -606,6 +613,7 @@ function mergeConfig(remote, locals) {
     accountNicknames: unionMap(locals.accountNicknames, remote.accountNicknames),
     accountGroups: unionMap(locals.accountGroups, remote.accountGroups),
     cardMap: unionMap(locals.cardMap, remote.cardMap),
+    statementCloseDays: unionMap(locals.statementCloseDays, remote.statementCloseDays),
     cardPromos: locals.cardPromos || remote.cardPromos || null,
     promoTags: unionMap(locals.promoTags, remote.promoTags),
     assetClasses: unionMap(locals.assetClasses, remote.assetClasses),
@@ -670,6 +678,7 @@ function buildSyncPayload(v) {
     accountNicknames: v.accountNicknames,
     accountGroups: v.accountGroups,
     cardMap: v.cardMap,
+    statementCloseDays: v.statementCloseDays,
     cardPromos: v.cardPromos ?? null,
     promoTags: v.promoTags,
     assetClasses: v.assetClasses,
@@ -778,6 +787,7 @@ export function DataProvider({ children }) {
   const [accountNicknames, setAccountNicknames] = useState(loadAccountNicknames);
   const [accountGroups, setAccountGroups] = useState(loadAccountGroups);
   const [cardMap, setCardMapState] = useState(loadCardMap);
+  const [statementCloseDays, setStatementCloseDaysState] = useState(loadStatementCloseDays);
   const [cardPromos, setCardPromosState] = useState(loadCardPromos);
   const [promoTags, setPromoTags] = useState(loadPromoTags);
   const [assetClasses, setAssetClasses] = useState(loadAssetClasses);
@@ -846,6 +856,7 @@ export function DataProvider({ children }) {
     setAccountNicknames(m.accountNicknames); saveAccountNicknames(m.accountNicknames);
     setAccountGroups(m.accountGroups); saveAccountGroups(m.accountGroups);
     setCardMapState(m.cardMap); saveCardMap(m.cardMap);
+    setStatementCloseDaysState(m.statementCloseDays || {}); saveStatementCloseDays(m.statementCloseDays || {});
     setCardPromosState(m.cardPromos); saveCardPromos(m.cardPromos);
     setPromoTags(m.promoTags); savePromoTags(m.promoTags);
     setAssetClasses(m.assetClasses); saveAssetClasses(m.assetClasses);
@@ -979,7 +990,7 @@ export function DataProvider({ children }) {
     if (!syncHydrated.current) return;
     const currentConfig = {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
-      transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, cardPromos, promoTags, assetClasses,
+      transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, statementCloseDays, cardPromos, promoTags, assetClasses,
       netWorthCategories, netWorthLiquidCategories, netWorthPrefs, customAssets,
       customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, splitwisePrefs, weeklyEmailSections, weeklyEmailDay,
       customCategories, hiddenCategories, rangeExcludedCategories, rangeExcludedSeeded, shortTermLoan, robinhoodTrades, organizedCategories,
@@ -1018,6 +1029,7 @@ export function DataProvider({ children }) {
     accountNicknames,
     accountGroups,
     cardMap,
+    statementCloseDays,
     cardPromos,
     promoTags,
     assetClasses,
@@ -1441,6 +1453,20 @@ export function DataProvider({ children }) {
       if (cardKey) next[accountName] = cardKey;
       else delete next[accountName];
       saveCardMap(next);
+      return next;
+    });
+  }, []);
+
+  // Set a card account's statement closing day, or clear it (falsy) to go
+  // back to the estimate.
+  const setStatementCloseDay = useCallback((accountName, day) => {
+    if (!accountName) return;
+    setStatementCloseDaysState(prev => {
+      const next = { ...prev };
+      const d = Math.round(Number(day));
+      if (d >= 1 && d <= 31) next[accountName] = d;
+      else delete next[accountName];
+      saveStatementCloseDays(next);
       return next;
     });
   }, []);
@@ -2234,9 +2260,12 @@ export function DataProvider({ children }) {
       ? { ...scrambleAccountMaps({ accountNicknames, accountNumbers, accountGroups, assetClasses, netWorthCategories, netWorthLiquidCategories }, scrambler),
           cardMap: Object.fromEntries(
             Object.entries(cardMap || {}).map(([k, v]) => [scrambler.accountName(k), v]),
+          ),
+          statementCloseDays: Object.fromEntries(
+            Object.entries(statementCloseDays || {}).map(([k, v]) => [scrambler.accountName(k), v]),
           ) }
-      : { accountNicknames, accountNumbers, accountGroups, assetClasses, netWorthCategories, netWorthLiquidCategories, cardMap }),
-    [accountNicknames, accountNumbers, accountGroups, assetClasses, netWorthCategories, netWorthLiquidCategories, cardMap, scrambler],
+      : { accountNicknames, accountNumbers, accountGroups, assetClasses, netWorthCategories, netWorthLiquidCategories, cardMap, statementCloseDays }),
+    [accountNicknames, accountNumbers, accountGroups, assetClasses, netWorthCategories, netWorthLiquidCategories, cardMap, statementCloseDays, scrambler],
   );
   const shownHiddenCards = useMemo(
     () => (scrambler ? scrambleHiddenCards(hiddenCards, scrambler) : hiddenCards),
@@ -2329,6 +2358,7 @@ export function DataProvider({ children }) {
     untagSplit,
     setAccountNickname,
     setCardForAccount,
+    setStatementCloseDay,
     setCardPromos,
     setPromoTagForTransactions,
     clearPromoTagsFor,
@@ -2401,6 +2431,7 @@ export function DataProvider({ children }) {
     untagSplit,
     setAccountNickname,
     setCardForAccount,
+    setStatementCloseDay,
     setCardPromos,
     setPromoTagForTransactions,
     clearPromoTagsFor,
@@ -2490,6 +2521,7 @@ export function DataProvider({ children }) {
     accountNumbers: shownMaps.accountNumbers,
     accountGroups: shownMaps.accountGroups,
     cardMap: shownMaps.cardMap,
+    statementCloseDays: shownMaps.statementCloseDays,
     cardPromos: cardPromos ?? SEED_PROMOS,
     promoTags,
     assetClasses: shownMaps.assetClasses,

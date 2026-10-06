@@ -6,6 +6,7 @@ import {
 } from '../lib/categories';
 import { findRentCollisions, txnKey } from '../lib/rentDuplicates';
 import { detectCardKey } from '../lib/cardRewards';
+import { statementLookup, statementLabel, ordinal, txnKey as statementKey } from '../lib/statementWindows';
 import CardChoiceModal from '../components/CardChoiceModal';
 import styles from './TransactionsPage.module.css';
 
@@ -636,6 +637,63 @@ function findRecurring(transactions) {
     }));
 }
 
+/* Set the day a card's statement closes, which decides the Statement column
+   for every charge on it. "Use the estimate" clears the override. */
+function StatementDayModal({ account, accountName, card, setDay, onSave, onClose }) {
+  const [day, setDayDraft] = useState(String(setDay || card.day || 1));
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const estimate = card.source === 'estimated'
+    ? `Estimated from payments: the ${ordinal(card.day)} (it explains ${card.hits} of ${card.tested} payments to within a couple of dollars).`
+    : card.source === 'set' && !setDay
+      ? ''
+      : setDay
+        ? 'You set this. Clear it to go back to the estimate from payments.'
+        : "Couldn't be estimated from this card's payments — look up the closing date on a statement.";
+  return (
+    <div
+      onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+    >
+      <div role="dialog" aria-modal="true" aria-labelledby="stmt-day-title" data-testid="statement-day-modal"
+        style={{ background: 'var(--color-surface)', borderRadius: 'var(--radius-xl)', boxShadow: 'var(--shadow-lg)', width: 'min(420px, 100%)', padding: 20 }}>
+        <div id="stmt-day-title" style={{ fontFamily: 'var(--font-headline)', fontSize: 16, fontWeight: 700, marginBottom: 2 }}>Statement closing day</div>
+        <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', marginBottom: 14, overflowWrap: 'anywhere' }} title={account}>{accountName}</div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5 }}>
+          Closes on the
+          <select value={day} onChange={e => setDayDraft(e.target.value)} aria-label="Closing day"
+            style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid rgba(198, 198, 205, 0.7)', fontSize: 13.5, background: 'var(--color-surface)' }}>
+            {Array.from({ length: 31 }, (_, i) => i + 1).map(n => <option key={n} value={n}>{ordinal(n)}</option>)}
+          </select>
+          of each month
+        </label>
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 10, lineHeight: 1.5 }}>
+          {estimate} A charge lands on the first statement that closes on or after its date; in months without that day, the last day of the month.
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16, flexWrap: 'wrap' }}>
+          {setDay && (
+            <button type="button" onClick={() => onSave(null)}
+              style={{ marginRight: 'auto', background: 'none', border: 'none', color: 'var(--color-secondary)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+              Use the estimate
+            </button>
+          )}
+          <button type="button" onClick={onClose}
+            style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid rgba(198, 198, 205, 0.7)', background: 'var(--color-surface)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+            Cancel
+          </button>
+          <button type="button" onClick={() => onSave(Number(day))}
+            style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: 'var(--color-secondary)', color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* A double-click on a row opens the "right card?" popup — unless it landed on
    something the row already uses clicks for (inputs, the category and
    subcategory badges, rule chips, the date picker). Those all show a pointer
@@ -651,7 +709,7 @@ function isRowChrome(el) {
 // category edit — which only changes the edited transaction object — re-renders
 // just that one row instead of the whole visible page.
 const TransactionRow = memo(function TransactionRow({
-  t, i, selectedIds, visibleColumns, categoryRules, subcategoryRules, transactionNotes, accountNicknames, editingId, editingSubId, newCategoryText, manageCategoriesMode, renamingCategory, renameText, showHiddenCategories, subSearchText, categoryOptions, hiddenCategoryList, transactions, dropdownRef, subDropdownRef, findMatchingRules, toggleSelect, setEditingRule, setEditingId, setNewCategoryText, setManageCategoriesMode, setRenamingCategory, setRenameText, setShowHiddenCategories, handleCategorySelect, removeCategoryRule, flashSaved, updateTransactionCategory, renameCategory, removeCategory, unhideCategory, setEditingSubId, setSubSearchText, handleSubcategorySelect, removeSubcategoryRule, addSubcategoryRule, updateTransactionDate, updateTransactionNote, setAccountNickname, toggleHideTransaction, splitTag, tagForSplit, untagSplit, onExplainCard,
+  t, i, selectedIds, visibleColumns, categoryRules, subcategoryRules, transactionNotes, accountNicknames, editingId, editingSubId, newCategoryText, manageCategoriesMode, renamingCategory, renameText, showHiddenCategories, subSearchText, categoryOptions, hiddenCategoryList, transactions, dropdownRef, subDropdownRef, findMatchingRules, toggleSelect, setEditingRule, setEditingId, setNewCategoryText, setManageCategoriesMode, setRenamingCategory, setRenameText, setShowHiddenCategories, handleCategorySelect, removeCategoryRule, flashSaved, updateTransactionCategory, renameCategory, removeCategory, unhideCategory, setEditingSubId, setSubSearchText, handleSubcategorySelect, removeSubcategoryRule, addSubcategoryRule, updateTransactionDate, updateTransactionNote, setAccountNickname, toggleHideTransaction, splitTag, tagForSplit, untagSplit, onExplainCard, statement, onEditStatement,
 }) {
   const icon = getCategoryIcon(t.category);
   const color = catColor(t.category || 'Uncategorized');
@@ -1205,6 +1263,19 @@ const TransactionRow = memo(function TransactionRow({
           />
         </div>
       </td>}
+      {visibleColumns.has('statement') && <td className={styles.statementCell}>
+        {statement && (
+          <button
+            type="button"
+            className={styles.statementBtn}
+            title={`${statement.title} Click to change the closing day.`}
+            onClick={() => onEditStatement(t.account)}
+          >
+            <div className={statement.muted ? styles.statementMuted : styles.statementMain}>{statement.main}</div>
+            {statement.sub && <div className={styles.statementSub}>{statement.sub}</div>}
+          </button>
+        )}
+      </td>}
       <td>
         <div className={styles.rowActions}>
           {canSplit && (
@@ -1425,8 +1496,8 @@ function RentCollisionNotice({ collisions, onMove, onDismiss }) {
 }
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, splitTags, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View, rentDupeDismissed, cardPromos, promoTags, cardMap } = useData();
-  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, tagForSplit, untagSplit, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns, setActiveTxnView, setShowAccounts, setPareto8020View, dismissRentCollision, setPromoTagForTransactions } = useDataActions();
+  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, splitTags, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View, rentDupeDismissed, cardPromos, promoTags, cardMap, statementCloseDays } = useData();
+  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, tagForSplit, untagSplit, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns, setActiveTxnView, setShowAccounts, setPareto8020View, dismissRentCollision, setPromoTagForTransactions, setStatementCloseDay } = useDataActions();
   // Run over every transaction, not the filtered view — a rent clash is a fact
   // about the ledger and shouldn't disappear because the search box is narrow.
   const rentCollisions = useMemo(
@@ -1493,6 +1564,7 @@ export function TransactionsPage() {
     notes: '',
     institution: '',
     account: '',
+    statement: '',
   });
   const ALL_COLUMNS = [
     { key: 'merchant', label: 'Merchant' },
@@ -1504,18 +1576,26 @@ export function TransactionsPage() {
     { key: 'notes', label: 'Notes' },
     { key: 'institution', label: 'Institution' },
     { key: 'account', label: 'Account' },
+    { key: 'statement', label: 'Statement' },
   ];
   // visibleColumns is synced via DataContext as an array of keys, or null =
   // "show all". Derive the Set the rest of the page expects, defaulting to all.
-  const visibleColumns = useMemo(
-    () => (Array.isArray(visibleColumnsRaw) ? new Set(visibleColumnsRaw) : new Set(ALL_COLUMNS.map(c => c.key))),
-    [visibleColumnsRaw], // eslint-disable-line react-hooks/exhaustive-deps
-  );
+  //
+  // Statement arrived after most column lists were saved, so a list without it
+  // shows it anyway. Hiding it writes a '!statement' marker instead, which is
+  // the only way to tell "hidden on purpose" from "saved before it existed".
+  const visibleColumns = useMemo(() => {
+    if (!Array.isArray(visibleColumnsRaw)) return new Set(ALL_COLUMNS.map(c => c.key));
+    const set = new Set(visibleColumnsRaw);
+    if (!set.has('!statement')) set.add('statement');
+    return set;
+  }, [visibleColumnsRaw]); // eslint-disable-line react-hooks/exhaustive-deps
   const [columnPickerOpen, setColumnPickerOpen] = useState(false);
   const columnPickerRef = useRef(null);
   const toggleColumn = (key) => {
     const next = new Set(visibleColumns);
     if (next.has(key)) { if (next.size > 1) next.delete(key); } else next.add(key);
+    if (next.has('statement')) next.delete('!statement'); else next.add('!statement');
     setVisibleColumns([...next]);
   };
   const resizingColRef = useRef(null);
@@ -1644,7 +1724,7 @@ export function TransactionsPage() {
     setSearchQuery(view.searchQuery ?? '');
     setColumnFilters(view.columnFilters || {
       merchant: '', description: '', category: '', subcategory: '',
-      amount: '', date: '', notes: '', institution: '', account: '',
+      amount: '', date: '', notes: '', institution: '', account: '', statement: '',
     });
     setNoSubOnly(!!view.noSubOnly);
     setDateFrom(view.dateFrom || '');
@@ -1761,7 +1841,7 @@ export function TransactionsPage() {
     setSearchQuery('');
     setColumnFilters({
       merchant: '', description: '', category: '', subcategory: '',
-      amount: '', date: '', notes: '', institution: '', account: '',
+      amount: '', date: '', notes: '', institution: '', account: '', statement: '',
     });
     setNoSubOnly(false);
     setDateFrom('');
@@ -1776,6 +1856,32 @@ export function TransactionsPage() {
      interrupt it if you keep typing). */
   const deferredSearch = useDeferredValue(searchQuery);
   const deferredColumnFilters = useDeferredValue(columnFilters);
+  // Which card statement each charge landed on: each card's closing day (set
+  // by the user, or estimated from its payments) decides the cycle a charge
+  // falls in (lib/statementWindows). Labels are built once here so memoized
+  // rows get the same object back on every render. A card whose closing day
+  // couldn't be estimated gets a prompt to set one instead of a guess.
+  const statements = useMemo(
+    () => statementLookup(transactions, statementCloseDays),
+    [transactions, statementCloseDays],
+  );
+  const statementLabels = useMemo(() => {
+    const out = new Map();
+    for (const [k, info] of statements.byTxn) out.set(k, statementLabel(info));
+    const needsDay = { main: 'Set closing day', sub: '', muted: true, sortKey: '', title: "This card's statement closing day couldn't be estimated from its payments." };
+    const unplaced = new Set([...statements.cards].filter(([, c]) => !c.day).map(([a]) => a));
+    if (unplaced.size) {
+      for (const t of transactions) {
+        if (unplaced.has((t.account || '').trim())) out.set(statementKey(t), needsDay);
+      }
+    }
+    return out;
+  }, [statements, transactions]);
+  const [editingStatementAcct, setEditingStatementAcct] = useState(null);
+  const statementText = useCallback((t) => {
+    const l = statementLabels.get(statementKey(t));
+    return l ? `${l.main} ${l.sub}` : '';
+  }, [statementLabels]);
   const deferredNotes = useDeferredValue(transactionNotes);
 
   /* Filtered + sorted transactions */
@@ -1848,7 +1954,8 @@ export function TransactionsPage() {
         (cf.date ? formatDate(t.date).toLowerCase().includes(cf.date.toLowerCase()) || String(t.date || '').includes(cf.date) : true) &&
         matchText(deferredNotes[t.transactionId] || '', cf.notes) &&
         matchText(t.institution, cf.institution) &&
-        matchText(t.account, cf.account)
+        matchText(t.account, cf.account) &&
+        (cf.statement ? matchText(statementText(t), cf.statement) : true)
       );
     }
     if (noSubOnly) {
@@ -1869,12 +1976,13 @@ export function TransactionsPage() {
         case 'account': cmp = (a.account || '').localeCompare(b.account || ''); break;
         case 'subcategory': cmp = (a.subcategory || '').localeCompare(b.subcategory || ''); break;
         case 'institution': cmp = (a.institution || '').localeCompare(b.institution || ''); break;
+        case 'statement': cmp = (statementLabels.get(statementKey(a))?.sortKey || '0').localeCompare(statementLabels.get(statementKey(b))?.sortKey || '0'); break;
         default: cmp = 0;
       }
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return sorted;
-  }, [transactions, activeAccount, deferredSearch, includedCategories, includedSubcategories, selectedMonth, deferredColumnFilters, sortCol, sortDir, deferredNotes, noSubOnly, uncatRecentOnly, dateFrom, dateTo]);
+  }, [transactions, activeAccount, deferredSearch, includedCategories, includedSubcategories, selectedMonth, deferredColumnFilters, sortCol, sortDir, deferredNotes, noSubOnly, uncatRecentOnly, dateFrom, dateTo, statementLabels, statementText]);
 
   const paginated = useMemo(
     () => filtered.slice(0, (page + 1) * PAGE_SIZE),
@@ -3567,6 +3675,7 @@ export function TransactionsPage() {
                   { key: 'notes', placeholder: 'Filter notes' },
                   { key: 'institution', placeholder: 'Filter institution' },
                   { key: 'account', placeholder: 'Filter account' },
+                  { key: 'statement', placeholder: 'e.g. Sep 3, current' },
                 ].filter(c => visibleColumns.has(c.key)).map(col => (
                   <th key={col.key} style={{ padding: '4px 8px', background: 'var(--color-surface)' }}>
                     <input
@@ -3597,7 +3706,7 @@ export function TransactionsPage() {
                   {Object.values(columnFilters).some(v => v) && (
                     <button
                       onClick={() => {
-                        setColumnFilters({ merchant: '', description: '', category: '', subcategory: '', amount: '', date: '', institution: '', account: '' });
+                        setColumnFilters({ merchant: '', description: '', category: '', subcategory: '', amount: '', date: '', institution: '', account: '', statement: '' });
                         setPage(0);
                       }}
                       title="Clear all column filters"
@@ -3656,6 +3765,8 @@ export function TransactionsPage() {
                     tagForSplit={tagForSplit}
                     untagSplit={untagSplit}
                     onExplainCard={setCardChoiceTxn}
+                    statement={statementLabels.get(statementKey(t))}
+                    onEditStatement={setEditingStatementAcct}
                     editingId={isCatRow ? editingId : null}
                     editingSubId={isSubRow ? editingSubId : null}
                     newCategoryText={isCatRow ? newCategoryText : ''}
@@ -3984,6 +4095,16 @@ export function TransactionsPage() {
       })()}
 
       {/* Edit Rules Dialog */}
+      {editingStatementAcct && (
+        <StatementDayModal
+          account={editingStatementAcct}
+          accountName={accountNicknames[editingStatementAcct] || editingStatementAcct}
+          card={statements.cards.get(editingStatementAcct.trim()) || { day: null, source: null }}
+          setDay={statementCloseDays?.[editingStatementAcct.trim()] || null}
+          onSave={day => { setStatementCloseDay(editingStatementAcct.trim(), day); setEditingStatementAcct(null); flashSaved(); }}
+          onClose={() => setEditingStatementAcct(null)}
+        />
+      )}
       {cardChoiceTxn && (() => {
         // Same account → card resolution as the Card Promotions tab: an
         // explicit mapping wins, otherwise guess from the name or nickname.
