@@ -3,6 +3,7 @@ import { useData, useDataActions } from '../contexts/DataContext';
 import { buildCardSchedule } from '../lib/cardSchedule';
 import { computeCardLookback } from '../lib/cashflowExport';
 import { comparePaymentForCard, buildChargeSheets, buildPaymentHistory } from '../lib/paymentReconcile';
+import { resolveCloseDay, ordinal } from '../lib/statementWindows';
 import { downloadXlsx } from '../lib/xlsx';
 import styles from './CardsPage.module.css';
 
@@ -17,6 +18,53 @@ function fmtDate(d) {
 }
 
 // YYYY-MM-DD from the date's own calendar components, for filenames that sort.
+function fmtCents(n) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n || 0);
+}
+
+/* How a payment's "Actual" side relates to the statement behind it: hover
+   text for the figure, and a short note under it when they don't tie out.
+   Closing-day statements say how far off they are; run-matched ones can only
+   say whether they matched. */
+function actualTip(act) {
+  if (act.basis === 'closeDay') {
+    return act.matched
+      ? "The statement's charges sum exactly to the payment — download them"
+      : `The statement's charges total ${fmtCents(act.total)} — download them`;
+  }
+  return act.matched
+    ? 'These charges sum exactly to the payment — download them'
+    : 'No run of charges sums to this payment, so the export is what it covered rather than the statement';
+}
+
+function actualNote(act) {
+  if (act.matched) return null;
+  if (act.basis !== 'closeDay') {
+    return {
+      text: 'unreconciled',
+      title: "The charges we can see don't add up to this payment, so the export is a best effort rather than the statement.",
+    };
+  }
+  const gap = fmtCents(Math.abs(act.drift));
+  if (act.near) {
+    return {
+      text: `off by ${gap}`,
+      title: `The statement's charges total ${fmtCents(act.total)}, ${gap} ${act.drift > 0 ? 'under' : 'over'} the payment — most likely interest, a fee or a credit that never reached the sheet.`,
+    };
+  }
+  return {
+    text: `charges ${fmt(act.total)}`,
+    title: `The statement's charges total ${fmtCents(act.total)}, so this payment wasn't the statement balance — a balance carried over, a partial or extra payment, or charges missing from the sheet.`,
+  };
+}
+
+function closeDayTitle(close) {
+  if (!close || !close.day) return '';
+  return close.source === 'set'
+    ? `Closes on the ${ordinal(close.day)} — set on the Transactions page's Statement column.`
+    : `Closes on the ${ordinal(close.day)} — estimated from this card's payments (${close.hits} of ${close.tested} match). Change it from the Transactions page's Statement column.`;
+}
+
 function fmtDateKey(d) {
   if (!d) return '';
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -56,7 +104,7 @@ function parseAccountName(s) {
 }
 
 export function CardsPage() {
-  const { transactions, balances, accountNicknames, accountNumbers, accountGroups, loading, hiddenCards, paymentReminders } = useData();
+  const { transactions, balances, accountNicknames, accountNumbers, accountGroups, loading, hiddenCards, paymentReminders, statementCloseDays } = useData();
   const { setAccountNickname, toggleHideCard } = useDataActions();
   const [view, setView] = useState('schedule');
   const [scheduleView, setScheduleView] = useState('calendar');
@@ -183,6 +231,30 @@ export function CardsPage() {
     return out;
   }, [transactions, cardLookup]);
 
+  /* Each card's statement closing day, decided the way the Transactions page's
+     Statement column decides it: the day set there, else the estimate from the
+     card's payments. Set days are keyed by the raw account name, so they're
+     looked up through the same name matching as cardTransactions. */
+  const closeDays = useMemo(() => {
+    const { byFull, byDigits, ambiguousDigits } = cardLookup;
+    const setFor = new Map();
+    for (const [raw, day] of Object.entries(statementCloseDays || {})) {
+      const { full, digits } = parseAccountName(raw);
+      const canonical = byFull.get(full) || (digits && !ambiguousDigits.has(digits) ? byDigits.get(digits) : null);
+      if (canonical && !setFor.has(canonical)) setFor.set(canonical, day);
+    }
+    const byCard = new Map();
+    for (const t of cardTransactions) {
+      if (!byCard.has(t.account)) byCard.set(t.account, []);
+      byCard.get(t.account).push(t);
+    }
+    const out = new Map();
+    for (const card of creditCards) {
+      out.set(card.name, resolveCloseDay({ transactions: byCard.get(card.name) || [], setDay: setFor.get(card.name) }));
+    }
+    return out;
+  }, [cardTransactions, creditCards, cardLookup, statementCloseDays]);
+
   // Spending by card account (only expenses, i.e. negative amounts)
   const spendByCard = useMemo(() => {
     const map = {};
@@ -290,10 +362,10 @@ export function CardsPage() {
       const recorded = lastKey
         ? (paymentReminders || []).find(r => r.card === card.name && r.dateKey === lastKey) || null
         : null;
-      out.set(card.name, comparePaymentForCard({ transactions: txs, recorded }));
+      out.set(card.name, comparePaymentForCard({ transactions: txs, recorded, closeDay: closeDays.get(card.name)?.day }));
     }
     return out;
-  }, [cardTransactions, creditCards, paymentReminders]);
+  }, [cardTransactions, creditCards, paymentReminders, closeDays]);
 
   /* One downloader for both tables: the schedule row and every history row are
      the same question asked of a different payment. */
@@ -309,11 +381,17 @@ export function CardsPage() {
       }
       : {
         'Payment date': fmtDateFull(side.date),
-        'Reconciled': side.matched
-          ? (side.anchored
-            ? 'Yes — these charges sum to the payment'
-            : 'Yes — these charges sum to the payment, but the window does not follow on from the previous statement')
-          : 'No — no run of charges sums to this payment',
+        'Reconciled': side.basis === 'closeDay'
+          ? (side.matched
+            ? "Yes — the statement's charges sum to the payment"
+            : side.near
+              ? `Nearly — the statement's charges are ${fmtCents(Math.abs(side.drift))} ${side.drift > 0 ? 'under' : 'over'} the payment (interest or fees not in the sheet)`
+              : `No — the statement's charges total ${fmtCents(side.total)}; the payment wasn't the statement balance`)
+          : side.matched
+            ? (side.anchored
+              ? 'Yes — these charges sum to the payment'
+              : 'Yes — these charges sum to the payment, but the window does not follow on from the previous statement')
+            : 'No — no run of charges sums to this payment',
         'Statement opened': side.openDate ? fmtDateFull(side.openDate) : '',
         'Statement closed': side.closeDate ? fmtDateFull(side.closeDate) : '',
         'Charges skipped before the window': (side.skipped || []).length || '',
@@ -348,13 +426,14 @@ export function CardsPage() {
     const rows = [];
     for (const card of creditCards) {
       const recorded = (paymentReminders || []).filter(r => r.card === card.name);
-      for (const row of buildPaymentHistory({ transactions: byCard.get(card.name) || [], recorded })) {
-        rows.push({ ...row, card: card.name, color: card.color || null });
+      const close = closeDays.get(card.name);
+      for (const row of buildPaymentHistory({ transactions: byCard.get(card.name) || [], recorded, closeDay: close?.day })) {
+        rows.push({ ...row, card: card.name, color: card.color || null, close });
       }
     }
     rows.sort((a, b) => b.date - a.date);
     return rows;
-  }, [cardTransactions, creditCards, paymentReminders]);
+  }, [cardTransactions, creditCards, paymentReminders, closeDays]);
 
   // ── Look-back view data ─────  // ── Look-back view data ───────────────────────────────────────────────────
   // The retrospective mirror of the Schedule's "charges since last payment":
@@ -1193,10 +1272,7 @@ export function CardsPage() {
                           <td>
                             {act ? (
                               <>
-                                {figureButton('actual', act.amount, (act.charges || []).length > 0,
-                                  act.matched
-                                    ? 'These charges sum exactly to the payment — download them'
-                                    : 'Statement window could not be recovered, so these charges do not sum to the payment')}
+                                {figureButton('actual', act.amount, (act.charges || []).length > 0, actualTip(act))}
                                 {cmp.variance != null && Math.abs(cmp.variance) >= 1 && (
                                   <div
                                     className={styles.figureNote}
@@ -1206,9 +1282,9 @@ export function CardsPage() {
                                     {cmp.variance > 0 ? '+' : '−'}{fmt(Math.abs(cmp.variance))}
                                   </div>
                                 )}
-                                {!act.matched && (
-                                  <div className={styles.figureNote} title="The charges we can see don't add up to this payment, so the export is a best effort rather than the statement.">
-                                    unreconciled
+                                {actualNote(act) && (
+                                  <div className={styles.figureNote} title={actualNote(act).title}>
+                                    {actualNote(act).text}
                                   </div>
                                 )}
                               </>
@@ -1312,7 +1388,7 @@ export function CardsPage() {
       <div className={styles.matrixCard}>
         <div className={styles.matrixTitle}>Payment History</div>
         <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', margin: '-4px 0 12px' }}>
-          Every payment that has posted, newest first. Each figure downloads the charges behind it.
+          Every payment that has posted, newest first. Each figure downloads the charges behind it. A payment's statement is the cycle ending on the card's closing day — set it from the Statement column on Transactions.
         </div>
         <table className={styles.matrixTable}>
           <thead>
@@ -1370,9 +1446,7 @@ export function CardsPage() {
                     type="button"
                     className={styles.figureBtn}
                     disabled={(h.actual.charges || []).length === 0}
-                    title={h.actual.matched
-                      ? 'These charges sum exactly to the payment — download them'
-                      : 'No run of charges sums to this payment, so the export is what it covered rather than the statement'}
+                    title={actualTip(h.actual)}
                     onClick={() => downloadFigure(h.card, 'actual', h.actual)}
                   >
                     {fmt(h.actual.amount)}
@@ -1380,9 +1454,9 @@ export function CardsPage() {
                       <span className="material-symbols-outlined" style={{ fontSize: 13 }}>download</span>
                     )}
                   </button>
-                  {!h.actual.matched && (
-                    <div className={styles.figureNote} title="The charges we can see don't add up to this payment, so the export is a best effort rather than the statement.">
-                      unreconciled
+                  {actualNote(h.actual) && (
+                    <div className={styles.figureNote} title={actualNote(h.actual).title}>
+                      {actualNote(h.actual).text}
                     </div>
                   )}
                 </td>
@@ -1397,7 +1471,11 @@ export function CardsPage() {
                 </td>
                 <td style={{ color: 'var(--color-text-secondary)' }}>{(h.actual.charges || []).length}</td>
                 <td style={{ color: 'var(--color-text-secondary)', whiteSpace: 'nowrap', fontSize: 12 }}>
-                  {h.actual.matched ? (
+                  {h.actual.basis === 'closeDay' ? (
+                    <span title={closeDayTitle(h.close)}>
+                      {fmtDate(h.actual.openDate)} – {fmtDate(h.actual.closeDate)}
+                    </span>
+                  ) : h.actual.matched ? (
                     <>
                       {fmtDate(h.actual.openDate)} – {fmtDate(h.actual.closeDate)}
                       {!h.actual.anchored && (
