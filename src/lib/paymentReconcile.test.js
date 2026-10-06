@@ -303,3 +303,54 @@ describe('buildPaymentHistory', () => {
     expect(buildPaymentHistory({ transactions: [buy('2026-08-01', -20)] })).toEqual([]);
   });
 });
+
+describe('with a known statement closing day', () => {
+  // Closes the 15th, autopays the 11th. The August statement is 33¢ short of
+  // its payment — interest the sheet never saw — and a stray double payment in
+  // between would have broken run-matching's chain for everything after it.
+  const txns = [
+    buy('2026-06-16', -100, 'Jul A'), buy('2026-07-15', -50, 'Jul B'),
+    pay('2026-08-11', 150),
+    buy('2026-07-16', -200, 'Aug A'), buy('2026-08-15', -10, 'Aug B'),
+    pay('2026-09-11', 210.33),
+    buy('2026-08-16', -70, 'Sep A'), buy('2026-09-10', -500, 'Sep big'),
+    pay('2026-10-11', 400),
+  ];
+  const rows = buildPaymentHistory({ transactions: txns, closeDay: 15 });
+  const byDate = Object.fromEntries(rows.map(r => [r.dateKey, r.actual]));
+
+  it('takes each payment\'s charges from its statement cycle', () => {
+    const jul = byDate['2026-08-11'];
+    expect(jul.basis).toBe('closeDay');
+    expect(jul.openDate).toEqual(new Date(2026, 5, 16));
+    expect(jul.closeDate).toEqual(new Date(2026, 6, 15));
+    expect(jul.charges.map(c => c.description)).toEqual(['Jul A', 'Jul B']);
+    expect(jul.matched).toBe(true);
+  });
+
+  it('calls a few cents of drift near, not matched', () => {
+    const aug = byDate['2026-09-11'];
+    expect(aug.total).toBe(210);
+    expect(aug.drift).toBe(0.33);
+    expect(aug.matched).toBe(false);
+    expect(aug.near).toBe(true);
+  });
+
+  it('reports a payment that is not the statement balance as far off', () => {
+    const sep = byDate['2026-10-11'];
+    expect(sep.total).toBe(570);
+    expect(sep.near).toBe(false);
+    expect(sep.drift).toBe(-170);
+  });
+
+  it('gives the schedule row the same answer as the history', () => {
+    const r = comparePaymentForCard({ transactions: txns, closeDay: 15 });
+    expect(r.actual.closeDate).toEqual(new Date(2026, 8, 15));
+    expect(r.actual.total).toBe(570);
+  });
+
+  it('falls back to run-matching without a closing day', () => {
+    const [latest] = buildPaymentHistory({ transactions: txns });
+    expect(latest.actual.basis).toBe('runMatch');
+  });
+});

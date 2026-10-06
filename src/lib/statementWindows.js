@@ -16,49 +16,17 @@
 
    Pure: no React, no DOM. "Now" arrives as an argument. */
 import { paymentsOf, chargesOf } from './paymentReconcile.js';
+import { closeOnOrAfter, closePaidBy, previousClose, startOfDay } from './closeDates.js';
+
+export { closeOnOrAfter, closePaidBy };
 
 /** Same key the rest of the app uses for a transaction. */
 export function txnKey(t) {
   return t.transactionId || `${t.date}|${t.description}|${t.amount}`;
 }
 
-// A statement is paid at least this many days after it closes (US law gives
-// 21; autopay usually runs on the due date). Used to tell which close a
-// payment was for.
-const MIN_CLOSE_TO_PAY_DAYS = 20;
-// …and a payment this long after the close no longer counts as paying it.
+// A payment this long after a close no longer counts as paying it.
 const MAX_CLOSE_TO_PAY_DAYS = 45;
-
-/** Day `day` of the month (y, m), clamped so the 31st is the 30th in April. */
-function closeIn(y, m, day) {
-  const last = new Date(y, m + 1, 0).getDate();
-  return new Date(y, m, Math.min(day, last));
-}
-
-function startOfDay(d) {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
-}
-
-/** The first close on or after `date`. */
-export function closeOnOrAfter(date, day) {
-  const d = startOfDay(date);
-  const here = closeIn(d.getFullYear(), d.getMonth(), day);
-  return here >= d ? here : closeIn(d.getFullYear(), d.getMonth() + 1, day);
-}
-
-/** The close before `close`. */
-function previousClose(close, day) {
-  return closeIn(close.getFullYear(), close.getMonth() - 1, day);
-}
-
-/** The close a payment on `date` was paying: the latest one at least
- *  MIN_CLOSE_TO_PAY_DAYS before it. */
-export function closePaidBy(date, day) {
-  const limit = startOfDay(date);
-  limit.setDate(limit.getDate() - MIN_CLOSE_TO_PAY_DAYS);
-  const here = closeIn(limit.getFullYear(), limit.getMonth(), day);
-  return here <= limit ? here : closeIn(limit.getFullYear(), limit.getMonth() - 1, day);
-}
 
 const dayKey = d => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 
@@ -106,6 +74,22 @@ export function estimateCloseDay(payments, charges) {
 }
 
 /**
+ * A card's closing day: the one the user set, else the estimate from its
+ * payments. Pass `transactions` (one card's) or the already-split `payments`
+ * and `charges`.
+ * @returns { day, source: 'set'|'estimated'|null, hits?, tested? } — day is
+ *   null when it's neither set nor estimable.
+ */
+export function resolveCloseDay({ transactions, payments, charges, setDay }) {
+  const set = Math.round(Number(setDay)) || 0;
+  if (set >= 1 && set <= 31) return { day: set, source: 'set' };
+  const est = estimateCloseDay(payments || paymentsOf(transactions), charges || chargesOf(transactions));
+  return est
+    ? { day: est.day, source: 'estimated', hits: est.hits, tested: est.tested }
+    : { day: null, source: null };
+}
+
+/**
  * @param transactions  every transaction (non-card accounts are skipped)
  * @param closeDays     { [account]: day } set by the user; wins over the estimate
  * @param asOf          "now"
@@ -140,17 +124,9 @@ export function statementLookup(transactions, closeDays = {}, asOf = new Date())
     if (!set && payments.length < 2) continue;
     const charges = chargesOf(txs);
 
-    let day = null;
-    let card;
-    if (set >= 1 && set <= 31) {
-      day = set;
-      card = { day, source: 'set' };
-    } else {
-      const est = estimateCloseDay(payments, charges);
-      day = est ? est.day : null;
-      card = est ? { day, source: 'estimated', hits: est.hits, tested: est.tested } : { day: null, source: null };
-    }
+    const card = resolveCloseDay({ payments, charges, setDay: set });
     cards.set(acct, card);
+    const { day } = card;
     if (!day) continue;
 
     // Which payment paid which close.

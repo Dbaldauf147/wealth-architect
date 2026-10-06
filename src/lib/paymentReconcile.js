@@ -16,7 +16,16 @@
    export headed "the charges that add up to this" has to actually add up.
 
    Pure: no React, no DOM, no network, and every "now" arrives as an argument.
+
+   When the card's statement closing day is known (set on the Transactions
+   page, or estimated by statementWindows.js), that wins over all of the
+   above: the statement a payment paid is simply the cycle ending on the close
+   at least 20 days before it. Run-matching is kept for cards with no closing
+   day. On a real ledger it rarely matches — one double payment or a 33¢ fee
+   that never reached the sheet breaks the chain for every later statement —
+   which is why the closing day comes first.
 */
+import { cyclePaidBy } from './closeDates.js';
 
 /* A bare "2026-08-15" is parsed as UTC midnight by `new Date`, which in any
    western timezone renders and exports as the 14th. The dates here end up in a
@@ -197,6 +206,42 @@ export function reconcilePayments({ payments, charges, tolerance = 0.01 }) {
   return out;
 }
 
+/** The statement a payment paid, from the card's closing day: the charges
+ *  in the cycle, what they total, and how far that is from the payment.
+ *
+ *  `matched` keeps its meaning from run-matching — the charges sum to the
+ *  payment to the cent — so the UI and the export treat both alike. `near`
+ *  is the useful middle ground: within a couple of dollars, which is interest
+ *  or a fee the sheet never saw rather than the wrong window. */
+export function statementForPayment({ payment, charges, closeDay, tolerance = 0.01 }) {
+  const { openDate, closeDate } = cyclePaidBy(payment._date, closeDay);
+  const end = new Date(closeDate.getFullYear(), closeDate.getMonth(), closeDate.getDate() + 1);
+  const window = (charges || []).filter(c => c._date >= openDate && c._date < end);
+  const total = owedFor(window);
+  const drift = round2(payment.amount - total);
+  return {
+    payment,
+    charges: window,
+    total,
+    drift,
+    matched: Math.abs(drift) <= tolerance,
+    near: Math.abs(drift) <= Math.max(2, payment.amount * 0.005),
+    anchored: true,
+    skipped: [],
+    openDate,
+    closeDate,
+    basis: 'closeDay',
+  };
+}
+
+/** One explanation per payment: the statement cycle when the closing day is
+ *  known, run-matching otherwise. Same order as `payments`. */
+function explainPayments({ payments, charges, tolerance, closeDay }) {
+  if (closeDay) return payments.map(payment => statementForPayment({ payment, charges, closeDay, tolerance }));
+  return reconcilePayments({ payments, charges, tolerance })
+    .map(r => ({ ...r, drift: round2(r.payment.amount - r.total), near: r.matched, basis: 'runMatch' }));
+}
+
 /** Rebuild the figure the reminder email would have carried for one payment.
  *
  *  The email projects charges since the previous payment, as of the day before
@@ -241,14 +286,14 @@ export function reconstructExpected({ payment, prevPayment, charges }) {
  *  `{ amount, charges?, sentAt? }`. Present, it wins and the source reads
  *  'emailed'; absent, the reconstruction stands in and says so.
  */
-export function comparePaymentForCard({ transactions, recorded = null, tolerance = 0.01 }) {
+export function comparePaymentForCard({ transactions, recorded = null, tolerance = 0.01, closeDay = null }) {
   const payments = paymentsOf(transactions);
   const charges = chargesOf(transactions);
   if (payments.length === 0) {
     return { actual: null, expected: null, variance: null, reconciliation: [] };
   }
 
-  const reconciliation = reconcilePayments({ payments, charges, tolerance });
+  const reconciliation = explainPayments({ payments, charges, tolerance, closeDay });
   const last = reconciliation[reconciliation.length - 1];
   const prevPayment = payments.length > 1 ? payments[payments.length - 2] : null;
 
@@ -258,6 +303,12 @@ export function comparePaymentForCard({ transactions, recorded = null, tolerance
     charges: last.charges,
     total: last.total,
     matched: last.matched,
+    near: last.near,
+    drift: last.drift,
+    basis: last.basis,
+    anchored: last.anchored,
+    skipped: last.skipped,
+    openDate: last.openDate,
     closeDate: last.closeDate,
   };
 
@@ -299,12 +350,12 @@ export function comparePaymentForCard({ transactions, recorded = null, tolerance
  *  accumulating gets the sent figure for recent rows and a reconstruction for
  *  older ones.
  */
-export function buildPaymentHistory({ transactions, recorded = [], tolerance = 0.01 }) {
+export function buildPaymentHistory({ transactions, recorded = [], tolerance = 0.01, closeDay = null }) {
   const payments = paymentsOf(transactions);
   const charges = chargesOf(transactions);
   if (payments.length === 0) return [];
 
-  const reconciliation = reconcilePayments({ payments, charges, tolerance });
+  const reconciliation = explainPayments({ payments, charges, tolerance, closeDay });
   const byDate = new Map();
   for (const r of recorded || []) {
     if (r && r.dateKey) byDate.set(r.dateKey, r);
@@ -338,6 +389,9 @@ export function buildPaymentHistory({ transactions, recorded = [], tolerance = 0
         charges: r.charges,
         total: r.total,
         matched: r.matched,
+        near: r.near,
+        drift: r.drift,
+        basis: r.basis,
         anchored: r.anchored,
         skipped: r.skipped,
         closeDate: r.closeDate,
