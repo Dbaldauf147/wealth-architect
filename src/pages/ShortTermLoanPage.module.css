@@ -327,6 +327,123 @@
   padding: 6px 0;
 }
 
+/* ── Interest transactions (tag to loan / ignore) ── */
+.queueHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.queueSub {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.queueToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.queueNotice {
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-lg);
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.bulkBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.bulkCount {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-right: auto;
+}
+
+.bulkBar button:disabled,
+.linkBtn:disabled,
+.iconBtnPlain:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tableScroll {
+  overflow-x: auto;
+}
+
+.checkCol {
+  width: 28px;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.rowSelected td {
+  background: rgba(0, 88, 190, 0.05);
+}
+
+.rowActions {
+  text-align: right;
+  white-space: nowrap;
+  width: 76px;
+}
+
+.iconBtnPlain {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-lg);
+}
+
+.iconBtnPlain:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-surface-hover);
+}
+
+.ignoredBlock {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: var(--border-ghost);
+}
+
+.ignoredRow td {
+  color: var(--color-text-tertiary);
+}
+
+.linkBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-secondary);
+  cursor: pointer;
+}
+
 /* ── Responsive ── */
 @media (max-width: 900px) {
   .statGrid { grid-template-columns: repeat(2, 1fr); }

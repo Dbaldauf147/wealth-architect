@@ -15,6 +15,7 @@ import {
 import { normalizeEmailSections } from '../lib/renderWeeklyEmail';
 import { SEED_PROMOS } from '../lib/cardPromos';
 import { keepRentDismissals } from '../lib/rentDuplicates';
+import { paymentFromTransaction } from '../lib/loanInterest';
 import {
   normalizeExpenses as normalizeSplitwiseExpenses,
   summarizeBalances as summarizeSplitwiseBalances,
@@ -1698,6 +1699,47 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  // Tag interest charges from the ledger to the loan: each becomes a payment
+  // that remembers its transactionId (see lib/loanInterest). A charge already
+  // tagged is skipped, so a double click can't log it twice.
+  const tagLoanTransactions = useCallback((txns) => {
+    if (!Array.isArray(txns) || !txns.length) return;
+    setShortTermLoan(prev => {
+      if (!prev) return prev;
+      const have = new Set((prev.payments || []).map(p => p.transactionId).filter(Boolean));
+      const added = [];
+      for (const t of txns) {
+        const pay = paymentFromTransaction(t);
+        if (have.has(pay.transactionId)) continue;
+        have.add(pay.transactionId);
+        added.push({ id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, ...pay });
+      }
+      if (!added.length) return prev;
+      // Tagging something un-ignores it, in case it was ignored on another device.
+      const tagged = new Set(added.map(p => p.transactionId));
+      const next = {
+        ...prev,
+        payments: [...(prev.payments || []), ...added],
+        ignoredTransactionIds: (prev.ignoredTransactionIds || []).filter(id => !tagged.has(id)),
+      };
+      saveShortTermLoan(next);
+      return next;
+    });
+  }, []);
+
+  // Ignore (or restore) interest charges that aren't this loan's, by key.
+  const setLoanTransactionsIgnored = useCallback((keys, ignored) => {
+    if (!Array.isArray(keys) || !keys.length) return;
+    setShortTermLoan(prev => {
+      if (!prev) return prev;
+      const set = new Set(prev.ignoredTransactionIds || []);
+      for (const k of keys) { if (ignored) set.add(k); else set.delete(k); }
+      const next = { ...prev, ignoredTransactionIds: [...set] };
+      saveShortTermLoan(next);
+      return next;
+    });
+  }, []);
+
   // Replace (or clear, with null) the imported Robinhood trade set. The page
   // owns parsing and normalization; this just persists whatever it produced.
   const setRobinhoodTrades = useCallback((payload) => {
@@ -2309,6 +2351,8 @@ export function DataProvider({ children }) {
     clearLoan,
     addLoanPayment,
     removeLoanPayment,
+    tagLoanTransactions,
+    setLoanTransactionsIgnored,
     setRobinhoodTrades,
     setCategoryBucket,
     saveTxnView,
@@ -2379,6 +2423,8 @@ export function DataProvider({ children }) {
     clearLoan,
     addLoanPayment,
     removeLoanPayment,
+    tagLoanTransactions,
+    setLoanTransactionsIgnored,
     setRobinhoodTrades,
     setCategoryBucket,
     saveTxnView,

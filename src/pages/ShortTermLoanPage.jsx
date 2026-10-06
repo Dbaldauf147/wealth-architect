@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
+import { loanInterestQueue } from '../lib/loanInterest';
 import styles from './ShortTermLoanPage.module.css';
 
 // Currency with cents — interest amounts are small, so cents matter.
@@ -42,8 +43,8 @@ function dailyInterestOf(loan) {
 }
 
 export function ShortTermLoanPage() {
-  const { shortTermLoan } = useData();
-  const { saveLoanDetails, clearLoan, addLoanPayment, removeLoanPayment } = useDataActions();
+  const { shortTermLoan, transactions, privacyMode } = useData();
+  const { saveLoanDetails, clearLoan, addLoanPayment, removeLoanPayment, tagLoanTransactions, setLoanTransactionsIgnored } = useDataActions();
 
   const loan = shortTermLoan || null;
   const [editing, setEditing] = useState(false);
@@ -280,7 +281,16 @@ export function ShortTermLoanPage() {
                 <tr key={p.id}>
                   <td>{fmtDate(p.date)}</td>
                   <td className={styles.numCol}>{fmt(Number(p.amount) || 0)}</td>
-                  <td className={styles.noteCell}>{p.note || '—'}</td>
+                  <td className={styles.noteCell}>
+                    {p.transactionId && (
+                      <span
+                        className="material-symbols-outlined"
+                        title="Tagged from a transaction. Delete it to send the charge back to the list below."
+                        style={{ fontSize: 15, verticalAlign: -3, marginRight: 4, color: 'var(--color-text-tertiary)' }}
+                      >link</span>
+                    )}
+                    {p.note || '—'}
+                  </td>
                   <td className={styles.actionCol}>
                     <button className={styles.iconBtn} title="Delete payment" aria-label="Delete payment" onClick={() => removeLoanPayment(p.id)}>
                       <span className="material-symbols-outlined" style={{ fontSize: 18 }}>delete</span>
@@ -299,6 +309,165 @@ export function ShortTermLoanPage() {
           </table>
         )}
       </div>
+
+      <InterestTransactions
+        loan={loan}
+        transactions={transactions}
+        readOnly={privacyMode}
+        onTag={tagLoanTransactions}
+        onIgnore={setLoanTransactionsIgnored}
+      />
+    </div>
+  );
+}
+
+/* Charges categorized as interest, waiting to be tagged to the loan or
+   ignored. Tagged ones become payments above; ignored ones fold into a list
+   at the bottom where they can be restored. */
+function InterestTransactions({ loan, transactions, readOnly, onTag, onIgnore }) {
+  const [includeEarlier, setIncludeEarlier] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+  const [showIgnored, setShowIgnored] = useState(false);
+
+  const { pending, ignored, earlierCount } = useMemo(
+    () => loanInterestQueue({ transactions, loan, includeEarlier }),
+    [transactions, loan, includeEarlier],
+  );
+
+  // Only what's still on screen counts as selected — a row tagged or ignored
+  // (here or on another device) drops out of the selection with it.
+  const picked = pending.filter(t => selected.has(t.key));
+  const allPicked = pending.length > 0 && picked.length === pending.length;
+  const pickedTotal = picked.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0);
+
+  const toggle = key => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  const toggleAll = () => setSelected(allPicked ? new Set() : new Set(pending.map(t => t.key)));
+  const tag = rows => { onTag(rows); setSelected(new Set()); };
+  const ignore = rows => { onIgnore(rows.map(t => t.key), true); setSelected(new Set()); };
+  const anyTagged = (loan.payments || []).some(p => p.transactionId);
+
+  return (
+    <div className={styles.card} data-testid="interest-transactions">
+      <div className={styles.queueHeader}>
+        <div>
+          <div className={styles.cardTitle} style={{ marginBottom: 4 }}>Interest transactions</div>
+          <div className={styles.queueSub}>
+            Charges categorized as interest. Add the ones that paid this loan; ignore the rest.
+          </div>
+        </div>
+        {(earlierCount > 0 || includeEarlier) && (
+          <label className={styles.queueToggle}>
+            <input type="checkbox" checked={includeEarlier} onChange={e => setIncludeEarlier(e.target.checked)} />
+            Include charges before {fmtDate(loan.startDate)}{includeEarlier ? '' : ` (${earlierCount})`}
+          </label>
+        )}
+      </div>
+
+      {readOnly && (
+        <div className={styles.queueNotice}>
+          Demo mode is on, so amounts here are scrambled. Turn it off to tag or ignore charges.
+        </div>
+      )}
+
+      {pending.length === 0 ? (
+        <div className={styles.emptyRow}>
+          {ignored.length || anyTagged
+            ? 'Nothing left to sort — every interest charge is tagged or ignored.'
+            : `No transactions categorized as interest${loan.startDate && !includeEarlier ? ` since ${fmtDate(loan.startDate)}` : ''}.`}
+        </div>
+      ) : (
+        <>
+          <div className={styles.bulkBar}>
+            <span className={styles.bulkCount}>
+              {picked.length ? `${picked.length} selected · ${fmt(pickedTotal)}` : `${pending.length} to sort`}
+            </span>
+            <button type="button" className={styles.btnPrimary} disabled={readOnly || !picked.length} onClick={() => tag(picked)}>
+              <span className="material-symbols-outlined" style={{ fontSize: 17 }}>add_link</span>
+              Add to loan
+            </button>
+            <button type="button" className={styles.btnGhost} disabled={readOnly || !picked.length} onClick={() => ignore(picked)}>
+              <span className="material-symbols-outlined" style={{ fontSize: 17 }}>visibility_off</span>
+              Ignore
+            </button>
+          </div>
+          <div className={styles.tableScroll}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th className={styles.checkCol}>
+                    <input type="checkbox" aria-label="Select all" checked={allPicked} onChange={toggleAll} disabled={readOnly} />
+                  </th>
+                  <th>Date</th>
+                  <th>Description</th>
+                  <th>Account</th>
+                  <th>Category</th>
+                  <th className={styles.numCol}>Amount</th>
+                  <th aria-label="Actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {pending.map(t => (
+                  <tr key={t.key} className={selected.has(t.key) ? styles.rowSelected : undefined}>
+                    <td className={styles.checkCol}>
+                      <input type="checkbox" aria-label={`Select ${t.description}`} checked={selected.has(t.key)} onChange={() => toggle(t.key)} disabled={readOnly} />
+                    </td>
+                    <td className={styles.nowrap}>{t.iso ? fmtDate(t.iso) : t.date}</td>
+                    <td>{t.description}</td>
+                    <td className={styles.noteCell}>{t.account || '—'}</td>
+                    <td className={styles.noteCell}>{[t.category, t.subcategory].filter(Boolean).join(' · ')}</td>
+                    <td className={styles.numCol}>{fmt(Math.abs(Number(t.amount) || 0))}</td>
+                    <td className={styles.rowActions}>
+                      <button type="button" className={styles.iconBtnPlain} title="Add to loan" aria-label={`Add ${t.description} to loan`} disabled={readOnly} onClick={() => tag([t])}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 18 }}>add_link</span>
+                      </button>
+                      <button type="button" className={styles.iconBtnPlain} title="Ignore" aria-label={`Ignore ${t.description}`} disabled={readOnly} onClick={() => ignore([t])}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 18 }}>visibility_off</span>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {ignored.length > 0 && (
+        <div className={styles.ignoredBlock}>
+          <button type="button" className={styles.linkBtn} onClick={() => setShowIgnored(v => !v)}>
+            <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{showIgnored ? 'expand_less' : 'expand_more'}</span>
+            Ignored ({ignored.length})
+          </button>
+          {showIgnored && (
+            <>
+              <div className={styles.tableScroll}>
+                <table className={styles.table}>
+                  <tbody>
+                    {ignored.map(t => (
+                      <tr key={t.key} className={styles.ignoredRow}>
+                        <td className={styles.nowrap}>{t.iso ? fmtDate(t.iso) : t.date}</td>
+                        <td>{t.description}</td>
+                        <td className={styles.noteCell}>{t.account || '—'}</td>
+                        <td className={styles.numCol}>{fmt(Math.abs(Number(t.amount) || 0))}</td>
+                        <td className={styles.rowActions}>
+                          <button type="button" className={styles.linkBtn} disabled={readOnly} onClick={() => onIgnore([t.key], false)}>Restore</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button type="button" className={styles.linkBtn} disabled={readOnly} onClick={() => onIgnore(ignored.map(t => t.key), false)}>
+                Restore all
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
