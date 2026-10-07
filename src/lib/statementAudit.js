@@ -72,7 +72,8 @@ export function splitCsv(text) {
   let row = [];
   let field = '';
   let quoted = false;
-  const src = String(text || '').replace(/^﻿/, '');
+  const text0 = String(text || '');
+  const src = text0.charCodeAt(0) === 0xfeff ? text0.slice(1) : text0; // byte-order mark
   for (let i = 0; i < src.length; i++) {
     const c = src[i];
     if (quoted) {

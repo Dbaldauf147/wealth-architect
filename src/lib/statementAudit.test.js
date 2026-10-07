@@ -35,6 +35,9 @@ describe('splitCsv', () => {
   it('handles quotes, embedded commas and CRLF', () => {
     expect(splitCsv('a,"b, c","d ""e"""\r\n1,2,3\r\n')).toEqual([['a', 'b, c', 'd "e"'], ['1', '2', '3']]);
   });
+  it('drops a byte-order mark so the first header still matches', () => {
+    expect(splitCsv('﻿Date,Amount')[0][0]).toBe('Date');
+  });
 });
 
 describe('parseStatementCsv', () => {
