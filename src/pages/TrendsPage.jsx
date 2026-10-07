@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../contexts/DataContext';
-import { buildWedgeBands, axisTicks, OTHER_LABEL } from '../lib/wedgeChart';
+import { buildWedgeBands, axisTicks, restackBands, OTHER_LABEL } from '../lib/wedgeChart';
 import { monthLabelShort, monthLabel } from '../lib/netWorthSnapshot';
 import styles from './TrendsPage.module.css';
 
@@ -232,6 +232,18 @@ export function TrendsPage() {
     try { return localStorage.getItem(WEDGE_PREF_KEY) !== '0'; } catch { return true; }
   });
 
+  // Categories switched off in the chart's legend. Kept for the visit only: a
+  // filter that silently survived a reload would make the chart read as total
+  // spend when it isn't.
+  const [hiddenBands, setHiddenBands] = useState(() => new Set());
+  function toggleBand(cat) {
+    setHiddenBands(prev => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat); else next.add(cat);
+      return next;
+    });
+  }
+
   function toggleWedge() {
     setShowWedge(v => {
       const next = !v;
@@ -319,12 +331,14 @@ export function TrendsPage() {
   }, [data.rows, flaggedOnly, sort]);
 
   /* The chart deliberately ignores the "Flagged only" filter: a stack built
-     from a subset of categories reads as a total that it isn't. It shows the
-     whole spend, and the table below stays the place to narrow things down. */
+     from a subset of categories reads as a total that it isn't. It narrows
+     only through its own legend, where the subtitle says how many are shown. */
   const wedge = useMemo(
     () => buildWedgeBands({ months: data.months || [], rows: data.rows || [], topN: WEDGE_TOP_N }),
     [data.months, data.rows],
   );
+  const shownWedge = useMemo(() => restackBands(wedge.bands, hiddenBands), [wedge.bands, hiddenBands]);
+  const hiddenCount = wedge.bands.filter(b => hiddenBands.has(b.cat)).length;
 
   function toggleSort(col, defaultDir) {
     setSort(prev => {
@@ -419,24 +433,41 @@ export function TrendsPage() {
             <div className={styles.chartTitle}>Spending Over Time by Category</div>
             <div className={styles.chartSub}>
               {monthLabelShort(data.months[0])} – {monthLabelShort(data.months[data.months.length - 1])}
-              {' · '}every category, stacked · hover a month for the breakdown
+              {' · '}
+              {hiddenCount ? `${wedge.bands.length - hiddenCount} of ${wedge.bands.length} shown` : 'every category'}, stacked
+              {' · '}hover a month for the breakdown · click a category below to toggle it
             </div>
           </div>
-          <WedgeChart months={data.months} bands={wedge.bands} max={wedge.max} />
+          {shownWedge.bands.length > 0
+            ? <WedgeChart months={data.months} bands={shownWedge.bands} max={shownWedge.max} />
+            : <div className={styles.chartEmpty}>Every category is switched off — click one below to show it.</div>}
           <div className={styles.legend}>
-            {wedge.bands.map(b => (
-              <div key={b.cat} className={styles.legendItem} title={
-                b.cat === OTHER_LABEL
-                  ? `${b.rolledUp} smaller categories · ${fmt(b.avg)}/mo`
-                  : `${fmt(b.avg)}/mo over this window`
-              }>
-                <span className={styles.legendSwatch} style={{ background: b.color }} />
-                <span className={styles.legendLabel}>
-                  {b.cat === OTHER_LABEL ? `Other (${b.rolledUp})` : b.cat}
-                </span>
-                <span className={styles.legendValue}>{fmt(b.avg)}/mo</span>
-              </div>
-            ))}
+            {wedge.bands.map(b => {
+              const off = hiddenBands.has(b.cat);
+              return (
+                <button
+                  type="button"
+                  key={b.cat}
+                  className={`${styles.legendItem} ${off ? styles.legendItemOff : ''}`}
+                  onClick={() => toggleBand(b.cat)}
+                  aria-pressed={!off}
+                  title={`${off ? 'Show' : 'Hide'} ${b.cat === OTHER_LABEL ? `Other — ${b.rolledUp} smaller categories` : b.cat} · ${fmt(b.avg)}/mo over this window`}
+                >
+                  <span className={styles.legendSwatch} style={{ background: b.color }} />
+                  <span className={styles.legendLabel}>
+                    {b.cat === OTHER_LABEL ? `Other (${b.rolledUp})` : b.cat}
+                  </span>
+                  <span className={styles.legendValue}>{fmt(b.avg)}/mo</span>
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              className={styles.legendAll}
+              onClick={() => setHiddenBands(hiddenCount ? new Set() : new Set(wedge.bands.map(b => b.cat)))}
+            >
+              {hiddenCount ? 'Show all' : 'Hide all'}
+            </button>
           </div>
         </div>
       )}
