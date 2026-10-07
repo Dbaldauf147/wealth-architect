@@ -436,3 +436,23 @@ describe('auditPrediction', () => {
 });
 
 function round(n) { return Math.round(n * 100) / 100; }
+
+describe("buildPaymentHistory — today's method", () => {
+  const txns = [
+    buy('2026-06-16', -100, 'Jul A'), buy('2026-07-15', -50, 'Jul B'),
+    pay('2026-08-11', 150),
+    buy('2026-07-16', -200, 'Aug A'), buy('2026-08-15', -10, 'Aug B'),
+    pay('2026-09-11', 210.33),
+  ];
+
+  it('bills the statement cycle, so it misses only what no charge explains', () => {
+    const [latest] = buildPaymentHistory({ transactions: txns, closeDay: 15 });
+    expect(latest.current.amount).toBe(210);
+    expect(latest.current.variance).toBe(0.33);
+  });
+
+  it('has nothing to say without a closing day', () => {
+    const [latest] = buildPaymentHistory({ transactions: txns });
+    expect(latest.current).toBeNull();
+  });
+});

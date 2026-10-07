@@ -235,6 +235,9 @@ export default async function handler(req, res) {
 
     const hiddenCards = (config && Array.isArray(config.hiddenCards)) ? config.hiddenCards : [];
     const nicknames = (config && config.accountNicknames) || {};
+    // Raw account name → closing day, as set on the Transactions page. The
+    // schedule matches them to cards itself; without one it estimates.
+    const closeDays = (config && config.statementCloseDays) || {};
 
     let payload = buildPaymentReminder({
       cards,
@@ -245,6 +248,7 @@ export default async function handler(req, res) {
       payingAccountLast4: last4,
       hiddenCards,
       nicknames,
+      closeDays,
     });
 
     // Nothing due tomorrow: with force=1, re-run dated to the day before the
@@ -259,6 +263,7 @@ export default async function handler(req, res) {
         nicknames,
         payingAccountLast4: last4,
         tz,
+        closeDays,
       });
       if (preview && preview.payload) {
         payload = preview.payload;

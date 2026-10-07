@@ -95,11 +95,14 @@ describe('buildCardSchedule — a full year of a lagged card', () => {
       .toEqual(truth.map(c => iso(c.m, c.d)).sort());
   });
 
-  it('recovers a window that lands on the real close date', () => {
+  it('estimates the closing day from the payments and lands on the real close', () => {
     const s = only(txns, asOf);
-    expect(s.windowSource).toBe('reconciled');
-    // True close is Sep 14; the estimate is allowed a couple of days either way.
-    expect(Math.abs(s.statementClose - closeOf(9)) / 86400000).toBeLessThanOrEqual(2);
+    expect(s.windowSource).toBe('closeDay');
+    // Nothing is dated on the 14th, so closing on the 13th bills the same
+    // charges — either is a correct answer.
+    expect(s.close.source).toBe('estimated');
+    expect([13, 14]).toContain(s.close.day);
+    expect(Math.abs(s.statementClose - closeOf(9)) / 86400000).toBeLessThanOrEqual(1);
   });
 
   it('is nowhere near the old "since the last payment" answer', () => {
@@ -195,5 +198,43 @@ describe('buildCardSchedule — unchanged behaviour', () => {
     const s = only(regular, new Date(2026, 7, 20));
     expect(s.lastPayment.amount).toBe(300);
     expect(s.cadenceDays).toBe(31);
+  });
+});
+
+describe('buildCardSchedule — a closing day the user set', () => {
+  /* The case Payment History's audit kept flagging. The card closes on the 2nd
+     and is paid on the 25th. Between the Aug 26 payment and the Sep 25 one,
+     "since the last payment" counted September's spending (next month's bill)
+     and missed August's (this one). With the closing day known, the Sep 25
+     payment is the Aug 3 – Sep 2 statement. */
+  const ledger = [
+    buy('2026-08-05', -75, 'Aug, before the Aug 26 payment'),
+    buy('2026-08-16', -506.78, 'Aug, before the Aug 26 payment'),
+    pay('2026-08-26', 999),
+    buy('2026-08-30', -40, 'Aug, after the Aug 26 payment'),
+    buy('2026-09-03', -18.21, 'Sep — next statement'),
+    buy('2026-09-15', -59.53, 'Sep — next statement'),
+    pay('2026-07-25', 888),
+  ];
+  const asOf = new Date(2026, 8, 24); // the day before the Sep 25 payment
+
+  it('takes the next payment from the cycle that closed on that day', () => {
+    const s = buildCardSchedule({ cards, transactions: ledger, asOf, closeDays: { [CARD]: 2 } })[0];
+    // Two payments only, so the date comes from the cadence (late Sep); any
+    // day from Sep 23 to Oct 22 pays the statement that closed Sep 2.
+    expect(s.nextPaymentDate.getMonth()).toBe(8);
+    expect(s.windowSource).toBe('closeDay');
+    expect(s.close).toEqual({ day: 2, source: 'set' });
+    expect(s.statementOpen).toEqual(new Date(2026, 7, 2)); // exclusive: opens Aug 3
+    expect(s.statementFrom).toEqual(new Date(2026, 7, 3));
+    expect(s.statementClose).toEqual(new Date(2026, 8, 2));
+    expect(s.nextPaymentCharges.map(t => t.amount).sort((a, b) => a - b)).toEqual([-506.78, -75, -40]);
+    expect(s.estimatedNextAmount).toBeCloseTo(621.78, 2);
+    expect(s.statementClosed).toBe(true);
+  });
+
+  it('only honours a day set for this card', () => {
+    const s = buildCardSchedule({ cards, transactions: ledger, asOf, closeDays: { 'SOME OTHER CARD (0000)': 2 } })[0];
+    expect(s.windowSource).not.toBe('closeDay');
   });
 });

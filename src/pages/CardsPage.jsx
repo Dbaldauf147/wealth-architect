@@ -110,6 +110,24 @@ function parseAccountName(s) {
 
 /* Payment History's Audit column: how many charges the estimate got wrong for
    this payment, and their net effect. Opens the per-charge breakdown. */
+/* Under the audit: how the schedule's current method — the statement cycle —
+   would have done on this payment. Its only miss is what no charge explains. */
+function CurrentMethodNote({ current }) {
+  if (!current) return null;
+  const off = Math.abs(current.variance);
+  const good = off < 1;
+  return (
+    <div
+      className={styles.figureNote}
+      style={{ color: good ? '#16a34a' : off <= 25 ? 'var(--color-text-tertiary)' : '#a36b00' }}
+      title={`Today's estimate bills the statement cycle: ${fmtCents(current.amount)} for this payment. `
+        + (good ? 'That matches the payment.' : `The ${fmtCents(off)} left over is interest, a fee, a carried balance or a partial payment — not a charge.`)}
+    >
+      now: {good ? 'exact' : `off ${fmtCents(off)}`}
+    </div>
+  );
+}
+
 function HistoryAuditCell({ audit, open, onToggle }) {
   if (!audit || audit.status === 'unknown') {
     return (
@@ -430,9 +448,17 @@ export function CardsPage() {
   }, [spendByCategory, creditCards, categoryPerCard]);
 
   // ── Schedule view data ────────────────────────────────────────────────────
+  // The closing days set on the Transactions page, by card. Cards without one
+  // are estimated inside the schedule the same way closeDays estimates them.
+  const setCloseDays = useMemo(() => {
+    const out = {};
+    for (const [card, c] of closeDays) if (c.source === 'set') out[card] = c.day;
+    return out;
+  }, [closeDays]);
+
   const schedule = useMemo(
-    () => buildCardSchedule({ cards: creditCards, transactions: cardTransactions }),
-    [creditCards, cardTransactions],
+    () => buildCardSchedule({ cards: creditCards, transactions: cardTransactions, closeDays: setCloseDays }),
+    [creditCards, cardTransactions, setCloseDays],
   );
 
   /* Expected vs actual for each card's most recent payment.
@@ -1505,11 +1531,13 @@ export function CardsPage() {
                       {s.statementOpen && s.statementClose && (
                         <div
                           className={styles.figureNote}
-                          title={s.windowSource === 'reconciled'
-                            ? 'Window recovered from the charges that summed exactly to past payments'
-                            : 'Approximated from the gap between your last two payments'}
+                          title={s.windowSource === 'closeDay'
+                            ? `The statement cycle for this payment. ${closeDayTitle(s.close)}`
+                            : s.windowSource === 'reconciled'
+                              ? 'Window recovered from the charges that summed exactly to past payments — set a closing day on the Transactions page for an exact one'
+                              : 'Approximated from the gap between your last two payments — set a closing day on the Transactions page for an exact one'}
                         >
-                          {fmtDate(s.statementOpen)} – {fmtDate(s.statementClose)}
+                          {fmtDate(s.statementFrom)} – {fmtDate(s.statementClose)}
                           {s.statementClosed ? ' · billed' : ' · open'}
                         </div>
                       )}
@@ -1686,6 +1714,7 @@ export function CardsPage() {
                 </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   <HistoryAuditCell audit={audit} open={auditIsOpen} onToggle={() => toggleHistoryAudit(key)} />
+                  <CurrentMethodNote current={h.current} />
                 </td>
                 <td style={{ color: 'var(--color-text-secondary)' }}>{(h.actual.charges || []).length}</td>
                 <td style={{ color: 'var(--color-text-secondary)', whiteSpace: 'nowrap', fontSize: 12 }}>
