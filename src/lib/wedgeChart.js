@@ -96,3 +96,22 @@ export function axisTicks(max, count = 4) {
   for (let v = 0; v <= top + step / 2; v += step) ticks.push(Math.round(v));
   return { top, ticks };
 }
+
+/* Re-stack only the bands that aren't in `hidden` (a Set of band `cat`s).
+
+   Hiding a band drops it out of the stack rather than leaving a hole, so the
+   bands still shown sit on the baseline and the axis rescales to them — the
+   point of switching categories off is to read the ones left. Order and
+   colour are kept, so a band doesn't jump or recolour as others toggle. */
+export function restackBands(bands = [], hidden = new Set()) {
+  const shown = bands.filter(b => !hidden.has(b.cat));
+  const months = bands[0]?.values.length || 0;
+  const floor = Array.from({ length: months }, () => 0);
+  const out = shown.map(b => {
+    const lower = floor.slice();
+    const upper = b.values.map((v, i) => floor[i] + v);
+    for (let i = 0; i < months; i++) floor[i] = upper[i];
+    return { ...b, lower, upper };
+  });
+  return { bands: out, monthTotals: floor, max: Math.max(...floor, 0) };
+}

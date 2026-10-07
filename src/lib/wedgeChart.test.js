@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildWedgeBands, axisTicks, OTHER_LABEL } from './wedgeChart.js';
+import { buildWedgeBands, axisTicks, restackBands, OTHER_LABEL } from './wedgeChart.js';
 
 const months = ['2026-01', '2026-02', '2026-03'];
 const row = (cat, series) => ({ cat, series });
@@ -93,5 +93,33 @@ describe('axisTicks', () => {
 
   it('degrades to a single zero tick when there is no spend', () => {
     expect(axisTicks(0)).toEqual({ top: 0, ticks: [0] });
+  });
+});
+
+describe('restackBands', () => {
+  const { bands } = buildWedgeBands({
+    months,
+    rows: [row('Rent', [100, 100, 100]), row('Food', [20, 40, 30]), row('Fun', [5, 5, 50])],
+  });
+
+  it('drops hidden bands and closes the gap they leave', () => {
+    const out = restackBands(bands, new Set(['Rent']));
+    expect(out.bands.map(b => b.cat)).toEqual(['Food', 'Fun']);
+    expect(out.bands[0].lower).toEqual([0, 0, 0]);
+    expect(out.bands[1].lower).toEqual([20, 40, 30]);
+    expect(out.monthTotals).toEqual([25, 45, 80]);
+    expect(out.max).toBe(80);
+  });
+
+  it('keeps each band\'s colour and stack order', () => {
+    const out = restackBands(bands, new Set(['Food']));
+    expect(out.bands.map(b => [b.cat, b.color])).toEqual([[bands[0].cat, bands[0].color], [bands[2].cat, bands[2].color]]);
+  });
+
+  it('is the full stack when nothing is hidden, and empty when everything is', () => {
+    expect(restackBands(bands, new Set()).bands.map(b => b.upper)).toEqual(bands.map(b => b.upper));
+    const none = restackBands(bands, new Set(bands.map(b => b.cat)));
+    expect(none.bands).toEqual([]);
+    expect(none.max).toBe(0);
   });
 });

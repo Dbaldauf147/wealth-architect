@@ -316,6 +316,47 @@
   align-items: center;
   gap: 6px;
   font-size: 12px;
+  font-family: inherit;
+  padding: 3px 6px;
+  margin: -3px -6px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.legendItem:hover {
+  background: var(--color-surface-alt);
+}
+
+.legendItemOff {
+  opacity: 0.4;
+}
+
+.legendItemOff .legendLabel {
+  text-decoration: line-through;
+}
+
+.legendAll {
+  margin-left: auto;
+  padding: 0;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-secondary);
+  cursor: pointer;
+}
+
+.chartEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+  font-size: 13px;
+  color: var(--color-text-tertiary);
 }
 
 .legendSwatch {
