@@ -276,7 +276,7 @@
 
 .mainGrid {
   display: grid;
-  grid-template-columns: 1fr 280px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 
@@ -852,13 +852,6 @@
 .institutionCell {
   font-size: 12.5px;
   color: var(--color-text-secondary);
-}
-
-/* ── Sidebar ── */
-.sideColumn {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
 }
 
 .sectionLabel {
@@ -1544,146 +1537,6 @@
   background: var(--color-surface-alt);
 }
 
-/* Recurring Card */
-.recurringCard {
-  background: var(--color-surface);
-  border: var(--border-ghost);
-  border-radius: var(--radius-xl);
-  padding: 16px;
-  box-shadow: var(--shadow-xs);
-}
-
-.recurringItem {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 0;
-  border-bottom: var(--border-ghost);
-}
-
-.recurringItem:last-child {
-  border-bottom: none;
-}
-
-.recurringLeft {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.recurringIcon {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-lg);
-  background: var(--color-surface-alt);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.recurringIcon .material-symbols-outlined {
-  font-size: 14px;
-  color: var(--color-text-secondary);
-}
-
-.recurringName {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-
-.recurringFreq {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-}
-
-.recurringAmount {
-  font-family: var(--font-headline);
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--color-text-primary);
-}
-
-/* Category Allocation */
-.allocCard {
-  background: var(--color-surface);
-  border: var(--border-ghost);
-  border-radius: var(--radius-xl);
-  padding: 16px;
-  box-shadow: var(--shadow-xs);
-}
-
-.allocItem {
-  margin-bottom: 12px;
-}
-
-.allocItem:last-child {
-  margin-bottom: 0;
-}
-
-.allocHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 5px;
-}
-
-.allocLabel {
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-}
-
-.allocValue {
-  font-size: 12.5px;
-  font-weight: 700;
-  font-family: var(--font-headline);
-  color: var(--color-text-primary);
-}
-
-.allocBar {
-  height: 4px;
-  background: var(--color-surface-alt);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.allocFill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width var(--transition-slow);
-}
-
-/* Executive Summary Callout */
-.summaryCard {
-  background: var(--color-primary);
-  border-radius: var(--radius-xl);
-  padding: 16px;
-  color: #fff;
-}
-
-.summaryLabel {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.5);
-  margin-bottom: 8px;
-}
-
-.summaryTitle {
-  font-family: var(--font-headline);
-  font-size: 14px;
-  font-weight: 700;
-  margin-bottom: 6px;
-}
-
-.summaryText {
-  font-size: 12.5px;
-  color: rgba(255, 255, 255, 0.7);
-  line-height: 1.5;
-}
-
 /* Category Rule Confirmation Dialog */
 .ruleOverlay {
   position: fixed;
@@ -1815,16 +1668,6 @@
   }
   .chartRowPie {
     grid-column: auto;
-  }
-  .mainGrid {
-    grid-template-columns: 1fr;
-  }
-  .sideColumn {
-    flex-direction: row;
-    flex-wrap: wrap;
-  }
-  .sideColumn > * {
-    flex: 1 1 280px;
   }
 }
 
