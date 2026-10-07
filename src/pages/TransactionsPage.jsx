@@ -3414,195 +3414,307 @@ export function TransactionsPage() {
         </div>
       )}
 
-      {/* Spending Over Time Chart */}
-      {barChartData.months.length > 0 && (
-        <div className={styles.barCard}>
-          <div className={styles.barCardHeader}>
-            <div className={styles.sectionLabel} style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span>{barChartData.drillDown ? `${barChartData.parent} — Subcategories Over Time` : 'Spending Over Time'}</span>
-              {selectedMonth && (
-                <button
-                  className={styles.categoryFilterClear}
-                  style={{ padding: '2px 8px', fontSize: 10 }}
-                  onClick={() => { setSelectedMonth(null); setPage(0); }}
-                  type="button"
-                >
-                  {(() => {
-                    const [y, m] = selectedMonth.split('-');
-                    const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                    return `${MONTH_SHORT[parseInt(m, 10) - 1]} ${y}`;
-                  })()} ✕
-                </button>
-              )}
-            </div>
-            <div className={styles.barCardHeaderRight}>
-              <div className={styles.monthControl}>
-                <button
-                  className={styles.monthBtn}
-                  onClick={() => setChartMonthCount(c => Math.max(1, c - 1))}
-                  disabled={chartMonthCount <= 1}
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>remove</span>
-                </button>
-                <span className={styles.monthLabel}>{chartMonthCount}mo</span>
-                <button
-                  className={styles.monthBtn}
-                  onClick={() => setChartMonthCount(c => Math.min(barChartData.totalMonths || 24, c + 1))}
-                  disabled={chartMonthCount >= (barChartData.totalMonths || 24)}
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
-                </button>
-              </div>
-              <div className={styles.barLegend}>
-                {barChartData.topCategories.map((cat, i) => {
-                  const isOther = cat === '__OTHER_AGGREGATE__';
-                  const display = isOther ? 'Other' : cat;
-                  const dotColor = isOther ? '#94a3b8' : colorFor(cat);
-                  const active = isOther || includedCategories.size === 0 || includedCategories.has(cat);
-                  const isSub = barChartData.drillDown;
-                  const otherTip = isOther && barChartData.otherMembers && barChartData.otherMembers.length > 0
-                    ? `Click to zoom in on: ${barChartData.otherMembers.join(', ')}`
-                    : null;
-                  return (
-                    <div
-                      key={cat}
-                      className={styles.barLegendItem}
-                      onClick={isOther
-                        ? () => {
-                            const members = barChartData.otherMembers || [];
-                            if (members.length === 0) return;
-                            setIncludedSubcategories(new Set());
-                            setIncludedCategories(new Set(members));
-                            setPage(0);
-                          }
-                        : () => { toggleCategoryFilter(cat); setPage(0); }
-                      }
-                      style={{ cursor: 'pointer', opacity: active ? 1 : 0.4 }}
-                      title={otherTip || undefined}
-                    >
-                      <span className={styles.barLegendDot} style={{ background: dotColor }} />
-                      <span className={styles.barLegendName}>{display}</span>
-                      {!isOther && (
-                        <>
-                          <button
-                            type="button"
-                            className={styles.legendColorBtn}
-                            title={`Change color for ${cat}`}
-                            onClick={e => {
-                              e.stopPropagation();
-                              const r = e.currentTarget.getBoundingClientRect();
-                              setColorPicker({ name: cat, x: r.left, y: r.bottom + 4 });
-                            }}
-                            style={{ background: colorFor(cat) }}
-                          />
-                          <button
-                            type="button"
-                            className={styles.legendHideBtn}
-                            title={`Hide ${cat} from charts`}
-                            onClick={e => { e.stopPropagation(); hideFromCharts(cat, isSub); }}
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>visibility_off</span>
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
-                {includedCategories.size > 0 && (
+      {/* Charts row — Spending Over Time beside Category Breakdown */}
+      {(barChartData.months.length > 0 || pieData.entries.length > 0) && (
+        <div className={styles.chartRow}>
+        {/* Spending Over Time Chart */}
+        {barChartData.months.length > 0 && (
+          <div className={styles.barCard}>
+            <div className={styles.barCardHeader}>
+              <div className={styles.sectionLabel} style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>{barChartData.drillDown ? `${barChartData.parent} — Subcategories Over Time` : 'Spending Over Time'}</span>
+                {selectedMonth && (
                   <button
                     className={styles.categoryFilterClear}
-                    style={{ padding: 0, fontSize: 10, marginLeft: 4 }}
-                    onClick={() => { clearCategoryFilters(); setPage(0); }}
+                    style={{ padding: '2px 8px', fontSize: 10 }}
+                    onClick={() => { setSelectedMonth(null); setPage(0); }}
                     type="button"
                   >
-                    Clear
+                    {(() => {
+                      const [y, m] = selectedMonth.split('-');
+                      const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                      return `${MONTH_SHORT[parseInt(m, 10) - 1]} ${y}`;
+                    })()} ✕
                   </button>
                 )}
               </div>
-              <div className={styles.chartModeGroup}>
-                {CHART_MODES.map(m => (
+              <div className={styles.barCardHeaderRight}>
+                <div className={styles.monthControl}>
                   <button
-                    key={m.key}
-                    className={`${styles.chartModeBtn} ${chartMode === m.key ? styles.chartModeBtnActive : ''}`}
-                    onClick={() => setChartMode(m.key)}
-                    title={m.label}
+                    className={styles.monthBtn}
+                    onClick={() => setChartMonthCount(c => Math.max(1, c - 1))}
+                    disabled={chartMonthCount <= 1}
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{m.icon}</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>remove</span>
+                  </button>
+                  <span className={styles.monthLabel}>{chartMonthCount}mo</span>
+                  <button
+                    className={styles.monthBtn}
+                    onClick={() => setChartMonthCount(c => Math.min(barChartData.totalMonths || 24, c + 1))}
+                    disabled={chartMonthCount >= (barChartData.totalMonths || 24)}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
+                  </button>
+                </div>
+                <div className={styles.barLegend}>
+                  {barChartData.topCategories.map((cat, i) => {
+                    const isOther = cat === '__OTHER_AGGREGATE__';
+                    const display = isOther ? 'Other' : cat;
+                    const dotColor = isOther ? '#94a3b8' : colorFor(cat);
+                    const active = isOther || includedCategories.size === 0 || includedCategories.has(cat);
+                    const isSub = barChartData.drillDown;
+                    const otherTip = isOther && barChartData.otherMembers && barChartData.otherMembers.length > 0
+                      ? `Click to zoom in on: ${barChartData.otherMembers.join(', ')}`
+                      : null;
+                    return (
+                      <div
+                        key={cat}
+                        className={styles.barLegendItem}
+                        onClick={isOther
+                          ? () => {
+                              const members = barChartData.otherMembers || [];
+                              if (members.length === 0) return;
+                              setIncludedSubcategories(new Set());
+                              setIncludedCategories(new Set(members));
+                              setPage(0);
+                            }
+                          : () => { toggleCategoryFilter(cat); setPage(0); }
+                        }
+                        style={{ cursor: 'pointer', opacity: active ? 1 : 0.4 }}
+                        title={otherTip || undefined}
+                      >
+                        <span className={styles.barLegendDot} style={{ background: dotColor }} />
+                        <span className={styles.barLegendName}>{display}</span>
+                        {!isOther && (
+                          <>
+                            <button
+                              type="button"
+                              className={styles.legendColorBtn}
+                              title={`Change color for ${cat}`}
+                              onClick={e => {
+                                e.stopPropagation();
+                                const r = e.currentTarget.getBoundingClientRect();
+                                setColorPicker({ name: cat, x: r.left, y: r.bottom + 4 });
+                              }}
+                              style={{ background: colorFor(cat) }}
+                            />
+                            <button
+                              type="button"
+                              className={styles.legendHideBtn}
+                              title={`Hide ${cat} from charts`}
+                              onClick={e => { e.stopPropagation(); hideFromCharts(cat, isSub); }}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 12 }}>visibility_off</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {includedCategories.size > 0 && (
+                    <button
+                      className={styles.categoryFilterClear}
+                      style={{ padding: 0, fontSize: 10, marginLeft: 4 }}
+                      onClick={() => { clearCategoryFilters(); setPage(0); }}
+                      type="button"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div className={styles.chartModeGroup}>
+                  {CHART_MODES.map(m => (
+                    <button
+                      key={m.key}
+                      className={`${styles.chartModeBtn} ${chartMode === m.key ? styles.chartModeBtnActive : ''}`}
+                      onClick={() => setChartMode(m.key)}
+                      title={m.label}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{m.icon}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            {(chartHiddenCats.size > 0 || chartHiddenSubs.size > 0) && (
+              <div className={styles.chartHiddenStrip}>
+                <span className={styles.chartHiddenLabel}>Hidden from charts:</span>
+                {[...chartHiddenCats].sort().map(name => (
+                  <button
+                    key={`cat-${name}`}
+                    type="button"
+                    className={styles.chartHiddenChip}
+                    onClick={() => unhideFromCharts(name, false)}
+                    title={`Show ${name} in charts`}
+                  >
+                    {name}
+                    <span className="material-symbols-outlined" style={{ fontSize: 12 }}>close</span>
+                  </button>
+                ))}
+                {[...chartHiddenSubs].sort().map(name => (
+                  <button
+                    key={`sub-${name}`}
+                    type="button"
+                    className={styles.chartHiddenChip}
+                    onClick={() => unhideFromCharts(name, true)}
+                    title={`Show ${name} in charts`}
+                  >
+                    {name}
+                    <span className="material-symbols-outlined" style={{ fontSize: 12 }}>close</span>
                   </button>
                 ))}
               </div>
+            )}
+            <SpendingChart
+              months={barChartData.months}
+              topCategories={barChartData.topCategories}
+              maxTotal={barChartData.maxTotal}
+              width={960}
+              height={300}
+              mode={chartMode}
+              selectedMonth={selectedMonth}
+              colorFor={colorFor}
+              onMonthClick={key => {
+                setSelectedMonth(prev => prev === key ? null : key);
+                setPage(0);
+              }}
+              onSegmentClick={name => {
+                // Clicking the synthetic 'Other' aggregate zooms into those categories
+                // by setting them as the included-category filter.
+                if (name === '__OTHER_AGGREGATE__') {
+                  const members = barChartData.otherMembers || [];
+                  if (members.length === 0) return;
+                  setIncludedSubcategories(new Set());
+                  setIncludedCategories(new Set(members));
+                  setPage(0);
+                  return;
+                }
+                if (barChartData.drillDown) {
+                  setIncludedSubcategories(prev => {
+                    const next = new Set(prev);
+                    if (next.has(name)) next.delete(name); else next.add(name);
+                    return next;
+                  });
+                } else {
+                  setIncludedSubcategories(new Set());
+                  setIncludedCategories(prev => {
+                    const next = new Set(prev);
+                    if (next.has(name)) next.delete(name); else next.add(name);
+                    return next;
+                  });
+                }
+                setPage(0);
+              }}
+            />
+          </div>
+        )}
+
+        {/* Pie Chart */}
+        {pieData.entries.length > 0 && (
+          <div className={`${styles.pieCard} ${styles.chartRowPie}`}>
+            <div className={styles.sectionLabel} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>{pieData.drillDown ? `${pieData.parent} — Subcategories` : 'Category Breakdown'}</span>
+              {((pieData.drillDown && includedSubcategories.size > 0) || (!pieData.drillDown && includedCategories.size > 0)) && (
+                <button
+                  className={styles.categoryFilterClear}
+                  style={{ padding: 0, fontSize: 10 }}
+                  onClick={() => {
+                    if (pieData.drillDown) setIncludedSubcategories(new Set());
+                    else setIncludedCategories(new Set());
+                    setPage(0);
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div className={styles.pieChartWrap}>
+              <PieChart
+                entries={pieData.entries}
+                total={pieData.total}
+                size={160}
+                colorFor={colorFor}
+                highlightedNames={pieData.drillDown ? includedSubcategories : includedCategories}
+                onSliceClick={name => {
+                  if (pieData.drillDown) {
+                    setIncludedSubcategories(prev => {
+                      const next = new Set(prev);
+                      if (next.has(name)) next.delete(name); else next.add(name);
+                      return next;
+                    });
+                  } else {
+                    // Clear subcategory filter when toggling categories — avoids stale filter mismatches
+                    setIncludedSubcategories(new Set());
+                    setIncludedCategories(prev => {
+                      const next = new Set(prev);
+                      if (next.has(name)) next.delete(name); else next.add(name);
+                      return next;
+                    });
+                  }
+                  setPage(0);
+                }}
+              />
+              <div className={styles.pieCenter}>
+                <div className={styles.pieCenterValue}>{fmt(pieData.total)}</div>
+                <div className={styles.pieCenterLabel}>total</div>
+              </div>
+            </div>
+            <div className={styles.pieLegend}>
+              {pieData.entries.slice(0, 8).map((e, i) => {
+                const highlightSet = pieData.drillDown ? includedSubcategories : includedCategories;
+                const isActive = highlightSet.has(e.name);
+                const dimmed = highlightSet.size > 0 && !isActive;
+                return (
+                  <div
+                    key={e.name}
+                    className={styles.pieLegendItem}
+                    style={{ cursor: 'pointer', opacity: dimmed ? 0.5 : 1, fontWeight: isActive ? 700 : undefined }}
+                    onClick={() => {
+                      if (pieData.drillDown) {
+                        setIncludedSubcategories(prev => {
+                          const next = new Set(prev);
+                          if (next.has(e.name)) next.delete(e.name); else next.add(e.name);
+                          return next;
+                        });
+                      } else {
+                        setIncludedSubcategories(new Set());
+                        setIncludedCategories(prev => {
+                          const next = new Set(prev);
+                          if (next.has(e.name)) next.delete(e.name); else next.add(e.name);
+                          return next;
+                        });
+                      }
+                      setPage(0);
+                    }}
+                  >
+                    <span className={styles.pieLegendDot} style={{ background: colorFor(e.name) }} />
+                    <span className={styles.pieLegendName}>{e.name}</span>
+                    <span className={styles.pieLegendPct}>{Math.round((e.value / pieData.total) * 100)}%</span>
+                    <button
+                      type="button"
+                      className={styles.legendColorBtn}
+                      title={`Change color for ${e.name}`}
+                      onClick={ev => {
+                        ev.stopPropagation();
+                        const r = ev.currentTarget.getBoundingClientRect();
+                        setColorPicker({ name: e.name, x: r.left, y: r.bottom + 4 });
+                      }}
+                      style={{ background: colorFor(e.name) }}
+                    />
+                    <button
+                      type="button"
+                      className={styles.legendHideBtn}
+                      title={`Hide ${e.name} from charts`}
+                      onClick={ev => { ev.stopPropagation(); hideFromCharts(e.name, pieData.drillDown); }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 12 }}>visibility_off</span>
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
-          {(chartHiddenCats.size > 0 || chartHiddenSubs.size > 0) && (
-            <div className={styles.chartHiddenStrip}>
-              <span className={styles.chartHiddenLabel}>Hidden from charts:</span>
-              {[...chartHiddenCats].sort().map(name => (
-                <button
-                  key={`cat-${name}`}
-                  type="button"
-                  className={styles.chartHiddenChip}
-                  onClick={() => unhideFromCharts(name, false)}
-                  title={`Show ${name} in charts`}
-                >
-                  {name}
-                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>close</span>
-                </button>
-              ))}
-              {[...chartHiddenSubs].sort().map(name => (
-                <button
-                  key={`sub-${name}`}
-                  type="button"
-                  className={styles.chartHiddenChip}
-                  onClick={() => unhideFromCharts(name, true)}
-                  title={`Show ${name} in charts`}
-                >
-                  {name}
-                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>close</span>
-                </button>
-              ))}
-            </div>
-          )}
-          <SpendingChart
-            months={barChartData.months}
-            topCategories={barChartData.topCategories}
-            maxTotal={barChartData.maxTotal}
-            width={960}
-            height={300}
-            mode={chartMode}
-            selectedMonth={selectedMonth}
-            colorFor={colorFor}
-            onMonthClick={key => {
-              setSelectedMonth(prev => prev === key ? null : key);
-              setPage(0);
-            }}
-            onSegmentClick={name => {
-              // Clicking the synthetic 'Other' aggregate zooms into those categories
-              // by setting them as the included-category filter.
-              if (name === '__OTHER_AGGREGATE__') {
-                const members = barChartData.otherMembers || [];
-                if (members.length === 0) return;
-                setIncludedSubcategories(new Set());
-                setIncludedCategories(new Set(members));
-                setPage(0);
-                return;
-              }
-              if (barChartData.drillDown) {
-                setIncludedSubcategories(prev => {
-                  const next = new Set(prev);
-                  if (next.has(name)) next.delete(name); else next.add(name);
-                  return next;
-                });
-              } else {
-                setIncludedSubcategories(new Set());
-                setIncludedCategories(prev => {
-                  const next = new Set(prev);
-                  if (next.has(name)) next.delete(name); else next.add(name);
-                  return next;
-                });
-              }
-              setPage(0);
-            }}
-          />
+        )}
         </div>
       )}
 
@@ -3807,113 +3919,6 @@ export function TransactionsPage() {
 
         {/* Side Column */}
         <div className={styles.sideColumn}>
-          {/* Pie Chart */}
-          {pieData.entries.length > 0 && (
-            <div className={styles.pieCard}>
-              <div className={styles.sectionLabel} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>{pieData.drillDown ? `${pieData.parent} — Subcategories` : 'Category Breakdown'}</span>
-                {((pieData.drillDown && includedSubcategories.size > 0) || (!pieData.drillDown && includedCategories.size > 0)) && (
-                  <button
-                    className={styles.categoryFilterClear}
-                    style={{ padding: 0, fontSize: 10 }}
-                    onClick={() => {
-                      if (pieData.drillDown) setIncludedSubcategories(new Set());
-                      else setIncludedCategories(new Set());
-                      setPage(0);
-                    }}
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-              <div className={styles.pieChartWrap}>
-                <PieChart
-                  entries={pieData.entries}
-                  total={pieData.total}
-                  size={160}
-                  colorFor={colorFor}
-                  highlightedNames={pieData.drillDown ? includedSubcategories : includedCategories}
-                  onSliceClick={name => {
-                    if (pieData.drillDown) {
-                      setIncludedSubcategories(prev => {
-                        const next = new Set(prev);
-                        if (next.has(name)) next.delete(name); else next.add(name);
-                        return next;
-                      });
-                    } else {
-                      // Clear subcategory filter when toggling categories — avoids stale filter mismatches
-                      setIncludedSubcategories(new Set());
-                      setIncludedCategories(prev => {
-                        const next = new Set(prev);
-                        if (next.has(name)) next.delete(name); else next.add(name);
-                        return next;
-                      });
-                    }
-                    setPage(0);
-                  }}
-                />
-                <div className={styles.pieCenter}>
-                  <div className={styles.pieCenterValue}>{fmt(pieData.total)}</div>
-                  <div className={styles.pieCenterLabel}>total</div>
-                </div>
-              </div>
-              <div className={styles.pieLegend}>
-                {pieData.entries.slice(0, 8).map((e, i) => {
-                  const highlightSet = pieData.drillDown ? includedSubcategories : includedCategories;
-                  const isActive = highlightSet.has(e.name);
-                  const dimmed = highlightSet.size > 0 && !isActive;
-                  return (
-                    <div
-                      key={e.name}
-                      className={styles.pieLegendItem}
-                      style={{ cursor: 'pointer', opacity: dimmed ? 0.5 : 1, fontWeight: isActive ? 700 : undefined }}
-                      onClick={() => {
-                        if (pieData.drillDown) {
-                          setIncludedSubcategories(prev => {
-                            const next = new Set(prev);
-                            if (next.has(e.name)) next.delete(e.name); else next.add(e.name);
-                            return next;
-                          });
-                        } else {
-                          setIncludedSubcategories(new Set());
-                          setIncludedCategories(prev => {
-                            const next = new Set(prev);
-                            if (next.has(e.name)) next.delete(e.name); else next.add(e.name);
-                            return next;
-                          });
-                        }
-                        setPage(0);
-                      }}
-                    >
-                      <span className={styles.pieLegendDot} style={{ background: colorFor(e.name) }} />
-                      <span className={styles.pieLegendName}>{e.name}</span>
-                      <span className={styles.pieLegendPct}>{Math.round((e.value / pieData.total) * 100)}%</span>
-                      <button
-                        type="button"
-                        className={styles.legendColorBtn}
-                        title={`Change color for ${e.name}`}
-                        onClick={ev => {
-                          ev.stopPropagation();
-                          const r = ev.currentTarget.getBoundingClientRect();
-                          setColorPicker({ name: e.name, x: r.left, y: r.bottom + 4 });
-                        }}
-                        style={{ background: colorFor(e.name) }}
-                      />
-                      <button
-                        type="button"
-                        className={styles.legendHideBtn}
-                        title={`Hide ${e.name} from charts`}
-                        onClick={ev => { ev.stopPropagation(); hideFromCharts(e.name, pieData.drillDown); }}
-                      >
-                        <span className="material-symbols-outlined" style={{ fontSize: 12 }}>visibility_off</span>
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {/* Recurring Commitments */}
           <div className={styles.recurringCard}>
             <div className={styles.sectionLabel}>Recurring Commitments</div>
