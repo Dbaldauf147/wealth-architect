@@ -260,6 +260,26 @@ export function SettingsPage() {
         </div>
       </section>
 
+      {/* Phone */}
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Phone</h3>
+        <div className={styles.card}>
+          <div className={styles.cardRow}>
+            <div className={styles.cardRowIcon}>
+              <span className="material-symbols-outlined">smartphone</span>
+            </div>
+            <div className={styles.cardRowContent}>
+              <div className={styles.cardRowLabel}>Categorize on Phone</div>
+              <div className={styles.cardRowValue}>A phone-shaped screen for clearing uncategorized transactions — installable to a home screen</div>
+            </div>
+            <button className={styles.secondaryBtn} onClick={() => { window.location.hash = 'm/review'; }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>open_in_new</span>
+              Open
+            </button>
+          </div>
+        </div>
+      </section>
+
       {/* Weekly Email Summary */}
       <section className={styles.section}>
         <h3 className={styles.sectionTitle}>Weekly Email Summary</h3>
