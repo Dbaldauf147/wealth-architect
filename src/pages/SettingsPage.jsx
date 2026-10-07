@@ -21,7 +21,7 @@ function relTime(date) {
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export function SettingsPage() {
-  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay, rangeExcludedCategories, cardPromos } = useData();
+  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay, rangeExcludedCategories, cardPromos, statementCloseDays } = useData();
   const { refresh, updatePaymentReminderPrefs, updateCalendarSyncPrefs, updateWeeklyEmailSections, updateWeeklyEmailDay, toggleRangeExcludedCategory } = useDataActions();
   // Send day is synced via DataContext (Firestore) so the cron reads it; fall
   // back to Monday for display when nothing has been chosen yet, matching the
@@ -110,8 +110,9 @@ export function SettingsPage() {
       hiddenCards: hiddenCards || [],
       nicknames: accountNicknames || {},
       payingAccountLast4: (paymentReminderPrefs && paymentReminderPrefs.payingAccountLast4) || '1118',
+      closeDays: statementCloseDays || {},
     });
-  }, [transactions, balances, hiddenCards, accountNicknames, paymentReminderPrefs]);
+  }, [transactions, balances, hiddenCards, accountNicknames, paymentReminderPrefs, statementCloseDays]);
 
   const reminderPreviewHtml = useMemo(
     () => (reminderPreview && reminderPreview.payload)

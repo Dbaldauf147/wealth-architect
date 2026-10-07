@@ -8,18 +8,28 @@
    after it. Summing "since the last payment" reports next month's bill as if
    it were this month's — a whole cycle early.
 
-   The window is recovered rather than guessed. paymentReconcile finds, for each
-   past payment, the run of charges that sums to it exactly, which yields the day
-   each statement closed. One cycle on from the last recovered close is the
-   statement the next payment settles.
+   Best is the card's closing day — set on the Transactions page's Statement
+   column, or estimated from the payments by statementWindows.js. The next
+   payment settles the cycle `cyclePaidBy` names for its date: the very
+   function Payment History uses to say which statement a past payment paid,
+   so the estimate and the audit of it measure the same window.
+
+   Without a closing day the window is recovered rather than guessed.
+   paymentReconcile finds, for each past payment, the run of charges that sums
+   to it exactly, which yields the day each statement closed; one cycle on from
+   the last recovered close is the statement the next payment settles. On a real
+   ledger that rarely matches (one stray fee breaks the chain), which is why
+   the closing day comes first.
 
    Where no window can be recovered, the gap between the two most recent
    payments stands in — still a cycle back, which is the part that was wrong.
-   `windowSource` says which of the three applied, and `statementClosed` says
+   `windowSource` says which of the four applied, and `statementClosed` says
    whether the window is complete: once it is, the figure is the bill rather
    than an estimate of it. */
 
 import { paymentsOf, chargesOf, reconcilePayments } from './paymentReconcile.js';
+import { resolveCloseDay } from './statementWindows.js';
+import { cyclePaidBy } from './closeDates.js';
 
 function addDays(d, n) {
   const out = new Date(d);
@@ -178,10 +188,13 @@ function projectNextFromPattern(pattern, after, asOf) {
  *  cards: [{ name, color? }]
  *  transactions: full transaction list (the same shape produced by sheets.js)
  *  asOf: defaults to now
+ *  closeDays: { [card name]: day } — closing days the user set, keyed by the
+ *    same names as `cards`. A card without one gets the estimate from its
+ *    payments, when there's a confident one.
  *
  *  Returns one entry per card with the next projected payment, the charges
  *  feeding into it, and supporting metadata for the UI. */
-export function buildCardSchedule({ cards, transactions, asOf = new Date() }) {
+export function buildCardSchedule({ cards, transactions, asOf = new Date(), closeDays = {} }) {
   // Midnight of `asOf` — recurrence occurrences are date-only (midnight), so
   // comparing against the start of today keeps a payment due today in play.
   const asOfMid = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate());
@@ -239,7 +252,11 @@ export function buildCardSchedule({ cards, transactions, asOf = new Date() }) {
 
     /* The statement the NEXT payment settles.
 
-       Best: a recovered close date, rolled forward one statement cycle (which
+       Best: the card's closing day. The cycle the next payment pays is the one
+       ending on the close at least 20 days before it — exactly how Payment
+       History reads a past payment, so the two can't disagree about the window.
+
+       Then: a recovered close date, rolled forward one statement cycle (which
        is measured from the close dates themselves, not from the payment dates —
        a payment can slip a few days without the statement moving).
 
@@ -261,7 +278,16 @@ export function buildCardSchedule({ cards, transactions, asOf = new Date() }) {
     let statementClose = null;  // inclusive
     let windowSource = 'since-last-payment';
 
-    if (lastEntry && lastEntry.matched && lastEntry.closeDate) {
+    const close = resolveCloseDay({ payments: reconPayments, charges: reconCharges, setDay: closeDays?.[card.name] });
+
+    if (close.day && nextPaymentDate) {
+      const cycle = cyclePaidBy(nextPaymentDate, close.day);
+      // cyclePaidBy's openDate is inclusive; this window's open is exclusive,
+      // so it's the previous close — the day before.
+      statementOpen = addDays(cycle.openDate, -1);
+      statementClose = cycle.closeDate;
+      windowSource = 'closeDay';
+    } else if (lastEntry && lastEntry.matched && lastEntry.closeDate) {
       let cycleDays = cadenceDays;
       if (closes.length >= 2) {
         const span = (closes[closes.length - 1] - closes[0]) / 86400000;
@@ -330,9 +356,13 @@ export function buildCardSchedule({ cards, transactions, asOf = new Date() }) {
       nextPaymentCharges,
       estimatedNextAmount,
       statementOpen,
+      // The statement's first day, for display. statementOpen is exclusive (the
+      // previous close), which reads as the wrong month's last day on a page.
+      statementFrom: statementOpen ? addDays(statementOpen, 1) : null,
       statementClose,
       statementClosed,
       windowSource,
+      close,
     };
   });
 }

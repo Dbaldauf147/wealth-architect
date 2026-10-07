@@ -38,7 +38,8 @@ function deriveCardsFromLiabilities(balances) {
   return out;
 }
 
-function canonicalizeTransactionAccounts(transactions, cards) {
+/** Maps a raw account name to the card it belongs to, or null. */
+function cardMatcher(cards) {
   const byFull = new Map();
   const byDigits = new Map();
   const ambiguous = new Set();
@@ -50,13 +51,31 @@ function canonicalizeTransactionAccounts(transactions, cards) {
       else byDigits.set(digits, c.name);
     }
   }
+  return (name) => {
+    const { full, digits } = parseAccountName(name);
+    return byFull.get(full) || (digits && !ambiguous.has(digits) ? byDigits.get(digits) : null) || null;
+  };
+}
+
+function canonicalizeTransactionAccounts(transactions, cards) {
+  const match = cardMatcher(cards);
   const out = [];
   for (const t of transactions || []) {
-    const { full, digits } = parseAccountName(t.account);
-    let canonical = byFull.get(full);
-    if (!canonical && digits && !ambiguous.has(digits)) canonical = byDigits.get(digits);
+    const canonical = match(t.account);
     if (canonical) out.push(t.account === canonical ? t : { ...t, account: canonical });
     else out.push(t);
+  }
+  return out;
+}
+
+/** Closing days the user set (config.statementCloseDays) are keyed by the raw
+ *  account name from the Transactions page; the schedule wants card names. */
+export function canonicalizeCloseDays(closeDays, cards) {
+  const match = cardMatcher(cards || []);
+  const out = {};
+  for (const [raw, day] of Object.entries(closeDays || {})) {
+    const card = match(raw);
+    if (card && out[card] == null) out[card] = day;
   }
   return out;
 }
@@ -137,6 +156,7 @@ export function buildPaymentReminder(opts) {
     payingAccountLast4 = '1118',
     hiddenCards,
     nicknames = {},
+    closeDays = {},
   } = opts || {};
 
   if (!Array.isArray(cards) || cards.length === 0) return null;
@@ -147,7 +167,7 @@ export function buildPaymentReminder(opts) {
 
   const hiddenSet = new Set(hiddenCards || []);
 
-  const schedule = buildCardSchedule({ cards, transactions, asOf });
+  const schedule = buildCardSchedule({ cards, transactions, asOf, closeDays: canonicalizeCloseDays(closeDays, cards) });
 
   const cardsDueTomorrow = [];
   for (const entry of schedule) {
@@ -166,7 +186,8 @@ export function buildPaymentReminder(opts) {
       // Which statement this settles. Without it the email states a figure and
       // leaves you to work out which month's spending it came from — the thing
       // that made the old number look wrong even when it was.
-      statementOpen: entry.statementOpen || null,
+      // Display only: the statement's first day, not the exclusive boundary.
+      statementOpen: entry.statementFrom || null,
       statementClose: entry.statementClose || null,
       statementClosed: !!entry.statementClosed,
       windowSource: entry.windowSource || null,
@@ -331,7 +352,7 @@ export function renderPaymentReminderHtml(payload, opts = {}) {
       ` : ''}
 
       <div style="margin-top:20px;font-size:11px;color:#94a3b8;line-height:1.5;">
-        Projected dates and amounts come from your historical payment cadence and charges since your last payment. Real statement due dates and balances may differ — confirm in your card issuer's app before relying on these numbers.
+        Projected dates come from your historical payment cadence; amounts are the charges on the statement each payment settles (from the card's closing day where it's known). Real statement due dates and balances may differ — confirm in your card issuer's app before relying on these numbers.
       </div>
     </div>
   </div>
@@ -356,13 +377,14 @@ export function previewPaymentReminder(opts) {
     nicknames = {},
     payingAccountLast4 = '1118',
     tz = 'America/New_York',
+    closeDays = {},
   } = opts || {};
 
   const cards = deriveCardsFromLiabilities(balances);
   if (cards.length === 0) return null;
 
   const canonical = canonicalizeTransactionAccounts(transactions, cards);
-  const schedule = buildCardSchedule({ cards, transactions: canonical });
+  const schedule = buildCardSchedule({ cards, transactions: canonical, closeDays: canonicalizeCloseDays(closeDays, cards) });
   const hiddenSet = new Set(hiddenCards || []);
 
   // Earliest non-hidden upcoming payment becomes the target preview day.
@@ -389,6 +411,7 @@ export function previewPaymentReminder(opts) {
     payingAccountLast4,
     hiddenCards: [...hiddenSet],
     nicknames,
+    closeDays,
   });
 
   return { payload, previewAsOf, projectedDate };

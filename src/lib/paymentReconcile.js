@@ -402,6 +402,12 @@ export function buildPaymentHistory({ transactions, recorded = [], tolerance = 0
       },
       expected,
       variance: expected ? round2(round2(r.payment.amount) - expected.amount) : null,
+      // What the schedule estimates today, asked of this payment: with a
+      // closing day it bills the statement cycle, so its figure is that
+      // cycle's charges and its miss is only what no charge explains.
+      current: r.basis === 'closeDay'
+        ? { amount: r.total, variance: r.drift, charges: r.charges }
+        : null,
     };
   });
 
