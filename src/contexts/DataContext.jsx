@@ -251,6 +251,15 @@ const saveCardMap = (v) => saveJSON('cardMap', v);
 // page's Statement column when the estimate from payments is wrong.
 const loadStatementCloseDays = () => loadJSON('statementCloseDays', {}) || {};
 const saveStatementCloseDays = (v) => saveJSON('statementCloseDays', v);
+// Eating-out charges matched to Prep Day spots (see lib/placeMatch.js and the
+// Eating Out page). placeLinks: { [txnKey]: { placeId, placeName } } — one per
+// charge sent to Prep Day as a visit. placeRules: { [merchantKey]: { placeId,
+// placeName } } — "this merchant is this spot", so the next charge from it is
+// suggested without asking.
+const loadPlaceLinks = () => loadJSON('placeLinks', {}) || {};
+const savePlaceLinks = (v) => saveJSON('placeLinks', v);
+const loadPlaceRules = () => loadJSON('placeRules', {}) || {};
+const savePlaceRules = (v) => saveJSON('placeRules', v);
 
 // Card promotions — the credits each card gives back. Same story as cardMap
 // above: these lived in localStorage, written straight from CardPromosPage, so
@@ -475,6 +484,8 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.accountGroups, remote.accountGroups],
     [merged.cardMap, remote.cardMap],
     [merged.statementCloseDays, remote.statementCloseDays],
+    [merged.placeLinks, remote.placeLinks],
+    [merged.placeRules, remote.placeRules],
     [merged.promoTags, remote.promoTags],
     [merged.assetClasses, remote.assetClasses],
     [merged.netWorthCategories, remote.netWorthCategories],
@@ -561,6 +572,8 @@ function readLocalConfig() {
     accountGroups: loadAccountGroups(),
     cardMap: loadCardMap(),
     statementCloseDays: loadStatementCloseDays(),
+    placeLinks: loadPlaceLinks(),
+    placeRules: loadPlaceRules(),
     cardPromos: loadCardPromos(),
     promoTags: loadPromoTags(),
     assetClasses: loadAssetClasses(),
@@ -614,6 +627,8 @@ function mergeConfig(remote, locals) {
     accountGroups: unionMap(locals.accountGroups, remote.accountGroups),
     cardMap: unionMap(locals.cardMap, remote.cardMap),
     statementCloseDays: unionMap(locals.statementCloseDays, remote.statementCloseDays),
+    placeLinks: unionMap(locals.placeLinks, remote.placeLinks),
+    placeRules: unionMap(locals.placeRules, remote.placeRules),
     cardPromos: locals.cardPromos || remote.cardPromos || null,
     promoTags: unionMap(locals.promoTags, remote.promoTags),
     assetClasses: unionMap(locals.assetClasses, remote.assetClasses),
@@ -681,6 +696,8 @@ function buildSyncPayload(v) {
     accountGroups: v.accountGroups,
     cardMap: v.cardMap,
     statementCloseDays: v.statementCloseDays,
+    placeLinks: v.placeLinks || {},
+    placeRules: v.placeRules || {},
     cardPromos: v.cardPromos ?? null,
     promoTags: v.promoTags,
     assetClasses: v.assetClasses,
@@ -790,6 +807,8 @@ export function DataProvider({ children }) {
   const [accountGroups, setAccountGroups] = useState(loadAccountGroups);
   const [cardMap, setCardMapState] = useState(loadCardMap);
   const [statementCloseDays, setStatementCloseDaysState] = useState(loadStatementCloseDays);
+  const [placeLinks, setPlaceLinksState] = useState(loadPlaceLinks);
+  const [placeRules, setPlaceRulesState] = useState(loadPlaceRules);
   const [cardPromos, setCardPromosState] = useState(loadCardPromos);
   const [promoTags, setPromoTags] = useState(loadPromoTags);
   const [assetClasses, setAssetClasses] = useState(loadAssetClasses);
@@ -859,6 +878,8 @@ export function DataProvider({ children }) {
     setAccountGroups(m.accountGroups); saveAccountGroups(m.accountGroups);
     setCardMapState(m.cardMap); saveCardMap(m.cardMap);
     setStatementCloseDaysState(m.statementCloseDays || {}); saveStatementCloseDays(m.statementCloseDays || {});
+    setPlaceLinksState(m.placeLinks || {}); savePlaceLinks(m.placeLinks || {});
+    setPlaceRulesState(m.placeRules || {}); savePlaceRules(m.placeRules || {});
     setCardPromosState(m.cardPromos); saveCardPromos(m.cardPromos);
     setPromoTags(m.promoTags); savePromoTags(m.promoTags);
     setAssetClasses(m.assetClasses); saveAssetClasses(m.assetClasses);
@@ -992,7 +1013,7 @@ export function DataProvider({ children }) {
     if (!syncHydrated.current) return;
     const currentConfig = {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
-      transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, statementCloseDays, cardPromos, promoTags, assetClasses,
+      transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, statementCloseDays, placeLinks, placeRules, cardPromos, promoTags, assetClasses,
       netWorthCategories, netWorthLiquidCategories, netWorthPrefs, customAssets,
       customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, splitwisePrefs, weeklyEmailSections, weeklyEmailDay,
       customCategories, hiddenCategories, rangeExcludedCategories, rangeExcludedSeeded, shortTermLoan, robinhoodTrades, organizedCategories,
@@ -1032,6 +1053,8 @@ export function DataProvider({ children }) {
     accountGroups,
     cardMap,
     statementCloseDays,
+    placeLinks,
+    placeRules,
     cardPromos,
     promoTags,
     assetClasses,
@@ -1469,6 +1492,25 @@ export function DataProvider({ children }) {
       if (d >= 1 && d <= 31) next[accountName] = d;
       else delete next[accountName];
       saveStatementCloseDays(next);
+      return next;
+    });
+  }, []);
+
+  // Record which charges were sent to Prep Day, and which merchants map to
+  // which spot. `links` / `rules`: { [key]: value | null } — null removes.
+  const updatePlaceLinks = useCallback((links) => {
+    setPlaceLinksState(prev => {
+      const next = { ...prev };
+      for (const [k, v] of Object.entries(links || {})) { if (v) next[k] = v; else delete next[k]; }
+      savePlaceLinks(next);
+      return next;
+    });
+  }, []);
+  const updatePlaceRules = useCallback((rules) => {
+    setPlaceRulesState(prev => {
+      const next = { ...prev };
+      for (const [k, v] of Object.entries(rules || {})) { if (v) next[k] = v; else delete next[k]; }
+      savePlaceRules(next);
       return next;
     });
   }, []);
@@ -2363,6 +2405,8 @@ export function DataProvider({ children }) {
     setAccountNickname,
     setCardForAccount,
     setStatementCloseDay,
+    updatePlaceLinks,
+    updatePlaceRules,
     setCardPromos,
     setPromoTagForTransactions,
     clearPromoTagsFor,
@@ -2436,6 +2480,8 @@ export function DataProvider({ children }) {
     setAccountNickname,
     setCardForAccount,
     setStatementCloseDay,
+    updatePlaceLinks,
+    updatePlaceRules,
     setCardPromos,
     setPromoTagForTransactions,
     clearPromoTagsFor,
@@ -2526,6 +2572,8 @@ export function DataProvider({ children }) {
     accountGroups: shownMaps.accountGroups,
     cardMap: shownMaps.cardMap,
     statementCloseDays: shownMaps.statementCloseDays,
+    placeLinks,
+    placeRules,
     cardPromos: cardPromos ?? SEED_PROMOS,
     promoTags,
     assetClasses: shownMaps.assetClasses,
@@ -2587,6 +2635,8 @@ export function DataProvider({ children }) {
     hiddenIds,
     splitTags,
     cardPromos,
+    placeLinks,
+    placeRules,
     promoTags,
     privacyMode,
     revealTicker,

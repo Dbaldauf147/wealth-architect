@@ -75,6 +75,7 @@ const OvershotPage = lazy(() => import('./pages/OvershotPage').then(m => ({ defa
 const CardPromosPage = lazy(() => import('./pages/CardPromosPage').then(m => ({ default: m.CardPromosPage })));
 const SplitwisePage = lazy(() => import('./pages/SplitwisePage').then(m => ({ default: m.SplitwisePage })));
 const TrendsPage = lazy(() => import('./pages/TrendsPage').then(m => ({ default: m.TrendsPage })));
+const EatingOutPage = lazy(() => import('./pages/EatingOutPage').then(m => ({ default: m.EatingOutPage })));
 const NetWorthPage = lazy(() => import('./pages/NetWorthPage').then(m => ({ default: m.NetWorthPage })));
 const ShortTermLoanPage = lazy(() => import('./pages/ShortTermLoanPage').then(m => ({ default: m.ShortTermLoanPage })));
 const HomeBuyingPage = lazy(() => import('./pages/HomeBuyingPage').then(m => ({ default: m.HomeBuyingPage })));
@@ -152,6 +153,7 @@ const NAV_ITEMS = [
   { id: 'networth', label: 'Net Worth', icon: 'show_chart' },
   { id: 'stocks', label: 'Stock Performance', icon: 'candlestick_chart' },
   { id: 'trends', label: 'Spending Trends', icon: 'trending_up' },
+  { id: 'eatingout', label: 'Eating Out', icon: 'restaurant' },
   { id: 'budgets', label: 'Budgets', icon: 'savings' },
   { id: 'recurring', label: 'Recurring', icon: 'autorenew' },
   { id: 'home', label: 'Buying a Home', icon: 'home_work' },
@@ -238,6 +240,7 @@ export function App() {
       case 'networth': return <NetWorthPage />;
       case 'stocks': return <StockPerformancePage />;
       case 'trends': return <TrendsPage />;
+      case 'eatingout': return <EatingOutPage />;
       case 'budgets': return <BudgetsPage />;
       case 'recurring': return <RecurringPage />;
       case 'assets': return <AssetsPage />;
