@@ -2,7 +2,7 @@ import { Fragment, useCallback, useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { buildCardSchedule } from '../lib/cardSchedule';
 import { computeCardLookback } from '../lib/cashflowExport';
-import { comparePaymentForCard, buildChargeSheets, buildPaymentHistory } from '../lib/paymentReconcile';
+import { comparePaymentForCard, buildChargeSheets, buildPaymentHistory, auditPrediction } from '../lib/paymentReconcile';
 import { resolveCloseDay, ordinal } from '../lib/statementWindows';
 import { downloadXlsx } from '../lib/xlsx';
 import {
@@ -108,6 +108,96 @@ function parseAccountName(s) {
   return { full, core, digits };
 }
 
+/* Payment History's Audit column: how many charges the estimate got wrong for
+   this payment, and their net effect. Opens the per-charge breakdown. */
+function HistoryAuditCell({ audit, open, onToggle }) {
+  if (!audit || audit.status === 'unknown') {
+    return (
+      <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }} title={audit?.note || ''}>
+        can't audit
+      </span>
+    );
+  }
+  if (audit.status === 'ok') {
+    return (
+      <span style={{ color: '#16a34a', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 3 }}
+        title="Every charge the estimate counted is the one the statement billed">
+        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>verified</span>
+        correct
+      </span>
+    );
+  }
+  const n = audit.items.length;
+  const label = n ? `${n} charge${n === 1 ? '' : 's'}` : 'non-charge gap';
+  return (
+    <button
+      type="button"
+      className={styles.figureBtn}
+      onClick={onToggle}
+      aria-expanded={open}
+      title="Show which charges the estimate got wrong and why"
+      style={{ color: '#a36b00' }}
+    >
+      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>report</span>
+      {label}
+      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{open ? 'expand_less' : 'expand_more'}</span>
+    </button>
+  );
+}
+
+const AUDIT_KIND = {
+  missed: { label: 'Missed by estimate', color: '#ba1a1a' },
+  extra: { label: 'Counted, not billed', color: '#a36b00' },
+  changed: { label: 'Amount changed', color: '#6b4fbb' },
+  residual: { label: 'Not a charge', color: 'var(--color-text-secondary)' },
+};
+
+function signedMoney(n) {
+  if (!n) return fmtCents(0);
+  return `${n > 0 ? '+' : '−'}${fmtCents(Math.abs(n))}`;
+}
+
+function HistoryAuditDetail({ audit }) {
+  const rows = audit.items.map(i => ({ ...i, date: i.charge._date, description: i.charge.description }));
+  if (audit.residual) {
+    rows.push({ kind: 'residual', date: null, description: 'Payment vs. statement charges', impact: audit.residual, reason: audit.residualReason });
+  }
+  return (
+    <div data-testid="history-audit">
+      {audit.note && <div className={styles.emptyDrill} style={{ paddingBottom: 0 }}>{audit.note}</div>}
+      <table className={styles.drillTable}>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Charge</th>
+            <th>What went wrong</th>
+            <th style={{ textAlign: 'right' }} title="Effect on the payment vs. the estimate: + made the real payment bigger">Effect</th>
+            <th>Why it wasn't predicted correctly</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i}>
+              <td style={{ whiteSpace: 'nowrap' }}>{r.date ? fmtDate(r.date) : '—'}</td>
+              <td>
+                {r.description || '—'}
+                {r.charge && (
+                  <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{fmtCents(-r.charge.amount)}</div>
+                )}
+              </td>
+              <td style={{ whiteSpace: 'nowrap', color: AUDIT_KIND[r.kind].color, fontWeight: 600 }}>{AUDIT_KIND[r.kind].label}</td>
+              <td style={{ whiteSpace: 'nowrap', textAlign: 'right', fontWeight: 700, color: r.impact > 0 ? '#ba1a1a' : '#16a34a' }}>
+                {signedMoney(r.impact)}
+              </td>
+              <td style={{ color: 'var(--color-text-secondary)', minWidth: 280 }}>{r.reason}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function CardsPage() {
   const { transactions, balances, accountNicknames, accountNumbers, accountGroups, loading, hiddenCards, paymentReminders, statementCloseDays, privacyMode } = useData();
   const { setAccountNickname, toggleHideCard } = useDataActions();
@@ -123,6 +213,7 @@ export function CardsPage() {
   // Session-only: read in the browser, never saved or synced.
   const [statements, setStatements] = useState({});
   const [auditOpen, setAuditOpen] = useState(() => new Set());
+  const [historyAuditOpen, setHistoryAuditOpen] = useState(() => new Set());
   const hiddenSet = useMemo(() => new Set(hiddenCards || []), [hiddenCards]);
 
   function startRename(originalName) {
@@ -443,6 +534,21 @@ export function CardsPage() {
     rows.sort((a, b) => b.date - a.date);
     return rows;
   }, [cardTransactions, creditCards, paymentReminders, closeDays]);
+
+  /* Per payment: which charges the estimate got wrong, and why. */
+  const historyAudits = useMemo(() => {
+    const out = new Map();
+    for (const h of paymentHistory) out.set(`${h.card}-${h.dateKey}`, auditPrediction(h));
+    return out;
+  }, [paymentHistory]);
+
+  const toggleHistoryAudit = useCallback((key) => {
+    setHistoryAuditOpen(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
 
   // ── Statement audits ──────────────────────────────────────────────────────
   // Everything on an account other than the given card, for spotting a charge
@@ -1501,6 +1607,7 @@ export function CardsPage() {
               <th>Expected</th>
               <th>Actual</th>
               <th>Difference</th>
+              <th title="Charges the estimate counted wrongly for this payment — open a row to see each one and why">Audit</th>
               <th>Charges</th>
               <th>Statement window</th>
             </tr>
@@ -1508,12 +1615,17 @@ export function CardsPage() {
           <tbody>
             {paymentHistory.length === 0 ? (
               <tr>
-                <td colSpan={7} style={{ textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
+                <td colSpan={8} style={{ textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
                   No payments have posted yet.
                 </td>
               </tr>
-            ) : paymentHistory.map((h) => (
-              <tr key={`${h.card}-${h.dateKey}`}>
+            ) : paymentHistory.map((h) => {
+              const key = `${h.card}-${h.dateKey}`;
+              const audit = historyAudits.get(key);
+              const auditIsOpen = historyAuditOpen.has(key);
+              return (
+              <Fragment key={key}>
+              <tr>
                 <td>
                   <div className={styles.cardIdent}>
                     <div className={styles.cardStripe} style={{ background: h.color }} />
@@ -1572,6 +1684,9 @@ export function CardsPage() {
                     </span>
                   )}
                 </td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <HistoryAuditCell audit={audit} open={auditIsOpen} onToggle={() => toggleHistoryAudit(key)} />
+                </td>
                 <td style={{ color: 'var(--color-text-secondary)' }}>{(h.actual.charges || []).length}</td>
                 <td style={{ color: 'var(--color-text-secondary)', whiteSpace: 'nowrap', fontSize: 12 }}>
                   {h.actual.basis === 'closeDay' ? (
@@ -1594,7 +1709,16 @@ export function CardsPage() {
                   ) : '—'}
                 </td>
               </tr>
-            ))}
+              {auditIsOpen && audit && (
+                <tr>
+                  <td colSpan={8} className={styles.expandedCell}>
+                    <HistoryAuditDetail audit={audit} />
+                  </td>
+                </tr>
+              )}
+              </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>

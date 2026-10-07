@@ -8,6 +8,7 @@ import {
   comparePaymentForCard,
   buildChargeSheets,
   buildPaymentHistory,
+  auditPrediction,
 } from './paymentReconcile.js';
 
 const pay = (date, amount) => ({ date, amount, category: 'Credit Card Payment', description: 'Payment Thank You', account: 'CHASE CARD (1234)' });
@@ -354,3 +355,84 @@ describe('with a known statement closing day', () => {
     expect(latest.actual.basis).toBe('runMatch');
   });
 });
+
+describe('auditPrediction', () => {
+  // Closes the 15th. The 2026-09-11 payment pays Jul 16 – Aug 15; the estimate
+  // counted Aug 12 – Sep 10 (after the previous payment, before this one).
+  const id = (t, transactionId) => ({ ...t, transactionId });
+  const txns = [
+    buy('2026-07-01', -150, 'Prev statement'),
+    pay('2026-08-11', 150),
+    id(buy('2026-07-20', -200, 'Old dinner'), 'old'),
+    id(buy('2026-08-13', -40, 'Gas'), 'gas'),
+    id(buy('2026-08-20', -60, 'After close'), 'late'),
+    pay('2026-09-11', 245),
+  ];
+  const latest = () => buildPaymentHistory({ transactions: txns, closeDay: 15 })[0];
+
+  it('names the charges each side got wrong and why', () => {
+    const row = latest();
+    expect(row.expected.amount).toBe(100);
+    expect(row.variance).toBe(145);
+    const a = auditPrediction(row);
+    expect(a.status).toBe('miss');
+    expect(a.items.map(i => [i.kind, i.charge.description, i.impact])).toEqual([
+      ['missed', 'Old dinner', 200],
+      ['extra', 'After close', -60],
+    ]);
+    expect(a.items[0].reason).toMatch(/on or before the previous payment/);
+    expect(a.items[1].reason).toMatch(/after the statement closed/);
+  });
+
+  it('puts what no charge explains in the residual, so it all adds up to the variance', () => {
+    const row = latest();
+    const a = auditPrediction(row);
+    expect(a.residual).toBe(5);
+    expect(a.residualReason).toMatch(/interest, a fee/);
+    expect(round(a.explained + a.residual)).toBe(row.variance);
+  });
+
+  it('reports a charge counted at one amount and posted at another as changed', () => {
+    const rows = buildPaymentHistory({
+      transactions: txns,
+      closeDay: 15,
+      recorded: [{
+        dateKey: '2026-09-11', amount: 90, sentAt: '2026-09-10T12:00:00Z',
+        charges: [id(buy('2026-08-13', -30, 'Gas'), 'gas'), id(buy('2026-08-20', -60, 'After close'), 'late')],
+      }],
+    });
+    const a = auditPrediction(rows[0]);
+    const changed = a.items.find(i => i.kind === 'changed');
+    expect(changed.charge.description).toBe('Gas');
+    expect(changed.impact).toBe(10);
+    expect(a.items.filter(i => i.charge.description === 'Gas')).toHaveLength(1);
+  });
+
+  it('falls back to the rebuilt lines when the emailed record kept none', () => {
+    const rows = buildPaymentHistory({
+      transactions: txns,
+      closeDay: 15,
+      recorded: [{ dateKey: '2026-09-11', amount: 100, sentAt: '2026-09-10T12:00:00Z' }],
+    });
+    const a = auditPrediction(rows[0]);
+    expect(a.note).toMatch(/rebuilt from the ledger/);
+    expect(a.items.map(i => i.charge.description)).toEqual(['Old dinner', 'After close']);
+  });
+
+  it('is clean when the estimate and the statement agree', () => {
+    const clean = [
+      buy('2026-07-01', -150), pay('2026-08-11', 150),
+      buy('2026-08-12', -80, 'Only'), pay('2026-09-11', 80),
+    ];
+    // Close on the 15th puts Aug 12 in neither window cleanly; use the 12th.
+    const [row] = buildPaymentHistory({ transactions: clean, closeDay: 12 });
+    expect(auditPrediction(row)).toMatchObject({ status: 'ok', items: [], residual: 0 });
+  });
+
+  it("can't audit a payment whose statement wasn't found", () => {
+    const [row] = buildPaymentHistory({ transactions: [buy('2026-08-01', -20), pay('2026-08-15', 999)] });
+    expect(auditPrediction(row).status).toBe('unknown');
+  });
+});
+
+function round(n) { return Math.round(n * 100) / 100; }

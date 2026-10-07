@@ -377,6 +377,9 @@ export function buildPaymentHistory({ transactions, recorded = [], tolerance = 0
         windowEnd: expected ? expected.windowEnd : null,
         source: 'emailed',
         sentAt: rec.sentAt || null,
+        // What the ledger says the email would have counted, for the audit
+        // when the record carries an amount but not its lines.
+        reconstructedCharges: expected ? expected.charges : [],
       };
     }
 
@@ -404,6 +407,166 @@ export function buildPaymentHistory({ transactions, recorded = [], tolerance = 0
 
   rows.reverse(); // newest first — the one you're asking about is the recent one
   return rows;
+}
+
+/* ── Prediction audit ──────────────────────────────────────────────────────
+   Which charges the estimate got wrong for one payment, and why.
+
+   The estimate is "charges since the previous payment, up to the day before
+   this one"; the payment is the statement that closed weeks earlier. Lining
+   the two charge lists up shows exactly where they part company, and each
+   difference has a cause that can be read off its date:
+
+     missed    on the statement, not in the estimate
+     extra     in the estimate, not on the statement
+     changed   in both, at different amounts (a pending charge that posted
+               for more — usually a tip — or an edit after the email)
+
+   Whatever the lines don't account for is the residual: interest, a fee, a
+   carried balance or a partial payment, none of which is a charge either side
+   could have counted.
+
+   `impact` is signed like the row's variance: positive when the item made the
+   real payment bigger than the estimate. Items plus residual add back up to
+   the variance, so nothing is left unexplained. */
+
+function chargeKey(t) {
+  if (t.transactionId) return `id:${t.transactionId}|${round2(t.amount)}`;
+  return `${dayKey(t._date)}|${round2(t.amount)}|${String(t.description || '').trim().toLowerCase()}`;
+}
+
+/** Same charge on both sides, ignoring amount — used only to tell "changed"
+ *  from an unrelated missed/extra pair. */
+function looseKey(t) {
+  if (t.transactionId) return `id:${t.transactionId}`;
+  return `${dayKey(t._date)}|${String(t.description || '').trim().toLowerCase()}`;
+}
+
+function longDay(d) {
+  return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '?';
+}
+
+function money(n) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Math.abs(n || 0));
+}
+
+function missedReason(c, { expected, actual }) {
+  const start = expected.windowStart;
+  if (start && c._date <= start) {
+    return `Dated ${longDay(c._date)}, on or before the previous payment (${longDay(start)}). `
+      + 'The estimate only counts charges after the last payment, but the card billed it on the statement '
+      + `that closed ${longDay(actual.closeDate)} — so this payment covered it and the estimate didn't.`;
+  }
+  if (expected.source === 'emailed') {
+    const sent = expected.sentAt ? ` (sent ${longDay(new Date(expected.sentAt))})` : '';
+    return `Inside the estimate's window but not in the emailed list${sent} — `
+      + 'it most likely reached the sheet after the reminder went out.';
+  }
+  return "Inside the estimate's window but not counted by it.";
+}
+
+function extraReason(c, { actual }) {
+  if (actual.closeDate && c._date > actual.closeDate) {
+    return `Dated ${longDay(c._date)}, after the statement closed on ${longDay(actual.closeDate)}. `
+      + "It's on next month's bill, but the estimate counted everything up to the day before the payment.";
+  }
+  if (actual.openDate && c._date < actual.openDate) {
+    return `Dated ${longDay(c._date)}, before this statement opened (${longDay(actual.openDate)}) — `
+      + 'it was billed and paid on the previous statement.';
+  }
+  return "Within the statement's dates but no longer on this card in the ledger — "
+    + 'recategorised, moved to another account or deleted after the estimate was made.';
+}
+
+/** Audit one Payment History row. See the block comment above. */
+export function auditPrediction(row) {
+  const { expected, actual } = row || {};
+  if (!expected || !actual) {
+    return { status: 'unknown', items: [], residual: 0, residualReason: null, note: 'No estimate to compare against.' };
+  }
+  if (actual.basis !== 'closeDay' && !actual.matched) {
+    return {
+      status: 'unknown',
+      items: [],
+      residual: 0,
+      residualReason: null,
+      note: "The statement behind this payment couldn't be found — no closing day is set and no run of charges sums to it. "
+        + "Set the closing day from the Transactions page's Statement column to audit it.",
+    };
+  }
+
+  let expCharges = expected.charges || [];
+  let note = null;
+  if (expCharges.length === 0 && (expected.reconstructedCharges || []).length) {
+    expCharges = expected.reconstructedCharges;
+    note = "The emailed figure didn't keep its charge list, so the estimate's charges are rebuilt from the ledger.";
+  }
+
+  // Multiset difference on the exact key: what's left on each side is the
+  // disagreement.
+  const pool = new Map();
+  for (const c of actual.charges || []) {
+    const k = chargeKey(c);
+    if (!pool.has(k)) pool.set(k, []);
+    pool.get(k).push(c);
+  }
+  const extra = [];
+  for (const c of expCharges) {
+    const bucket = pool.get(chargeKey(c));
+    if (bucket && bucket.length) bucket.shift();
+    else extra.push(c);
+  }
+  const missed = [...pool.values()].flat();
+
+  // A leftover on each side that's the same charge at a new amount is one
+  // "changed" item, not a missed and an extra.
+  const missedByLoose = new Map();
+  for (const c of missed) {
+    const k = looseKey(c);
+    if (!missedByLoose.has(k)) missedByLoose.set(k, []);
+    missedByLoose.get(k).push(c);
+  }
+  const paired = new Set();
+  const items = [];
+  const ctx = { expected, actual };
+  for (const c of extra) {
+    const twin = (missedByLoose.get(looseKey(c)) || []).shift();
+    if (twin) {
+      paired.add(twin);
+      items.push({
+        kind: 'changed',
+        charge: twin,
+        impact: round2(c.amount - twin.amount),
+        reason: `The estimate counted it at ${money(c.amount)}; it posted at ${money(twin.amount)}. `
+          + 'A pending charge that settled for a different amount (a tip, a hotel or fuel hold) or an edit after the estimate.',
+      });
+    } else {
+      items.push({ kind: 'extra', charge: c, impact: round2(c.amount), reason: extraReason(c, ctx) });
+    }
+  }
+  for (const c of missed) {
+    if (paired.has(c)) continue;
+    items.push({ kind: 'missed', charge: c, impact: round2(-c.amount), reason: missedReason(c, ctx) });
+  }
+  items.sort((a, b) => a.charge._date - b.charge._date);
+
+  const explained = round2(items.reduce((s, i) => s + i.impact, 0));
+  const residual = round2(round2(actual.amount - expected.amount) - explained);
+  const material = Math.abs(residual) >= 1;
+  const ownLines = owedFor(expCharges);
+  return {
+    status: items.length === 0 && !material ? 'ok' : 'miss',
+    items,
+    explained,
+    residual: material ? residual : 0,
+    residualReason: material
+      ? `The payment was ${money(actual.amount)} but the statement's charges total ${money(actual.total)}`
+        + (Math.abs(ownLines - expected.amount) >= 1 ? `, and the estimate's own lines total ${money(ownLines)} against its ${money(expected.amount)}` : '')
+        + '. That part is interest, a fee, a balance carried from an earlier month or a partial or extra payment — '
+        + 'not a charge the estimate could have counted.'
+      : null,
+    note,
+  };
 }
 
 /** Sheets for the .xlsx export behind one of the two figures.
