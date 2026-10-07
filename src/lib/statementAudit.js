@@ -388,3 +388,160 @@ export function accountForLast4(last4, accounts, accountNumbers = {}) {
   if (!last4) return null;
   return accounts.find(a => String(accountNumbers[a] || '').endsWith(last4) || a.includes(last4)) || null;
 }
+
+/** The period to audit for a statement that didn't print one: the card's
+ *  billing cycle that holds its newest line, when the closing day is known
+ *  and every line fits inside it; otherwise the span of the lines themselves,
+ *  since a file that crosses a close isn't one statement. */
+export function periodForStatement(lines, closeDay) {
+  const span = periodOfLines(lines);
+  if (!span || !closeDay) return span;
+  const closeIn = (y, m) => new Date(y, m, Math.min(closeDay, new Date(y, m + 1, 0).getDate()));
+  const last = span.end;
+  let close = closeIn(last.getFullYear(), last.getMonth());
+  if (close < last) close = closeIn(last.getFullYear(), last.getMonth() + 1);
+  const prev = closeIn(close.getFullYear(), close.getMonth() - 1);
+  const start = new Date(prev.getFullYear(), prev.getMonth(), prev.getDate() + 1);
+  return span.start >= start ? { start, end: close } : span;
+}
+
+// Issuer-side lines a ledger fed from bank transactions usually never sees.
+const ISSUER_FEE = /\b(interest charge|finance charge|interest on|late (payment )?fee|annual (membership )?fee|membership fee|foreign transaction fee|cash advance fee|returned payment fee|over ?limit fee)\b/i;
+// How far either side of the period to look for a charge the tracker put in
+// another cycle.
+const CYCLE_REACH_DAYS = 45;
+
+/**
+ * Why each line that didn't tie out didn't: one finding per misallocated
+ * charge, with the reason it landed where it did and its effect on the gap.
+ *
+ * `billedMore` is the finding's share of (statement − tracker) in charge
+ * terms: positive when the statement bills more than the tracker expected.
+ * The findings' billedMore sum to −audit.totals.difference, so the report
+ * accounts for the whole gap rather than a sample of it.
+ *
+ * @param audit              auditStatement's result
+ * @param period             the period it was run over
+ * @param cardTransactions   the ledger for this card — all dates, not just the period
+ * @param otherTransactions  every other account's ledger, to spot a charge filed on the wrong card
+ * @returns { findings: [{ kind, reason, date, description, amount, billedMore, statement?, ledger?, other? }], counts }
+ */
+export function explainAudit({ audit, period, cardTransactions = [], otherTransactions = [] }) {
+  const start = startOfDay(period.start);
+  const end = startOfDay(period.end);
+  const findings = [];
+  const fmt = n => `$${Math.abs(n).toFixed(2)}`;
+  const day = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const desc = t => `${t.description || ''} ${t.fullDescription || ''}`;
+
+  const claimed = new Set([...audit.matched, ...audit.differs].map(m => m.ledger));
+  const unexpected = [...audit.unexpected];
+  const missing = [...audit.missing];
+
+  // 1. The same charge on both sides, dated too far apart to match. Paired
+  //    first so neither half is also reported on its own.
+  for (let i = missing.length - 1; i >= 0; i--) {
+    const s = missing[i];
+    let best = -1;
+    let bestScore = 0;
+    unexpected.forEach((t, j) => {
+      if (cents(t.amount) !== cents(s.amount)) return;
+      const score = similarity(s.description, desc(t)) + 1 / (1 + daysApart(s.date, ledgerDate(t)));
+      if (score > bestScore) { best = j; bestScore = score; }
+    });
+    if (best < 0) continue;
+    const t = unexpected.splice(best, 1)[0];
+    missing.splice(i, 1);
+    const gap = daysApart(s.date, ledgerDate(t));
+    findings.push({
+      kind: 'dated',
+      reason: `Same charge, but the tracker dates it ${day(ledgerDate(t))}, ${gap} days from the statement's ${day(s.date)}. It's on the right statement; only the date is off.`,
+      date: s.date, description: s.description, amount: s.amount, billedMore: 0, statement: s, ledger: t,
+    });
+  }
+
+  // 2. On the statement, not tracked on this card in the period.
+  const otherPool = otherTransactions.map(t => ({ t, date: ledgerDate(t) })).filter(x => x.date);
+  const cardPool = cardTransactions
+    .filter(t => !claimed.has(t))
+    .map(t => ({ t, date: ledgerDate(t) }))
+    .filter(x => x.date && (x.date < start || x.date > end));
+  const used = new Set();
+  const sameCents = (pool, s) => pool
+    .filter(x => !used.has(x.t) && cents(x.t.amount) === cents(s.amount))
+    .sort((a, b) => daysApart(a.date, s.date) - daysApart(b.date, s.date));
+  for (const s of missing) {
+    const base = { date: s.date, description: s.description, amount: s.amount, billedMore: round2(-s.amount), statement: s };
+
+    const elsewhere = sameCents(otherPool, s).find(x => daysApart(x.date, s.date) <= MATCH_DAYS + 1);
+    if (elsewhere) {
+      used.add(elsewhere.t);
+      findings.push({
+        ...base, kind: 'otherCard', other: elsewhere.t,
+        reason: `The tracker has it on ${elsewhere.t.account || 'another account'} (${day(elsewhere.date)}, "${elsewhere.t.description}"), not this card, so it's counted against the wrong card.`,
+      });
+      continue;
+    }
+    const shifted = sameCents(cardPool, s).find(x => daysApart(x.date, s.date) <= CYCLE_REACH_DAYS);
+    if (shifted) {
+      used.add(shifted.t);
+      const later = shifted.date > end;
+      findings.push({
+        ...base, kind: 'otherCycle', ledger: shifted.t,
+        reason: `The tracker dates it ${day(shifted.date)}, ${later ? 'after this statement closed' : 'before this statement opened'}, so it counts toward the ${later ? 'next' : 'previous'} payment instead of this one.`,
+      });
+      continue;
+    }
+    if (ISSUER_FEE.test(s.description)) {
+      findings.push({ ...base, kind: 'fee', reason: 'Charged by the card issuer. Interest and fees are billed on the statement but never arrive in the tracker as transactions.' });
+      continue;
+    }
+    findings.push({
+      ...base, kind: 'notTracked',
+      reason: s.amount > 0
+        ? 'A credit the issuer applied that the tracker has no record of on any account.'
+        : "Not in the tracker on any account. The sync missed it, or it's a charge you didn't make.",
+    });
+  }
+
+  // 3. Tracked on this card in the period, not billed.
+  for (const t of unexpected) {
+    const d = ledgerDate(t);
+    const amount = Number(t.amount);
+    const base = { date: d, description: t.description, amount, billedMore: round2(amount), ledger: t };
+    const twin = cardTransactions.find(o => o !== t && claimed.has(o)
+      && cents(o.amount) === cents(amount) && daysApart(ledgerDate(o), d) <= 3
+      && similarity(desc(o), desc(t)) >= 0.5);
+    if (twin) {
+      findings.push({ ...base, kind: 'duplicate', reason: `Looks like a duplicate: the tracker also has "${twin.description}" for ${fmt(amount)} on ${day(ledgerDate(twin))}, and the statement billed it once.` });
+    } else if (daysApart(d, end) < MATCH_DAYS) {
+      findings.push({ ...base, kind: 'afterClose', reason: `Dated ${day(d)}, right at the close on ${day(end)}. It most likely posted after the cut-off and is on the next statement.` });
+    } else if (daysApart(d, start) < MATCH_DAYS) {
+      findings.push({ ...base, kind: 'beforeOpen', reason: `Dated ${day(d)}, right as this cycle opened on ${day(start)}. It most likely posted on the previous statement.` });
+    } else {
+      findings.push({ ...base, kind: 'notBilled', reason: 'In the tracker on this card, but the issuer never billed it: declined or reversed, a pending charge that dropped off, or it was made on a different card.' });
+    }
+  }
+
+  // 4. Billed, but not for what the tracker says.
+  for (const m of audit.differs) {
+    const billed = -m.statement.amount;
+    const tracked = -m.ledger.amount;
+    const extra = round2(billed - tracked);
+    const share = tracked > 0 ? extra / tracked : 0;
+    const reason = extra > 0 && share >= 0.1 && share <= 0.35
+      ? `Billed ${fmt(billed)} against ${fmt(tracked)} in the tracker, ${Math.round(share * 100)}% more: what a tip added after the card was swiped looks like.`
+      : extra > 0
+        ? `Billed ${fmt(billed)} against ${fmt(tracked)} in the tracker. The final amount settled higher (currency conversion, a changed order, or a pre-authorisation).`
+        : `Billed ${fmt(billed)} against ${fmt(tracked)} in the tracker. The final amount settled lower (a partial refund, a discount, or a pre-authorisation).`;
+    findings.push({
+      kind: 'amount', reason, date: m.statement.date, description: m.statement.description,
+      amount: m.statement.amount, billedMore: round2(-m.delta), statement: m.statement, ledger: m.ledger,
+    });
+  }
+
+  findings.sort((a, b) => Math.abs(b.billedMore) - Math.abs(a.billedMore) || a.date - b.date);
+  const counts = {};
+  for (const f of findings) counts[f.kind] = (counts[f.kind] || 0) + 1;
+  return { findings, counts };
+}

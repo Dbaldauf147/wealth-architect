@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseMoney, parseDate, splitCsv, parseStatementCsv, parseStatementText,
   checkAgainstSummary, similarity, auditStatement, periodOfLines, accountForLast4,
+  explainAudit, periodForStatement,
 } from './statementAudit.js';
 
 const d = (y, m, day) => new Date(y, m - 1, day);
@@ -202,5 +203,72 @@ describe('helpers', () => {
     expect(accountForLast4('1947', accts)).toBe('CREDIT CARD (-1947)');
     expect(accountForLast4('1551', accts, { 'Cash Rewards': 'xxxx1551' })).toBe('Cash Rewards');
     expect(accountForLast4('9999', accts)).toBeNull();
+  });
+});
+
+describe('explainAudit', () => {
+  const period = { start: d(2026, 8, 27), end: d(2026, 9, 26) };
+  const L = (date, description, amount) => ({ date, description, amount });
+  const lines = [
+    L(d(2026, 9, 2), 'WHOLE FOODS #123', -80),          // on the other card in the tracker
+    L(d(2026, 9, 4), 'SHELL OIL', -40),                // tracker dated it into the next cycle
+    L(d(2026, 9, 10), 'BISTRO 21', -60),               // tip added: tracker has 50
+    L(d(2026, 9, 26), 'INTEREST CHARGE ON PURCHASES', -12.34),
+    L(d(2026, 9, 12), 'MYSTERY LLC', -9.99),           // nowhere in the tracker
+    L(d(2026, 9, 1), 'SPOTIFY', -10),
+    L(d(2026, 9, 14), 'HULU', -18),                    // tracker has it 9 days off, still in the period
+  ];
+  const card = [
+    { transactionId: 's', date: '9/1/2026', description: 'Spotify', amount: -10 },
+    { transactionId: 's2', date: '9/2/2026', description: 'Spotify', amount: -10 },  // duplicate
+    { transactionId: 'o', date: '10/3/2026', description: 'Shell', amount: -40 },
+    { transactionId: 'b', date: '9/10/2026', description: 'Bistro 21', amount: -50 },
+    { transactionId: 'h', date: '9/5/2026', description: 'Hulu', amount: -18 },
+    { transactionId: 'z', date: '9/25/2026', description: 'Uber', amount: -22 },      // at the close
+    { transactionId: 'n', date: '9/15/2026', description: 'Gym', amount: -30 },       // never billed
+  ];
+  const other = [{ transactionId: 'w', account: 'Checking 1234', date: '9/2/2026', description: 'Whole Foods', amount: -80 }];
+  const audit = auditStatement({ statementLines: lines, transactions: card, period });
+  const { findings } = explainAudit({ audit, period, cardTransactions: card, otherTransactions: other });
+  const kindOf = text => findings.find(f => f.description === text)?.kind;
+
+  it('gives every charge that did not tie out a reason', () => {
+    expect(kindOf('WHOLE FOODS #123')).toBe('otherCard');
+    expect(findings.find(f => f.kind === 'otherCard').reason).toMatch(/Checking 1234/);
+    expect(kindOf('SHELL OIL')).toBe('otherCycle');
+    expect(findings.find(f => f.kind === 'otherCycle').reason).toMatch(/next payment/);
+    expect(kindOf('BISTRO 21')).toBe('amount');
+    expect(findings.find(f => f.kind === 'amount').reason).toMatch(/tip/);
+    expect(kindOf('INTEREST CHARGE ON PURCHASES')).toBe('fee');
+    expect(kindOf('MYSTERY LLC')).toBe('notTracked');
+    expect(kindOf('HULU')).toBe('dated');
+    expect(kindOf('Spotify')).toBe('duplicate');
+    expect(kindOf('Uber')).toBe('afterClose');
+    expect(kindOf('Gym')).toBe('notBilled');
+  });
+
+  it('accounts for the whole gap between statement and tracker', () => {
+    const explained = findings.reduce((s, f) => s + f.billedMore, 0);
+    expect(Math.round(explained * 100) / 100).toBe(-audit.totals.difference);
+  });
+
+  it('lists the biggest effect first', () => {
+    expect(findings[0].description).toBe('WHOLE FOODS #123');
+  });
+});
+
+describe('periodForStatement', () => {
+  const lines = [{ date: d(2026, 9, 3) }, { date: d(2026, 9, 18) }];
+  it('uses the card cycle holding the newest line', () => {
+    expect(periodForStatement(lines, 22)).toEqual({ start: d(2026, 8, 23), end: d(2026, 9, 22) });
+  });
+  it('keeps the span of the lines when they cross a close', () => {
+    expect(periodForStatement(lines, 10)).toEqual({ start: d(2026, 9, 3), end: d(2026, 9, 18) });
+  });
+  it('clamps a closing day past the end of a short month', () => {
+    expect(periodForStatement([{ date: d(2026, 2, 10) }], 31)).toEqual({ start: d(2026, 2, 1), end: d(2026, 2, 28) });
+  });
+  it('falls back to the span of the lines without a closing day', () => {
+    expect(periodForStatement(lines, null)).toEqual({ start: d(2026, 9, 3), end: d(2026, 9, 18) });
   });
 });

@@ -5,6 +5,11 @@ import { computeCardLookback } from '../lib/cashflowExport';
 import { comparePaymentForCard, buildChargeSheets, buildPaymentHistory } from '../lib/paymentReconcile';
 import { resolveCloseDay, ordinal } from '../lib/statementWindows';
 import { downloadXlsx } from '../lib/xlsx';
+import {
+  auditStatement, explainAudit, checkAgainstSummary, periodForStatement, accountForLast4, parseDate,
+} from '../lib/statementAudit';
+import { readStatementFile, isoDay } from '../lib/statementFile';
+import { StatementCell, StatementAuditReport } from '../components/StatementAudit';
 import styles from './CardsPage.module.css';
 
 function fmt(n) {
@@ -104,7 +109,7 @@ function parseAccountName(s) {
 }
 
 export function CardsPage() {
-  const { transactions, balances, accountNicknames, accountNumbers, accountGroups, loading, hiddenCards, paymentReminders, statementCloseDays } = useData();
+  const { transactions, balances, accountNicknames, accountNumbers, accountGroups, loading, hiddenCards, paymentReminders, statementCloseDays, privacyMode } = useData();
   const { setAccountNickname, toggleHideCard } = useDataActions();
   const [view, setView] = useState('schedule');
   const [scheduleView, setScheduleView] = useState('calendar');
@@ -114,6 +119,10 @@ export function CardsPage() {
   const [renamingCard, setRenamingCard] = useState(null);
   const [renameValue, setRenameValue] = useState('');
   const [showHidden, setShowHidden] = useState(false);
+  // Statements dropped on the schedule, by card: { fileName, busy, error, parsed, from, to }.
+  // Session-only: read in the browser, never saved or synced.
+  const [statements, setStatements] = useState({});
+  const [auditOpen, setAuditOpen] = useState(() => new Set());
   const hiddenSet = useMemo(() => new Set(hiddenCards || []), [hiddenCards]);
 
   function startRename(originalName) {
@@ -434,6 +443,75 @@ export function CardsPage() {
     rows.sort((a, b) => b.date - a.date);
     return rows;
   }, [cardTransactions, creditCards, paymentReminders, closeDays]);
+
+  // ── Statement audits ──────────────────────────────────────────────────────
+  // Everything on an account other than the given card, for spotting a charge
+  // the tracker filed on the wrong one. Card accounts carry their canonical
+  // name so the reason reads the way the table does.
+  const otherAccountTxns = useMemo(() => {
+    const onCards = new Set(cardTransactions.map(t => t.transactionId).filter(Boolean));
+    const rest = (transactions || []).filter(t => !(t.transactionId && onCards.has(t.transactionId)));
+    return card => [...cardTransactions.filter(t => t.account !== card), ...rest];
+  }, [transactions, cardTransactions]);
+
+  const statementResults = useMemo(() => {
+    const out = new Map();
+    for (const [card, entry] of Object.entries(statements)) {
+      if (!entry.parsed) continue;
+      const start = parseDate(entry.from);
+      const end = parseDate(entry.to);
+      if (!start || !end || start > end) continue;
+      const period = { start, end };
+      const mine = cardTransactions.filter(t => t.account === card);
+      const audit = auditStatement({ statementLines: entry.parsed.lines, transactions: mine, period });
+      const { findings } = explainAudit({ audit, period, cardTransactions: mine, otherTransactions: otherAccountTxns(card) });
+      const owner = accountForLast4(entry.parsed.last4, creditCards.map(c => c.name), accountNumbers || {});
+      // The payment that settled this statement, once it has posted: the one
+      // whose statement closes within a few days of the dropped one's.
+      const paid = paymentHistory.find(r => r.card === card && r.actual.closeDate
+        && Math.abs(r.actual.closeDate - end) <= 3 * 86400000);
+      out.set(card, {
+        audit, findings, period,
+        check: checkAgainstSummary(entry.parsed.lines, entry.parsed.summary),
+        wrongCard: owner && owner !== card ? displayName(owner) : null,
+        payment: paid ? { date: paid.date, actual: paid.actual.amount, expected: paid.expected ? paid.expected.amount : null } : null,
+      });
+    }
+    return out;
+  }, [statements, cardTransactions, otherAccountTxns, creditCards, accountNumbers, displayName, paymentHistory]);
+
+  const patchStatement = useCallback((card, patch) => {
+    setStatements(prev => ({ ...prev, [card]: { ...(prev[card] || {}), ...patch } }));
+  }, []);
+
+  const dropStatement = useCallback(async (card, file) => {
+    patchStatement(card, { fileName: file.name, busy: true, error: '', parsed: null });
+    try {
+      const parsed = await readStatementFile(file);
+      if (!parsed.lines.length) {
+        patchStatement(card, { busy: false, error: parsed.warnings[0] || 'No transactions could be read from this file.' });
+        return;
+      }
+      const period = parsed.period || periodForStatement(parsed.lines, closeDays.get(card)?.day);
+      patchStatement(card, { busy: false, parsed, from: isoDay(period.start), to: isoDay(period.end) });
+      setAuditOpen(prev => new Set(prev).add(card));
+    } catch (err) {
+      patchStatement(card, { busy: false, error: err.message });
+    }
+  }, [patchStatement, closeDays]);
+
+  const clearStatement = useCallback((card) => {
+    setStatements(prev => { const next = { ...prev }; delete next[card]; return next; });
+    setAuditOpen(prev => { const next = new Set(prev); next.delete(card); return next; });
+  }, []);
+
+  const toggleAudit = useCallback((card) => {
+    setAuditOpen(prev => {
+      const next = new Set(prev);
+      if (next.has(card)) next.delete(card); else next.add(card);
+      return next;
+    });
+  }, []);
 
   // ── Look-back view data ─────  // ── Look-back view data ───────────────────────────────────────────────────
   // The retrospective mirror of the Schedule's "charges since last payment":
@@ -1198,6 +1276,7 @@ export function CardsPage() {
               <th>Last Payment</th>
               <th title="What the day-before reminder email said this payment would be. Click to download the charges behind it.">Expected</th>
               <th title="What actually left your account. Click to download the charges that add up to it.">Actual</th>
+              <th title="Drop this card's statement (PDF or CSV) to see which charges were misallocated, and why">Statement</th>
               <th>Next (est.)</th>
               <th>In</th>
               <th>Charges</th>
@@ -1208,7 +1287,7 @@ export function CardsPage() {
           <tbody>
             {sortedSchedule.length === 0 ? (
               <tr>
-                <td colSpan={9} style={{ textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
+                <td colSpan={10} style={{ textAlign: 'center', color: 'var(--color-text-tertiary)' }}>
                   No credit card accounts found in liabilities
                 </td>
               </tr>
@@ -1293,6 +1372,15 @@ export function CardsPage() {
                         </>
                       );
                     })()}
+                    <td>
+                      <StatementCell
+                        entry={statements[s.card]}
+                        result={statementResults.get(s.card)}
+                        open={auditOpen.has(s.card)}
+                        onFile={(f) => dropStatement(s.card, f)}
+                        onToggle={() => toggleAudit(s.card)}
+                      />
+                    </td>
                     <td>{s.nextPaymentDate ? fmtDate(s.nextPaymentDate) : '—'}</td>
                     <td style={{ color: 'var(--color-text-secondary)' }}>
                       {s.daysUntilNext != null ? `${s.daysUntilNext}d` : '—'}
@@ -1326,9 +1414,24 @@ export function CardsPage() {
                       </span>
                     </td>
                   </tr>
+                  {auditOpen.has(s.card) && statementResults.has(s.card) && (
+                    <tr>
+                      <td colSpan={10} className={styles.expandedCell}>
+                        <StatementAuditReport
+                          cardLabel={displayName(s.card)}
+                          entry={statements[s.card]}
+                          result={statementResults.get(s.card)}
+                          payment={statementResults.get(s.card).payment}
+                          privacyMode={privacyMode}
+                          onPeriod={(from, to) => patchStatement(s.card, { from, to })}
+                          onClear={() => clearStatement(s.card)}
+                        />
+                      </td>
+                    </tr>
+                  )}
                   {isOpen && (
                     <tr>
-                      <td colSpan={9} className={styles.expandedCell}>
+                      <td colSpan={10} className={styles.expandedCell}>
                         {s.nextPaymentCharges.length === 0 ? (
                           <div className={styles.emptyDrill}>
                             {s.lastPayment
