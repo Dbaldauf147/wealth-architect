@@ -70,6 +70,7 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ defa
 const BudgetsPage = lazy(() => import('./pages/BudgetsPage').then(m => ({ default: m.BudgetsPage })));
 const RecurringPage = lazy(() => import('./pages/RecurringPage').then(m => ({ default: m.RecurringPage })));
 const CashFlowPage = lazy(() => import('./pages/CashFlowPage').then(m => ({ default: m.CashFlowPage })));
+const OvershotPage = lazy(() => import('./pages/OvershotPage').then(m => ({ default: m.OvershotPage })));
 const CardPromosPage = lazy(() => import('./pages/CardPromosPage').then(m => ({ default: m.CardPromosPage })));
 const SplitwisePage = lazy(() => import('./pages/SplitwisePage').then(m => ({ default: m.SplitwisePage })));
 const TrendsPage = lazy(() => import('./pages/TrendsPage').then(m => ({ default: m.TrendsPage })));
@@ -145,6 +146,7 @@ const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: 'dashboard' },
   { id: 'transactions', label: 'Transactions', icon: 'receipt_long' },
   { id: 'cashflow', label: 'Cash Flow', icon: 'payments' },
+  { id: 'overshot', label: 'Overshot', icon: 'balance' },
   { id: 'networth', label: 'Net Worth', icon: 'show_chart' },
   { id: 'stocks', label: 'Stock Performance', icon: 'candlestick_chart' },
   { id: 'trends', label: 'Spending Trends', icon: 'trending_up' },
@@ -229,6 +231,7 @@ export function App() {
     switch (view) {
       case 'transactions': return <TransactionsPage />;
       case 'cashflow': return <CashFlowPage />;
+      case 'overshot': return <OvershotPage />;
       case 'networth': return <NetWorthPage />;
       case 'stocks': return <StockPerformancePage />;
       case 'trends': return <TrendsPage />;
