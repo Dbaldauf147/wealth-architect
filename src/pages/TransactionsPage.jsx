@@ -613,30 +613,6 @@ function isUncatOver20Recent(t, cutoffMs) {
   return !isNaN(d) && d.getTime() >= cutoffMs;
 }
 
-/* Build a simple recurring-transaction list from raw transactions */
-function findRecurring(transactions) {
-  // Group by normalised description
-  const groups = {};
-  for (const t of transactions) {
-    if (t.amount >= 0) continue; // only expenses
-    const key = t.description.toLowerCase().trim();
-    if (!key) continue;
-    if (!groups[key]) groups[key] = { description: t.description, category: t.category, total: 0, count: 0 };
-    groups[key].total += Math.abs(t.amount);
-    groups[key].count += 1;
-  }
-  return Object.values(groups)
-    .filter(g => g.count >= 2)
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 5)
-    .map(g => ({
-      name: g.description,
-      freq: `${g.count}x`,
-      amount: fmt(g.total / g.count),
-      icon: getCategoryIcon(g.category),
-    }));
-}
-
 /* Set the day a card's statement closes, which decides the Statement column
    for every charge on it. "Use the estimate" clears the override. */
 function StatementDayModal({ account, accountName, card, setDay, onSave, onClose }) {
@@ -1990,27 +1966,6 @@ export function TransactionsPage() {
   );
 
   const hasMore = paginated.length < filtered.length;
-
-  /* Category allocation — top 8 expense categories */
-  const categoryAlloc = useMemo(() => {
-    if (!analytics?.byCategory) return [];
-    const expenseCats = analytics.byCategory.filter(c =>
-      c.total < 0 && (c.name || '').toLowerCase() !== 'tax refund/payment'
-    );
-    const maxAbs = expenseCats.length ? expenseCats[0].absTotal : 1;
-    return expenseCats.slice(0, 8).map(c => ({
-      label: c.name,
-      amount: fmt(c.absTotal),
-      pct: Math.round((c.absTotal / (analytics.totalExpenses || 1)) * 100),
-      color: catColor(c.name),
-    }));
-  }, [analytics]);
-
-  /* Recurring commitments */
-  const recurring = useMemo(
-    () => findRecurring(transactions || []),
-    [transactions],
-  );
 
   /* Bar chart data — by category (or subcategory when single category filtered) over time */
   const barChartData = useMemo(() => {
@@ -3915,65 +3870,6 @@ export function TransactionsPage() {
               </button>
             </div>
           )}
-        </div>
-
-        {/* Side Column */}
-        <div className={styles.sideColumn}>
-          {/* Recurring Commitments */}
-          <div className={styles.recurringCard}>
-            <div className={styles.sectionLabel}>Recurring Commitments</div>
-            {recurring.length === 0 && (
-              <div style={{ opacity: 0.5, fontSize: 13, padding: '8px 0' }}>No recurring transactions detected</div>
-            )}
-            {recurring.map((r, i) => (
-              <div key={i} className={styles.recurringItem}>
-                <div className={styles.recurringLeft}>
-                  <div className={styles.recurringIcon}>
-                    <span className="material-symbols-outlined">{r.icon}</span>
-                  </div>
-                  <div>
-                    <div className={styles.recurringName}>{r.name}</div>
-                    <div className={styles.recurringFreq}>{r.freq}</div>
-                  </div>
-                </div>
-                <span className={styles.recurringAmount}>{r.amount}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Category Allocation */}
-          <div className={styles.allocCard}>
-            <div className={styles.sectionLabel}>Category Allocation</div>
-            {categoryAlloc.map((c, i) => (
-              <div key={i} className={styles.allocItem}>
-                <div className={styles.allocHeader}>
-                  <span className={styles.allocLabel}>{c.label}</span>
-                  <span className={styles.allocValue}>{c.amount}</span>
-                </div>
-                <div className={styles.allocBar}>
-                  <div
-                    className={styles.allocFill}
-                    style={{ width: `${c.pct}%`, background: c.color }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Executive Summary */}
-          <div className={styles.summaryCard}>
-            <div className={styles.summaryLabel}>Executive Summary</div>
-            <div className={styles.summaryTitle}>
-              {analytics
-                ? `${fmt(analytics.totalExpenses)} spent across ${analytics.transactionCount} transactions`
-                : 'Calculating...'}
-            </div>
-            <div className={styles.summaryText}>
-              {analytics
-                ? `Total income: ${fmt(analytics.totalIncome)}. Cash flow: ${fmt(analytics.cashFlow)}. ${categoryAlloc.length ? `Top category: ${categoryAlloc[0]?.label} (${categoryAlloc[0]?.pct}% of spend).` : ''}`
-                : 'Loading summary data...'}
-            </div>
-          </div>
         </div>
       </div>
 
