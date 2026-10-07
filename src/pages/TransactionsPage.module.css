@@ -332,6 +332,37 @@
   border-bottom: none;
 }
 
+/* Spreadsheet-style grid: every cell outlined so columns line up by eye
+   down a long ledger. Translucent slate so it reads on light and dark. */
+.table {
+  --grid-line: rgba(148, 163, 184, 0.32);
+  --grid-line-strong: rgba(148, 163, 184, 0.55);
+}
+
+.table th,
+.table td {
+  border-right: 1px solid var(--grid-line);
+}
+
+.table th:last-child,
+.table td:last-child {
+  border-right: none;
+}
+
+.table th {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--grid-line);
+}
+
+.table thead tr:last-child th {
+  border-bottom: 1px solid var(--grid-line-strong);
+}
+
+.table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--grid-line);
+}
+
 .table tr:hover td {
   background: var(--color-surface-hover);
 }
