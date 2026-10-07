@@ -75,3 +75,46 @@ export function loanInterestQueue({ transactions, loan, includeEarlier = false }
   ignored.sort(newestFirst);
   return { pending, ignored, earlierCount };
 }
+
+/**
+ * Reconcile this device's copy of the loan with the synced one, at load.
+ *
+ * Taking either copy whole is how tags went missing: a browser holding an
+ * older loan won the merge, then wrote it back over the cloud copy — erasing
+ * every charge tagged on another device since. Instead:
+ *
+ *   - Each edit stamps the loan with `updatedAt`. When both copies carry one,
+ *     the newer copy's terms win, and when the cloud copy is the newer one it
+ *     wins outright, so a payment deleted on another device stays deleted.
+ *   - Otherwise (older loans that predate the stamp, or this device holding
+ *     edits the cloud hasn't seen) payments and ignored charges are unioned:
+ *     nothing tagged anywhere is lost. A payment is the same one on both sides
+ *     when it shares an id, or a tagged transaction.
+ *
+ * Either side may be null; null and null is null.
+ */
+export function mergeLoan(local, remote) {
+  if (!local) return remote || null;
+  if (!remote) return local;
+  const lt = Date.parse(local.updatedAt || '') || 0;
+  const rt = Date.parse(remote.updatedAt || '') || 0;
+  if (rt && rt >= lt) return remote;
+
+  const newer = lt > rt ? local : remote;
+  const older = newer === local ? remote : local;
+  const payments = [...(newer.payments || [])];
+  const ids = new Set(payments.map(p => p.id).filter(Boolean));
+  const txns = new Set(payments.map(p => p.transactionId).filter(Boolean));
+  for (const p of older.payments || []) {
+    if ((p.id && ids.has(p.id)) || (p.transactionId && txns.has(p.transactionId))) continue;
+    payments.push(p);
+    if (p.id) ids.add(p.id);
+    if (p.transactionId) txns.add(p.transactionId);
+  }
+  // A charge tagged on either side isn't ignored, whatever the other side says.
+  const ignored = [...new Set([...(newer.ignoredTransactionIds || []), ...(older.ignoredTransactionIds || [])])]
+    .filter(id => !txns.has(id));
+  const out = { ...older, ...newer, payments };
+  if (ignored.length || newer.ignoredTransactionIds || older.ignoredTransactionIds) out.ignoredTransactionIds = ignored;
+  return out;
+}

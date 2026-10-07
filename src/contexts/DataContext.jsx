@@ -15,7 +15,7 @@ import {
 import { normalizeEmailSections } from '../lib/renderWeeklyEmail';
 import { SEED_PROMOS } from '../lib/cardPromos';
 import { keepRentDismissals } from '../lib/rentDuplicates';
-import { paymentFromTransaction } from '../lib/loanInterest';
+import { paymentFromTransaction, mergeLoan } from '../lib/loanInterest';
 import {
   normalizeExpenses as normalizeSplitwiseExpenses,
   summarizeBalances as summarizeSplitwiseBalances,
@@ -647,7 +647,9 @@ function mergeConfig(remote, locals) {
         rangeExcludedSeeded: true,
       };
     })(),
-    shortTermLoan: locals.shortTermLoan || remote.shortTermLoan || null,
+    // Merged, not either copy whole — a device with an older loan used to win
+    // here and then write it over the cloud, erasing tags made elsewhere.
+    shortTermLoan: mergeLoan(locals.shortTermLoan, remote.shortTermLoan),
     robinhoodTrades: locals.robinhoodTrades || remote.robinhoodTrades || null,
     organizedCategories: unionSet(locals.organizedCategories, remote.organizedCategories),
     incomeCategories: unionSet(locals.incomeCategories, remote.incomeCategories),
@@ -1688,6 +1690,7 @@ export function DataProvider({ children }) {
         rate: Number(details.rate) || 0,
         rateType: details.rateType === 'apr' ? 'apr' : 'daily',
         payments: (prev && Array.isArray(prev.payments)) ? prev.payments : [],
+        updatedAt: new Date().toISOString(),
       };
       saveShortTermLoan(next);
       return next;
@@ -1709,7 +1712,7 @@ export function DataProvider({ children }) {
         amount: Number(amount) || 0,
         note: (note || '').trim(),
       };
-      const next = { ...prev, payments: [...(prev.payments || []), payment] };
+      const next = { ...prev, payments: [...(prev.payments || []), payment], updatedAt: new Date().toISOString() };
       saveShortTermLoan(next);
       return next;
     });
@@ -1719,7 +1722,7 @@ export function DataProvider({ children }) {
     if (!id) return;
     setShortTermLoan(prev => {
       if (!prev) return prev;
-      const next = { ...prev, payments: (prev.payments || []).filter(p => p.id !== id) };
+      const next = { ...prev, payments: (prev.payments || []).filter(p => p.id !== id), updatedAt: new Date().toISOString() };
       saveShortTermLoan(next);
       return next;
     });
@@ -1747,6 +1750,7 @@ export function DataProvider({ children }) {
         ...prev,
         payments: [...(prev.payments || []), ...added],
         ignoredTransactionIds: (prev.ignoredTransactionIds || []).filter(id => !tagged.has(id)),
+        updatedAt: new Date().toISOString(),
       };
       saveShortTermLoan(next);
       return next;
@@ -1760,7 +1764,7 @@ export function DataProvider({ children }) {
       if (!prev) return prev;
       const set = new Set(prev.ignoredTransactionIds || []);
       for (const k of keys) { if (ignored) set.add(k); else set.delete(k); }
-      const next = { ...prev, ignoredTransactionIds: [...set] };
+      const next = { ...prev, ignoredTransactionIds: [...set], updatedAt: new Date().toISOString() };
       saveShortTermLoan(next);
       return next;
     });
