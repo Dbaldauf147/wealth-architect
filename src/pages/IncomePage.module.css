@@ -1,0 +1,404 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.empty {
+  padding: 40px;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Hero ─────────────────────────────────────────────────────────────── */
+
+.hero {
+  background: var(--color-primary);
+  border-radius: var(--radius-xl);
+  padding: 28px 28px 24px;
+  color: #fff;
+}
+
+.heroLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+  margin-bottom: 8px;
+}
+
+.heroTitle {
+  font-family: var(--font-headline);
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  margin: 0 0 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.heroTitleSub {
+  font-family: var(--font-body, inherit);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: normal;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.heroStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 32px;
+}
+
+.heroStatValue {
+  font-family: var(--font-headline);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  line-height: 1;
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.heroStatLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.heroStatSub {
+  margin-top: 4px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* ── Controls ─────────────────────────────────────────────────────────── */
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+}
+
+.segment {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-surface-alt);
+}
+
+.segmentBtn {
+  border: none;
+  background: transparent;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm, 6px);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.segmentActive {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-xs);
+}
+
+.controlsNote {
+  flex: 1 1 300px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Cards ────────────────────────────────────────────────────────────── */
+
+.card {
+  padding: 20px 22px;
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xs);
+  min-width: 0;
+}
+
+.cardHead {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.cardTitle {
+  font-family: var(--font-headline);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0 0 4px;
+}
+
+.cardHint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+  max-width: 720px;
+}
+
+.summary {
+  cursor: pointer;
+  line-height: 1.6;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.legend span,
+.sourceName {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend i,
+.tooltip i,
+.sourceName i {
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.legend .legendTick {
+  height: 2px;
+  width: 14px;
+  border-radius: 1px;
+  background: var(--color-text-primary);
+}
+
+.sourceName {
+  font-weight: 600;
+}
+
+/* ── This month ───────────────────────────────────────────────────────── */
+
+.dueList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dueList li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-surface-alt);
+  font-size: 13px;
+}
+
+.dueList .material-symbols-outlined {
+  font-size: 16px;
+  color: var(--color-text-tertiary);
+}
+
+.dueWhen {
+  color: var(--color-text-secondary);
+}
+
+.dueList .num {
+  margin-left: auto;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Chart ────────────────────────────────────────────────────────────── */
+
+/* contain: the chart and tables size to their card instead of widening the
+   page — their min-content would otherwise propagate up through the layout. */
+.chartWrap {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  contain: inline-size;
+}
+
+.chartWrap svg {
+  display: block;
+}
+
+.axisText {
+  font-size: 11px;
+  fill: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.chartFoot {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.tooltip {
+  position: absolute;
+  width: 230px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.14);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tooltip > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tooltip b {
+  margin-left: auto;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.tooltipTitle {
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.tooltipTotal {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: var(--border-ghost);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* ── Tables ───────────────────────────────────────────────────────────── */
+
+.tableWrap {
+  overflow-x: auto;
+  contain: inline-size;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  background: var(--color-surface-alt);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 10px 12px;
+  border-bottom: var(--border-ghost);
+  color: var(--color-text-primary);
+  vertical-align: top;
+}
+
+.table .num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.shareCell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 140px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.shareBar {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-surface-alt);
+  overflow: hidden;
+}
+
+.shareBar > div {
+  height: 100%;
+  border-radius: 999px;
+}
+
+.payers {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 260px;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.muted {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.linkBtn {
+  margin-top: 10px;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-secondary);
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .hero {
+    padding: 22px 18px 20px;
+  }
+  .heroTitle {
+    font-size: 28px;
+  }
+  .heroStats {
+    gap: 20px;
+  }
+  .card {
+    padding: 16px;
+  }
+}
