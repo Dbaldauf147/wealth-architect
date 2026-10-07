@@ -96,8 +96,9 @@ function digitsMatch(rawAcctNum, suffix) {
 }
 
 // Page-equivalent per-month income/expense totals (all accounts) for a set of
-// month keys. Returns { [key]: { income, expenses, net } }.
-function pageTotalsByMonth(transactions, monthKeys) {
+// month keys. Returns { totals: { [key]: { income, expenses, net } }, qualifying }.
+// Exported so other pages (Overshot) count income and spending the same way.
+export function pageTotalsByMonth(transactions, monthKeys) {
   const keys = new Set(monthKeys);
   const expSignedByCat = {};
   const income = {};
