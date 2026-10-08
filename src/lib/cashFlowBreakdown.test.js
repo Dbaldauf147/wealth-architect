@@ -71,3 +71,17 @@ describe('isInvestingMove / isMoneyMove', () => {
     expect(isMoneyMove(tx('3/1/2026', -5, 'Restaurants', 'CREDIT CARD (-1947)', 'Tst* Rothmanns Steak'))).toBe(false);
   });
 });
+
+describe('activity inside an investment account', () => {
+  it('is money moving, except dividends, interest and fees', () => {
+    const t = [
+      tx('4/21/2026', 30857.53, '', 'Individual', 'Vanguard Index Fds Vanguard Growth Etf Former'),
+      tx('4/22/2026', -895, 'Misc', 'Robinhood individual', 'Buy 36 shares of Schwab Short-term'),
+      tx('4/23/2026', -1641, 'Misc', 'Robinhood individual', 'Ach withdrawal of $1641 from Robinhood'),
+      tx('4/24/2026', 12, 'Income', 'Robinhood individual', 'Cash dividend from VOO'),
+      tx('4/25/2026', -5, 'Subscriptions', 'Robinhood individual', 'Robinhood Gold monthly fee'),
+    ];
+    const m = cashFlowBreakdown(t, ['2026-04']).totals['2026-04'];
+    expect(m).toMatchObject({ income: 12, expenses: 5, invested: 0 });
+  });
+});

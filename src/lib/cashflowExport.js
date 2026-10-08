@@ -21,7 +21,6 @@ function lc(t) { return (t.category || '').toLowerCase(); }
 const isTransfer = (c) => c === 'transfer';
 const isCCPayment = (c) => c === 'credit card payment' || c === 'credit card payments';
 const isInvesting = (c) => c === 'investments' || c === 'retirement';
-const isSpecial = (c) => isTransfer(c) || isCCPayment(c) || isInvesting(c);
 
 function parseDate(v) {
   if (!v) return null;
@@ -106,6 +105,10 @@ function digitsMatch(rawAcctNum, suffix) {
 //     cash account, by naming a brokerage (a "Transfer" to Robinhood is money
 //     invested, not money gone). It's counted from the cash side only, so the
 //     brokerage's matching deposit doesn't count it twice.
+//   • Activity inside an investment or retirement account that isn't earning
+//     or spending — buys, sells, reinvestments, the brokerage's side of a
+//     transfer, anything left uncategorised there — is money moving too.
+//     Dividends, interest and fees there still count.
 //   • Refunds net against the category they're in. A category is spending when
 //     it nets negative over the window; in a month where it nets positive (a
 //     refund with nothing to refund against), that month's net is money in.
@@ -125,6 +128,13 @@ export const BROKERAGE_NAME = /\b(robinhood|fidelity|vanguard|schwab|e\*?trade|m
 const RETIREMENT_NAME = /\b(ira|roth|401\s?\(?k\)?|403\s?\(?b\)?|retirement|savings plan)\b/i;
 const describe = t => `${t.description || ''} ${t.fullDescription || ''}`;
 const isCashAccount = t => classifyAccount(t.account, '') === 'cash';
+const INSIDE_ACTIVITY = /\b(buy|bought|sell|sold|purchase|reinvest\w*|ach|withdrawal|deposit|transfer|journal|exchange)\b/i;
+
+/** Activity inside an investment account that only moves money around in it
+ *  (a $30k uncategorised fund conversion is not income). */
+export function isInsideInvestments(t) {
+  return classifyAccount(t.account, '') === 'other' && (!t.category || INSIDE_ACTIVITY.test(describe(t)));
+}
 
 /** Money going to (or coming back from) investments. */
 export function isInvestingMove(t) {
@@ -134,7 +144,7 @@ export function isInvestingMove(t) {
 /** Moving your own money: transfers, card payments, investing. */
 export function isMoneyMove(t) {
   const c = lc(t);
-  return isTransfer(c) || isCCPayment(c) || isInvestingMove(t);
+  return isTransfer(c) || isCCPayment(c) || isInvestingMove(t) || isInsideInvestments(t);
 }
 
 /**
@@ -591,21 +601,11 @@ export function buildDeepDiveSheets({
   const keySet = new Set(monthKeys);
   const inWindow = (transactions || []).filter((t) => keySet.has(cashFlowMonthKey(t)) && t.amount !== 0);
 
-  const { qualifying } = pageTotalsByMonth(transactions, monthKeys);
-
-  // Income: positive amounts, excluding the special (own-money) categories.
-  const incomeTxns = inWindow.filter((t) => {
-    const c = lc(t);
-    return t.amount > 0 && !isSpecial(c);
-  });
-
-  // Expenses: transactions in qualifying expense categories (refunds included
-  // so they net down the totals), excluding income-side categories.
-  const expenseTxns = inWindow.filter((t) => {
-    const c = lc(t);
-    if (isSpecial(c) || NON_EXPENSE_CATS.has(c)) return false;
-    return qualifying.has(t.category || 'Uncategorized');
-  });
+  // Same split as the page: each category-month is income or spending as a
+  // whole, so a refund sits on the Expenses sheet netting its category down.
+  const { role } = cashFlowBreakdown(transactions, monthKeys);
+  const incomeTxns = inWindow.filter((t) => role(t) === 'income');
+  const expenseTxns = inWindow.filter((t) => role(t) === 'expense');
 
   const windowLabel = monthKeys.map(monthLabel).join(' + ');
 
