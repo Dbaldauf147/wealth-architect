@@ -2542,6 +2542,9 @@ export function DataProvider({ children }) {
     balanceHistory: shownBalanceHistory,
     analytics,
     loading,
+    // True once the synced config (Firestore) has been read on this device —
+    // before that, maps like placeLinks may only hold what localStorage had.
+    configHydrated,
     syncing,
     error,
     syncError,
@@ -2604,6 +2607,7 @@ export function DataProvider({ children }) {
     balances,
     analytics,
     loading,
+    configHydrated,
     syncing,
     error,
     syncError,

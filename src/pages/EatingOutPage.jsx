@@ -73,9 +73,12 @@ export function EatingOutPage() {
       if (!date) continue;
       if (since && new Date(`${date}T00:00:00`) < since) continue;
       const key = txnKey(t);
-      const link = placeLinks?.[key] || null;
+      // A charge you unlinked keeps a { skipAuto } marker so a remembered
+      // merchant doesn't match it straight back; here it reads as unmatched.
+      const raw = placeLinks?.[key] || null;
+      const link = raw?.skipAuto ? null : raw;
       out.push({
-        t, key, date, link,
+        t, key, date, link, skipAuto: !!raw?.skipAuto,
         suggestion: link || !places?.length ? null : suggestPlace(t.description, places, placeRules || {}),
       });
     }
@@ -84,7 +87,9 @@ export function EatingOutPage() {
 
   const shown = rows.filter(r => (view === 'todo' ? !r.link : view === 'done' ? r.link && !r.link.ignored : true));
   const todo = rows.filter(r => !r.link);
-  const remembered = todo.filter(r => r.suggestion?.via === 'rule');
+  // Normally empty: usePlaceAutoLink (mounted in App) sends these on its own.
+  // Left as a manual fallback for when that couldn't reach Prep Day.
+  const remembered = todo.filter(r => r.suggestion?.via === 'rule' && !r.skipAuto);
   // Matched here but missing in Prep Day — a send that failed half-way, or a
   // visit deleted there. Offered for resending rather than silently dropped.
   const missingThere = places && !loadError
@@ -129,7 +134,7 @@ export function EatingOutPage() {
       const errs = {};
       for (const { row, place, remove } of items) {
         if (!okKeys.has(row.key)) { errs[row.key] = data.results.find(r => r.externalId === row.key)?.error || 'Not logged'; continue; }
-        links[row.key] = remove ? null : { placeId: place.id, placeName: place.name, sentAt: new Date().toISOString() };
+        links[row.key] = remove ? { skipAuto: true } : { placeId: place.id, placeName: place.name, sentAt: new Date().toISOString() };
         const mk = merchantKey(row.t.description);
         if (!remove && remember && mk) rules[mk] = { placeId: place.id, placeName: place.name };
       }
@@ -205,9 +210,9 @@ export function EatingOutPage() {
           <input type="checkbox" checked={allCategories} onChange={e => setAllCategories(e.target.checked)} />
           All categories
         </label>
-        <label className={styles.check} title="When you match a charge, also match future charges from the same merchant to that place">
+        <label className={styles.check} title="When you match a charge, every other charge from that merchant — past and future — is matched to the same place and sent to Prep Day automatically">
           <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
-          Remember merchants
+          Auto-match the merchant
         </label>
       </div>
 
@@ -262,6 +267,7 @@ export function EatingOutPage() {
                             <span className={styles.linked}>
                               <span className="material-symbols-outlined">check_circle</span>
                               {linkedPlace.name}
+                              {row.link.auto && <span className={styles.autoTag} title="Matched automatically: you matched this merchant to this place before">auto</span>}
                               {places && !loadError && !remoteVisits[row.key] && <span className={styles.warnText}> · not in Prep Day</span>}
                             </span>
                           ) : row.link?.ignored ? (
@@ -293,7 +299,7 @@ export function EatingOutPage() {
                         <td className={styles.actions}>
                           {linkedPlace && (
                             <button type="button" className={styles.linkBtn} disabled={isBusy} onClick={() => send([{ row, remove: true }])}
-                              title="Take this visit back out of Prep Day">Unlink</button>
+                              title="Take this visit back out of Prep Day. It won't be auto-matched again; you can pick a place for it yourself.">Unlink</button>
                           )}
                           {!row.link && (
                             <button type="button" className={styles.linkBtnMuted} onClick={() => ignore(row, true)} title="Not a place you track — hide it from To match">Ignore</button>
@@ -344,7 +350,8 @@ function Hero({ stats }) {
       <h1 className={styles.heroTitle}>Eating Out</h1>
       <p className={styles.heroSubtitle}>
         Match your restaurant charges to the places in Prep Day. Each match is sent back to Prep Day as a visit,
-        with the date and what you spent, so the place there shows when you last went.
+        with the date and what you spent, so the place there shows when you last went. Match a merchant once and
+        every charge from it, past and future, is matched to that place automatically.
       </p>
       {stats && (
         <div className={styles.heroStats}>

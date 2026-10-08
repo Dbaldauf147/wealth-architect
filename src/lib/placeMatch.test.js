@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { merchantKey, nameScore, suggestPlace, isEatingOutCharge, isoDay } from './placeMatch.js';
+import { merchantKey, nameScore, suggestPlace, isEatingOutCharge, isoDay, autoLinkCandidates } from './placeMatch.js';
 
 describe('merchantKey', () => {
   it('strips processor prefixes, store numbers and tails', () => {
@@ -62,5 +62,29 @@ describe('helpers', () => {
     expect(isoDay('9/2/2026')).toBe('2026-09-02');
     expect(isoDay('2026-09-02')).toBe('2026-09-02');
     expect(isoDay('nope')).toBe('');
+  });
+});
+
+describe('autoLinkCandidates', () => {
+  const keyOf = t => t.id;
+  const txns = [
+    { id: 'a', date: '9/6/2026', description: 'Tst*feed and Grain', amount: -85.71, category: 'Alcohol' },
+    { id: 'b', date: '9/22/2026', description: 'TST* FEED AND GRAIN', amount: -67.54, category: '' },
+    { id: 'c', date: '9/23/2026', description: 'Tst*feed and Grain', amount: 10, category: 'Alcohol' },   // refund
+    { id: 'd', date: '9/24/2026', description: 'Tst*feed and Grain', amount: -5, category: 'Alcohol' },   // unlinked on purpose
+    { id: 'e', date: '9/25/2026', description: 'Sq *xixa', amount: -20, category: 'Restaurants' },        // no rule
+    { id: 'f', date: '9/26/2026', description: 'Tst*feed and Grain', amount: -9, category: 'Alcohol' },   // already sent
+  ];
+  const rules = { 'feed and grain': { placeId: 'fg', placeName: 'Feed and Grain' } };
+  const links = { d: { skipAuto: true }, f: { placeId: 'fg' } };
+
+  it('picks every unmatched charge from a remembered merchant, whatever its category', () => {
+    const out = autoLinkCandidates(txns, links, rules, keyOf);
+    expect(out.map(c => c.key)).toEqual(['a', 'b']);
+    expect(out[0]).toMatchObject({ placeId: 'fg', date: '2026-09-06', amount: 85.71, merchant: 'Tst*feed and Grain' });
+  });
+
+  it('does nothing without rules', () => {
+    expect(autoLinkCandidates(txns, {}, {}, keyOf)).toEqual([]);
   });
 });
