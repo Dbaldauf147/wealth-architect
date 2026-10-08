@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../contexts/DataContext';
 import { computeOvershot, monthsSpanned } from '../lib/overshot';
+import { buildCashPosition } from '../lib/cashPosition';
 import styles from './OvershotPage.module.css';
 
 /* When spending overtakes income. Same income/spending definitions as Cash
@@ -11,6 +12,7 @@ import styles from './OvershotPage.module.css';
 const INCOME = '#2a78d6';
 const SPENDING = '#eb6834';
 const CRITICAL = '#d03b3b';
+const CASH_PREF_KEY = 'wa-overshot-cash-accounts';
 
 const RANGES = [
   { months: 6, label: '6M' },
@@ -53,8 +55,21 @@ function niceMax(v) {
 }
 
 export function OvershotPage() {
-  const { transactions, loading } = useData();
+  const { transactions, balanceHistory, loading } = useData();
   const [range, setRange] = useState(12);
+  const [surplusMode, setSurplusMode] = useState('cash'); // 'cash' | 'flow'
+  // Which accounts count as cash on hand, beyond the defaults. Kept in this
+  // browser only: a per-viewer preference, not data.
+  const [cashOverrides, setCashOverrides] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(CASH_PREF_KEY) || '{}') || {}; } catch { return {}; }
+  });
+  const toggleAccount = (key, on) => {
+    setCashOverrides(prev => {
+      const next = { ...prev, [key]: on };
+      try { localStorage.setItem(CASH_PREF_KEY, JSON.stringify(next)); } catch { /* storage unavailable */ }
+      return next;
+    });
+  };
 
   const result = useMemo(() => {
     if (!transactions?.length) return null;
@@ -65,6 +80,12 @@ export function OvershotPage() {
     return computeOvershot({ transactions, monthKeys: keys, today });
   }, [transactions, range]);
 
+  const cash = useMemo(() => {
+    if (!result || !balanceHistory?.length) return null;
+    const pos = buildCashPosition({ balanceHistory, monthKeys: result.months.map(m => m.key), today: new Date(), overrides: cashOverrides });
+    return pos.now ? pos : null;
+  }, [result, balanceHistory, cashOverrides]);
+
   if (loading && !result) return <div className={styles.empty}>Loading transactions…</div>;
   if (!result || !result.months.length) return <div className={styles.empty}>No transactions yet.</div>;
 
@@ -74,7 +95,7 @@ export function OvershotPage() {
 
   return (
     <div className={styles.page}>
-      <Hero summary={summary} complete={complete} />
+      <Hero summary={summary} complete={complete} cash={cash} />
 
       <div className={styles.controls}>
         <div className={styles.segment} role="group" aria-label="Time range">
@@ -111,16 +132,53 @@ export function OvershotPage() {
         <MonthlyChart months={months} />
       </section>
 
-      <section className={styles.card}>
+      <section className={styles.card} data-testid="overshot-surplus">
         <div className={styles.cardHead}>
           <div>
-            <h2 className={styles.cardTitle}>Running surplus</h2>
+            <h2 className={styles.cardTitle}>{surplusMode === 'cash' ? 'Cash position' : 'Running surplus'}</h2>
             <div className={styles.cardHint}>
-              Income minus spending, added up month by month from the start of the range. Below the line, you've spent more than you've earned over the period.
+              {surplusMode === 'cash'
+                ? 'Cash on hand minus what’s owed on your cards, at the end of each month. Below the line you’re underwater: the cards owe more than your accounts hold.'
+                : 'Income minus spending, added up month by month from the start of the range. Below the line, you’ve spent more than you’ve earned over the period.'}
             </div>
           </div>
+          <div className={styles.segment} role="group" aria-label="Surplus measure">
+            <button type="button" className={`${styles.segmentBtn} ${surplusMode === 'cash' ? styles.segmentActive : ''}`} onClick={() => setSurplusMode('cash')}>Cash on hand</button>
+            <button type="button" className={`${styles.segmentBtn} ${surplusMode === 'flow' ? styles.segmentActive : ''}`} onClick={() => setSurplusMode('flow')}>Income − spending</button>
+          </div>
         </div>
-        <CumulativeChart months={complete} crossings={summary.crossings} />
+        {surplusMode === 'cash' ? (
+          cash ? (
+            <>
+              <SurplusChart
+                points={cash.months.filter(m => m.net != null).map((m, i, all) => ({
+                  key: m.key,
+                  value: m.net,
+                  label: i === all.length - 1 ? `${long(m.key)} (now)` : `End of ${long(m.key)}`,
+                  rows: [['Cash on hand', money(m.cash)], ['Owed on cards', money(m.debt)]],
+                }))}
+                ariaLabel="Cash position"
+                belowText="▼ underwater"
+                crossText={{ under: 'went under', back: 'back above' }}
+                crossTip={{ under: 'Card balances passed your cash here', back: 'Cash back above card balances here' }}
+                valueName="Position"
+              />
+              <CashAccounts cash={cash} onToggle={toggleAccount} />
+            </>
+          ) : (
+            <div className={styles.muted}>No balance history yet — it comes from the Balance History tab in your sheet.</div>
+          )
+        ) : (
+          <SurplusChart
+            points={complete.map(m => ({ key: m.key, value: m.cumulative, label: long(m.key), rows: [['This month', signed(m.net)]] }))}
+            startFrom={0}
+            ariaLabel="Running surplus"
+            belowText="▼ spending ahead of income"
+            crossText={{ under: 'overtook', back: 'back ahead' }}
+            crossTip={{ under: 'Spending overtook income here', back: 'Back ahead of spending here' }}
+            valueName="Running surplus"
+          />
+        )}
       </section>
 
       <section className={styles.card}>
@@ -181,7 +239,7 @@ export function OvershotPage() {
   );
 }
 
-function Hero({ summary, complete }) {
+function Hero({ summary, complete, cash }) {
   const r = summary.rolling;
   const head = {
     above: 'You’re living above your means',
@@ -207,6 +265,15 @@ function Hero({ summary, complete }) {
       </h1>
       <p className={styles.heroSubtitle}>{sub}</p>
       <div className={styles.heroStats}>
+        {cash && (
+          <Stat
+            value={signed(cash.now.net)}
+            label={cash.now.net < 0 ? 'Underwater' : 'Cash surplus'}
+            tone={cash.now.net < 0 ? 'bad' : 'good'}
+            sub={`${money(cash.now.cash)} cash · ${money(cash.now.debt)} owed on cards · ${dayOf(cash.now.asOf)}`}
+            testId="overshot-cash-now"
+          />
+        )}
         <Stat value={`${summary.overCount} of ${summary.completeCount}`} label="Months over income" />
         <Stat value={money(summary.totalGap)} label="Spent beyond income" />
         <Stat
@@ -220,10 +287,10 @@ function Hero({ summary, complete }) {
   );
 }
 
-function Stat({ value, label, sub }) {
+function Stat({ value, label, sub, tone, testId }) {
   return (
-    <div>
-      <div className={styles.heroStatValue}>{value}</div>
+    <div data-testid={testId}>
+      <div className={`${styles.heroStatValue} ${tone === 'bad' ? styles.heroBad : tone === 'good' ? styles.heroGood : ''}`}>{value}</div>
       <div className={styles.heroStatLabel}>{label}</div>
       {sub && <div className={styles.heroStatSub}>{sub}</div>}
     </div>
@@ -343,16 +410,19 @@ function MonthlyChart({ months }) {
   );
 }
 
-/* The running total of income − spending over complete months. */
-function CumulativeChart({ months, crossings }) {
+/* A running position over time, with zero as the line that matters: the
+   cash position (cash − cards) or the running income − spending total.
+   `startFrom` is the value before the first point, for spotting a crossing
+   right at the start; leave it out when the first point has no "before". */
+function SurplusChart({ points, startFrom = null, ariaLabel, belowText, crossText, crossTip, valueName }) {
   const [ref, width] = useMeasuredWidth(320);
   const [hover, setHover] = useState(null);
-  if (months.length < 2) return <div className={styles.muted}>Needs at least two complete months.</div>;
+  if (points.length < 2) return <div className={styles.muted}>Needs at least two months.</div>;
   const H = 220;
   const pad = { top: 16, right: 12, bottom: 26, left: 56 };
   const innerW = width - pad.left - pad.right;
   const innerH = H - pad.top - pad.bottom;
-  const vals = months.map(m => m.cumulative);
+  const vals = points.map(p => p.value);
   const hi = Math.max(0, ...vals);
   const lo = Math.min(0, ...vals);
   // Ticks on a round step that covers both the high and the low, with zero
@@ -360,29 +430,37 @@ function CumulativeChart({ months, crossings }) {
   const stepV = niceMax(Math.max(hi - lo, 1) / 4);
   const top = Math.ceil(hi / stepV) * stepV;
   const bottom = Math.floor(lo / stepV) * stepV;
-  const x = i => pad.left + (months.length === 1 ? innerW / 2 : (i / (months.length - 1)) * innerW);
+  const x = i => pad.left + (i / (points.length - 1)) * innerW;
   const y = v => pad.top + ((top - v) / (top - bottom)) * innerH;
-  const pts = months.map((m, i) => [x(i), y(m.cumulative)]);
+  const pts = points.map((p, i) => [x(i), y(p.value)]);
   const line = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0]},${p[1]}`).join(' ');
   const zero = y(0);
   const area = `${line} L${pts[pts.length - 1][0]},${zero} L${pts[0][0]},${zero} Z`;
   const ticks = [];
   for (let v = top; v >= bottom - stepV / 2; v -= stepV) ticks.push(v);
-  const labelEvery = Math.ceil(months.length / Math.floor(innerW / 52));
-  const crossKeys = new Map(crossings.map(c => [c.key, c.direction]));
+  const labelEvery = Math.ceil(points.length / Math.floor(innerW / 52));
+  // Where the position changed sign.
+  const cross = new Map();
+  let prev = startFrom;
+  for (const p of points) {
+    if (prev != null && prev >= 0 && p.value < 0) cross.set(p.key, 'under');
+    if (prev != null && prev < 0 && p.value >= 0) cross.set(p.key, 'back');
+    prev = p.value;
+  }
+  // Two of these can share the page, so their clip paths need their own ids.
+  const clipId = `ov-${ariaLabel.replace(/\W+/g, '-').toLowerCase()}`;
   const onMove = e => {
     const box = e.currentTarget.getBoundingClientRect();
-    const px = e.clientX - box.left;
-    const i = Math.round(((px - pad.left) / innerW) * (months.length - 1));
-    setHover(Math.max(0, Math.min(months.length - 1, i)));
+    const i = Math.round(((e.clientX - box.left - pad.left) / innerW) * (points.length - 1));
+    setHover(Math.max(0, Math.min(points.length - 1, i)));
   };
 
   return (
     <div ref={ref} className={styles.chartWrap}>
-      <svg width={width} height={H} role="img" aria-label="Running surplus" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+      <svg width={width} height={H} role="img" aria-label={ariaLabel} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
         <defs>
-          <clipPath id="ov-below"><rect x={0} y={zero} width={width} height={H} /></clipPath>
-          <clipPath id="ov-above"><rect x={0} y={0} width={width} height={zero} /></clipPath>
+          <clipPath id={`${clipId}-below`}><rect x={0} y={zero} width={width} height={H} /></clipPath>
+          <clipPath id={`${clipId}-above`}><rect x={0} y={0} width={width} height={zero} /></clipPath>
         </defs>
         {ticks.map(t => (
           <g key={t}>
@@ -390,65 +468,101 @@ function CumulativeChart({ months, crossings }) {
             <text x={pad.left - 8} y={y(t) + 4} textAnchor="end" className={styles.axisText}>{axis(t)}</text>
           </g>
         ))}
-        <path d={area} fill={CRITICAL} opacity={0.14} clipPath="url(#ov-below)" />
-        <path d={area} fill={INCOME} opacity={0.1} clipPath="url(#ov-above)" />
+        <path d={area} fill={CRITICAL} opacity={0.14} clipPath={`url(#${clipId}-below)`} />
+        <path d={area} fill={INCOME} opacity={0.1} clipPath={`url(#${clipId}-above)`} />
         <line x1={pad.left} x2={width - pad.right} y1={zero} y2={zero} stroke="var(--color-text-secondary)" strokeWidth={1} />
         {lo < 0 && (() => {
           // Under the line where it dips lowest, so the label sits on the dip it names.
-          const iLow = vals.indexOf(lo);
-          const lx = x(iLow);
+          const lx = x(vals.indexOf(lo));
           const anchor = lx > width - 170 ? 'end' : lx < pad.left + 90 ? 'start' : 'middle';
           return (
             <text x={lx} y={Math.min(H - pad.bottom - 4, Math.max(zero + 14, y(lo) + 16))} textAnchor={anchor} className={styles.belowLabel}>
-              ▼ spending ahead of income
+              {belowText}
             </text>
           );
         })()}
         <path d={line} fill="none" stroke="var(--color-text-primary)" strokeWidth={2} strokeLinejoin="round" />
-        {months.map((m, i) => crossKeys.has(m.key) && (
-          <g key={m.key}>
-            <circle cx={x(i)} cy={y(m.cumulative)} r={5} fill={crossKeys.get(m.key) === 'under' ? CRITICAL : INCOME} stroke="var(--color-surface)" strokeWidth={2} />
+        {points.map((p, i) => cross.has(p.key) && (
+          <g key={p.key}>
+            <circle cx={x(i)} cy={y(p.value)} r={5} fill={cross.get(p.key) === 'under' ? CRITICAL : INCOME} stroke="var(--color-surface)" strokeWidth={2} />
             <text
               x={Math.min(width - pad.right - 4, Math.max(pad.left + 4, x(i)))}
-              y={crossKeys.get(m.key) === 'under' ? y(m.cumulative) + 18 : y(m.cumulative) - 10}
+              y={cross.get(p.key) === 'under' ? y(p.value) + 18 : y(p.value) - 10}
               textAnchor={x(i) > width - 90 ? 'end' : x(i) < pad.left + 60 ? 'start' : 'middle'}
               className={styles.crossLabel}
             >
-              {crossKeys.get(m.key) === 'under' ? 'overtook' : 'back ahead'}
+              {crossText[cross.get(p.key)]}
             </text>
           </g>
         ))}
-        {months.map((m, i) => i % labelEvery === 0 && (
+        {points.map((p, i) => i % labelEvery === 0 && (
           <text
-            key={m.key}
+            key={p.key}
             x={x(i)}
             y={H - 8}
-            textAnchor={i === 0 ? 'start' : i === months.length - 1 ? 'end' : 'middle'}
+            textAnchor={i === 0 ? 'start' : i === points.length - 1 ? 'end' : 'middle'}
             className={styles.axisText}
           >
-            {short(m.key)}
+            {short(p.key)}
           </text>
         ))}
         {hover != null && (
           <>
             <line x1={x(hover)} x2={x(hover)} y1={pad.top} y2={pad.top + innerH} stroke="var(--color-text-muted)" strokeDasharray="3 3" />
-            <circle cx={x(hover)} cy={y(months[hover].cumulative)} r={4} fill="var(--color-text-primary)" stroke="var(--color-surface)" strokeWidth={2} />
+            <circle cx={x(hover)} cy={y(points[hover].value)} r={4} fill="var(--color-text-primary)" stroke="var(--color-surface)" strokeWidth={2} />
           </>
         )}
       </svg>
       {hover != null && (() => {
-        const m = months[hover];
-        const c = crossKeys.get(m.key);
+        const p = points[hover];
+        const c = cross.get(p.key);
         const left = Math.min(width - 220, Math.max(0, x(hover) - 110));
         return (
           <div className={styles.tooltip} style={{ left, top: 4 }}>
-            <div className={styles.tooltipTitle}>{long(m.key)}</div>
-            <div>Running surplus <b>{signed(m.cumulative)}</b></div>
-            <div>This month <b>{signed(m.net)}</b></div>
-            {c && <div className={styles.tooltipNet}>{c === 'under' ? 'Spending overtook income here' : 'Back ahead of spending here'}</div>}
+            <div className={styles.tooltipTitle}>{p.label}</div>
+            <div>{valueName} <b>{signed(p.value)}</b></div>
+            {p.rows.map(([k, v]) => <div key={k}>{k} <b>{v}</b></div>)}
+            {c && <div className={styles.tooltipNet}>{crossTip[c]}</div>}
           </div>
         );
       })()}
     </div>
+  );
+}
+
+/* Which accounts make up the cash position, each switchable. */
+function CashAccounts({ cash, onToggle }) {
+  const kindLabel = { cash: 'Cash', debt: 'Card', other: 'Investment' };
+  // A stale date from another year needs its year: "Oct 2" alone reads as last week.
+  const when = d => (d.getFullYear() === cash.now.asOf.getFullYear() ? dayOf(d) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }));
+  // Old zero-balance investment accounts are noise; anything switched on,
+  // and every cash account and card, always shows.
+  const shown = cash.accounts.filter(a => a.kind !== 'other' || a.included || (!a.stale && Math.abs(a.lastBalance) > 0));
+  return (
+    <details className={styles.accounts} data-testid="overshot-cash-accounts">
+      <summary>
+        Accounts counted: {money(cash.now.cash)} cash − {money(cash.now.debt)} owed = <b>{signed(cash.now.net)}</b>
+        <span className={styles.muted}> · from Balance History, as of {dayOf(cash.now.asOf)}</span>
+      </summary>
+      <ul>
+        {shown.map(a => (
+          <li key={a.key} className={a.included ? '' : styles.accountOff}>
+            <label>
+              <input type="checkbox" checked={a.included} onChange={e => onToggle(a.key, e.target.checked)} />
+              <span className={styles.accountKind}>{kindLabel[a.kind]}</span>
+              <span className={styles.accountName}>{a.name}{a.last4 && !a.name.includes(a.last4) ? ` …${a.last4}` : ''}</span>
+            </label>
+            <span className={styles.accountBal}>
+              {a.stale
+                ? <span className={styles.muted} title={`Last updated ${when(a.latestDate)}: counted as $0 since, as the account looks closed or disconnected`}>no update since {when(a.latestDate)}</span>
+                : <>{a.kind === 'debt' && a.latest ? '−' : ''}{money(Math.abs(a.latest))}</>}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <div className={styles.muted}>
+        Checking, savings and money-market accounts count as cash, and cards as owed. Investments and retirement don’t, unless you switch them on. Your choices are remembered in this browser.
+      </div>
+    </details>
   );
 }
