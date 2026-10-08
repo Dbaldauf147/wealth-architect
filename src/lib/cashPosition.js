@@ -55,13 +55,14 @@ const parseDay = s => {
  * @param monthKeys       the window, oldest first ('YYYY-MM')
  * @param today
  * @param overrides       { [accountKey]: true|false } — include/exclude, beats the default
+ * @param keepSnaps       keep each account's snapshots on it (for the cash bridge)
  * @returns {
  *   accounts: [{ key, name, last4, kind, included, latest, latestDate, stale }],
  *   months:   [{ key, cash, debt, net, asOf }],
  *   now:      { cash, debt, net, asOf } | null,
  * }
  */
-export function buildCashPosition({ balanceHistory, monthKeys, today = new Date(), overrides = {} }) {
+export function buildCashPosition({ balanceHistory, monthKeys, today = new Date(), overrides = {}, keepSnaps = false }) {
   const byAccount = new Map();
   let newest = null;
   for (const r of balanceHistory || []) {
@@ -141,6 +142,6 @@ export function buildCashPosition({ balanceHistory, monthKeys, today = new Date(
   const now = { ...position(newest), asOf: newest };
   const order = { cash: 0, debt: 1, other: 2 };
   accounts.sort((a, b) => order[a.kind] - order[b.kind] || a.stale - b.stale || Math.abs(b.lastBalance) - Math.abs(a.lastBalance));
-  for (const a of accounts) delete a.snaps;
+  if (!keepSnaps) for (const a of accounts) delete a.snaps;
   return { accounts, months, now };
 }

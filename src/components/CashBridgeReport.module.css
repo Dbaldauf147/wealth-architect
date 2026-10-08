@@ -1,0 +1,341 @@
+.card {
+  padding: 20px 22px;
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xs);
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px 20px;
+  margin-bottom: 16px;
+}
+
+.title {
+  font-family: var(--font-headline);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0 0 4px;
+}
+
+.hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+  max-width: 620px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.segment {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-surface-alt);
+}
+
+.segmentBtn {
+  border: none;
+  background: transparent;
+  padding: 6px 11px;
+  border-radius: var(--radius-sm, 6px);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.segmentActive {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-xs);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.field select {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--color-text-primary);
+  padding: 6px 8px;
+  border: var(--border-medium, 1px solid #ccc);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.notice {
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-alt);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.lede {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  max-width: 820px;
+}
+
+.lede b {
+  color: var(--color-text-primary);
+}
+
+/* ── The walk ─────────────────────────────────────────────────────────── */
+
+.walk {
+  display: flex;
+  flex-direction: column;
+  border-top: var(--border-ghost);
+}
+
+.lineWrap {
+  border-bottom: var(--border-ghost);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.3fr) minmax(120px, 1fr) 120px;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 10px 6px;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: var(--color-text-primary);
+}
+
+button.row {
+  cursor: pointer;
+}
+
+button.row:hover {
+  background: var(--color-surface-hover);
+}
+
+.rowTotal {
+  font-weight: 700;
+  border-bottom: var(--border-ghost);
+}
+
+.rowEnd {
+  border-top: 2px solid var(--color-text-primary);
+  border-bottom: none;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.label .material-symbols-outlined {
+  color: var(--color-text-tertiary);
+  transition: transform 0.15s;
+}
+
+.track {
+  position: relative;
+  height: 14px;
+}
+
+.zero {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 1px;
+  background: var(--color-text-muted);
+}
+
+.bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+}
+
+.amount {
+  text-align: right;
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.effect {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.detail {
+  padding: 4px 6px 14px 28px;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+}
+
+.detail p {
+  margin: 0 0 10px;
+  line-height: 1.5;
+  max-width: 760px;
+}
+
+/* ── Tables ───────────────────────────────────────────────────────────── */
+
+/* contain: tables scroll inside the card instead of widening the page. */
+.tableWrap {
+  margin-top: 20px;
+  overflow-x: auto;
+  contain: inline-size;
+}
+
+.items,
+.months {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin-bottom: 6px;
+}
+
+.items th,
+.months th {
+  padding: 7px 10px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  background: var(--color-surface-alt);
+  white-space: nowrap;
+}
+
+.items td,
+.months td {
+  padding: 8px 10px;
+  border-bottom: var(--border-ghost);
+  color: var(--color-text-primary);
+  vertical-align: top;
+}
+
+.num {
+  text-align: right !important;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.flag td {
+  background: rgba(208, 59, 59, 0.06);
+}
+
+.muted {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+}
+
+@media (max-width: 640px) {
+  .card {
+    padding: 16px;
+  }
+  .row {
+    grid-template-columns: 1fr auto;
+  }
+  .track {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+}
+
+.rowInfo {
+  color: var(--color-text-secondary);
+  border-bottom: var(--border-ghost);
+}
+
+.rowInfo .material-symbols-outlined {
+  color: var(--color-text-tertiary);
+}
+
+.monthRow {
+  cursor: pointer;
+}
+
+.monthRow:hover td {
+  background: var(--color-surface-hover);
+}
+
+.overlap {
+  display: flex;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  background: rgba(178, 107, 0, 0.08);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+}
+
+.overlap b {
+  color: var(--color-text-primary);
+}
+
+.overlap .material-symbols-outlined {
+  flex: none;
+  font-size: 20px;
+  color: var(--color-warning, #b26b00);
+}
+
+.overlapActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-top: 6px;
+}
+
+.linkBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-secondary);
+  cursor: pointer;
+}

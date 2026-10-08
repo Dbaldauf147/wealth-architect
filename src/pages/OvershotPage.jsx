@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../contexts/DataContext';
 import { computeOvershot, monthsSpanned } from '../lib/overshot';
 import { buildCashPosition } from '../lib/cashPosition';
+import { CashBridgeReport } from '../components/CashBridgeReport';
 import styles from './OvershotPage.module.css';
 
 /* When spending overtakes income. Same income/spending definitions as Cash
@@ -85,6 +86,21 @@ export function OvershotPage() {
     const pos = buildCashPosition({ balanceHistory, monthKeys: result.months.map(m => m.key), today: new Date(), overrides: cashOverrides });
     return pos.now ? pos : null;
   }, [result, balanceHistory, cashOverrides]);
+
+  // Months the cash report can cover: from the first month that has a
+  // month-end before it (balance history began the month before) to now.
+  const bridgeMonths = useMemo(() => {
+    if (!transactions?.length || !balanceHistory?.length) return [];
+    let first = null;
+    for (const r of balanceHistory) {
+      const d = new Date(r.date);
+      if (!isNaN(d) && (!first || d < first)) first = d;
+    }
+    if (!first) return [];
+    const next = new Date(first.getFullYear(), first.getMonth() + 1, 1);
+    const startKey = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+    return monthsSpanned(transactions, new Date()).filter(k => k >= startKey);
+  }, [transactions, balanceHistory]);
 
   if (loading && !result) return <div className={styles.empty}>Loading transactions…</div>;
   if (!result || !result.months.length) return <div className={styles.empty}>No transactions yet.</div>;
@@ -180,6 +196,16 @@ export function OvershotPage() {
           />
         )}
       </section>
+
+      {bridgeMonths.length > 0 && (
+        <CashBridgeReport
+          transactions={transactions}
+          balanceHistory={balanceHistory}
+          overrides={cashOverrides}
+          monthKeys={bridgeMonths}
+          onToggleAccount={toggleAccount}
+        />
+      )}
 
       <section className={styles.card}>
         <div className={styles.cardHead}>
