@@ -58,6 +58,7 @@ function UpdatePill() {
   );
 }
 import { useData, useDataActions } from './contexts/DataContext';
+import { usePlaceAutoLink } from './hooks/usePlaceAutoLink';
 
 // Pages are loaded on demand so the initial bundle doesn't include every
 // page upfront. React.lazy expects a default export, so we adapt the named
@@ -216,6 +217,9 @@ export function App() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [headerTab, setHeaderTab] = useState('portfolio');
   const { loading, syncing, lastSync, privacyMode } = useData();
+  // Charges from merchants you've matched to a Prep Day place match themselves
+  // on every load, whichever page is open — see the hook.
+  usePlaceAutoLink();
   const { refresh, setPrivacyMode } = useDataActions();
   const busy = loading || syncing;
 

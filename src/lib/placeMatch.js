@@ -100,3 +100,26 @@ export function isoDay(dateStr) {
   const y = m[3].length === 2 ? `20${m[3]}` : m[3];
   return `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
 }
+
+/**
+ * Charges a remembered merchant should match without being asked: every charge
+ * (any category, any date) whose merchant has a rule and that isn't already
+ * matched, ignored, or deliberately unlinked (`skipAuto`). `keyOf` gives a
+ * charge's stable key — the same one the visit is stored under in Prep Day.
+ * @returns [{ key, t, placeId, placeName, date, amount, merchant }]
+ */
+export function autoLinkCandidates(transactions, placeLinks = {}, placeRules = {}, keyOf) {
+  if (!placeRules || !Object.keys(placeRules).length) return [];
+  const out = [];
+  for (const t of transactions || []) {
+    if (!(Number(t.amount) < 0)) continue;
+    const rule = placeRules[merchantKey(t.description)];
+    if (!rule?.placeId) continue;
+    const key = keyOf(t);
+    if (placeLinks[key]) continue;
+    const date = isoDay(t.date);
+    if (!date) continue;
+    out.push({ key, t, placeId: rule.placeId, placeName: rule.placeName || '', date, amount: Math.abs(Number(t.amount)), merchant: t.description });
+  }
+  return out;
+}
