@@ -9,8 +9,8 @@ const tx = (date, amount, category, description = category) => ({ date, amount, 
 //   Feb: + Travel 2,000 on the 20th        → 6,000, over by 1,000
 //   Mar: + Shopping 1,500                  → 5,500, over by 500
 //   Apr: + Shopping 1,200                  → 5,200, over by 200
-//   May: a 1,000 food refund               → 3,000 spent; the refund is also
-//        income, exactly as Cash Flow counts it (6,000)
+//   May: a 1,000 food refund               → 3,000 spent; the refund nets
+//        against food and isn't income as well (5,000)
 //   Jun: in progress — rent + 500 food, no paycheck yet
 function ledger() {
   const out = [];
@@ -43,8 +43,8 @@ describe('computeOvershot', () => {
     expect(m['2026-04'].gap).toBe(200);
   });
 
-  it('nets a refund into spending rather than counting it as income-only', () => {
-    expect(m['2026-05']).toMatchObject({ income: 6000, spending: 3000, over: false });
+  it('nets a refund into spending and does not count it as income too', () => {
+    expect(m['2026-05']).toMatchObject({ income: 5000, spending: 3000, over: false });
   });
 
   it('finds the day the month ran out of income', () => {
@@ -55,9 +55,8 @@ describe('computeOvershot', () => {
   });
 
   it('still finds the day when a category nets positive that month', () => {
-    // Cash Flow counts a month's spending as each category's |net|, so a
-    // category refunded more than it cost that month still adds to spending.
-    // A plain signed running total would never reach the month's figure.
+    // A category refunded more than it cost that month is money in that
+    // month, not spending — the running total leaves it out.
     const t = [
       tx('07/15/2026', 1000, 'Paycheck'),
       tx('07/02/2026', -900, 'Housing'),
@@ -68,13 +67,13 @@ describe('computeOvershot', () => {
     ];
     const out = computeOvershot({ transactions: t, monthKeys: ['2026-07', '2026-08'], today: new Date(2026, 8, 2) });
     const jul = out.months[0];
-    expect(jul).toMatchObject({ income: 1400, spending: 1200, over: false });
+    expect(jul).toMatchObject({ income: 1300, spending: 900, over: false });
     const aug = out.months[1];
     expect(aug.over).toBe(true);
     expect(aug.runOutDate).toEqual(new Date(2026, 7, 5));
     const t2 = [...t, tx('07/25/2026', -600, 'Travel')];
     const jul2 = computeOvershot({ transactions: t2, monthKeys: ['2026-07', '2026-08'], today: new Date(2026, 8, 2) }).months[0];
-    expect(jul2).toMatchObject({ spending: 1800, over: true });
+    expect(jul2).toMatchObject({ spending: 1500, income: 1300, over: true });
     expect(jul2.runOutDate).toEqual(new Date(2026, 6, 25));
   });
 
@@ -101,7 +100,7 @@ describe('computeOvershot', () => {
   });
 
   it('marks where the running total went negative and came back', () => {
-    expect(r.months.filter(x => !x.partial).map(x => x.cumulative)).toEqual([1000, 0, -500, -700, 2300]);
+    expect(r.months.filter(x => !x.partial).map(x => x.cumulative)).toEqual([1000, 0, -500, -700, 1300]);
     expect(r.summary.crossings).toEqual([{ key: '2026-03', direction: 'under' }, { key: '2026-05', direction: 'back' }]);
   });
 
