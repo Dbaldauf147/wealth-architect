@@ -1,9 +1,9 @@
 /* When spending overtakes income — the "Overshot" page.
 
    Income and spending are counted exactly as the Cash Flow page counts them
-   (pageTotalsByMonth): transfers, card payments and investments are money
-   moving, not earned or spent; a category is spending only when it nets
-   negative over the window, with refunds netted in. So a month's numbers here
+   (cashFlowBreakdown): transfers, card payments and investing are money
+   moving, not earned or spent; refunds net against their category, and a
+   category that nets positive in a month is money in that month. So a month's numbers here
    are the same as that month's Income and Expenses on Cash Flow for the same
    window.
 
@@ -13,7 +13,7 @@
 
    Pure: no React, no DOM. */
 
-import { pageTotalsByMonth, cashFlowMonthKey } from './cashflowExport.js';
+import { cashFlowBreakdown, cashFlowMonthKey } from './cashflowExport.js';
 
 const DAY = 86400000;
 const round2 = n => Math.round(n * 100) / 100;
@@ -61,17 +61,18 @@ function median(xs) {
  */
 export function computeOvershot({ transactions, monthKeys, today = new Date() }) {
   const nowKey = monthKeyFor(today);
-  const { totals, qualifying } = pageTotalsByMonth(transactions, monthKeys);
+  const { totals, role } = cashFlowBreakdown(transactions, monthKeys);
   const inWindow = new Set(monthKeys);
 
-  // Daily spending and per-category spending per month, over the same
-  // qualifying categories the totals used.
+  // Daily and per-category signed sums per month, over the same transactions
+  // the totals used (everything that isn't moving money).
   const daily = {};   // key -> { 'YYYY-MM-DD': { category: signed } }
   const byCat = {};   // key -> { category: signed }
   for (const t of transactions || []) {
     if (!t.date || !t.amount) continue;
+    const r = role(t);
+    if (!r || r === 'move') continue;
     const cat = t.category || 'Uncategorized';
-    if (!qualifying.has(cat)) continue;
     const key = cashFlowMonthKey(t);
     if (!inWindow.has(key)) continue;
     const d = new Date(t.date);
@@ -84,12 +85,12 @@ export function computeOvershot({ transactions, monthKeys, today = new Date() })
 
   let cumulative = 0;
   const months = monthKeys.map(key => {
-    const { income, expenses } = totals[key] || { income: 0, expenses: 0 };
+    const { income, expenses, invested = 0, kept = 0 } = totals[key] || { income: 0, expenses: 0 };
     const spending = expenses;
     const net = round2(income - spending);
     const partial = key === nowKey;
     cumulative = round2(cumulative + net);
-    return { key, income: round2(income), spending: round2(spending), net, over: spending > income, gap: round2(Math.max(0, spending - income)), partial, cumulative };
+    return { key, income: round2(income), spending: round2(spending), net, invested: round2(invested), kept: round2(kept), over: spending > income, gap: round2(Math.max(0, spending - income)), partial, cumulative };
   });
 
   const complete = months.filter(m => !m.partial);
@@ -105,13 +106,15 @@ export function computeOvershot({ transactions, monthKeys, today = new Date() })
     if (!m.over) continue;
     // The day spending passed the month's whole income: the point where the
     // rest of the month was paid for out of savings or credit. Spending to
-    // date is counted the way the month's total is — each category's |net| —
-    // so on the last day it lands exactly on m.spending and an over month
-    // always finds its day.
+    // date is counted the way the month's total is — only categories that are
+    // spending this month (net negative), each at its net so far — so on the
+    // last day it lands exactly on m.spending and an over month always finds
+    // its day.
     const sofar = {};
+    const spendingCats = new Set(Object.entries(byCat[m.key] || {}).filter(([, v]) => v <= 0).map(([c]) => c));
     for (const day of Object.keys(daily[m.key] || {}).sort()) {
       for (const [cat, amt] of Object.entries(daily[m.key][day])) sofar[cat] = (sofar[cat] || 0) + amt;
-      const run = Object.values(sofar).reduce((s, v) => s + Math.abs(v), 0);
+      const run = [...spendingCats].reduce((s, c) => s + Math.max(0, -(sofar[c] || 0)), 0);
       if (run > m.income + 0.005) {
         const [y, mo, d] = day.split('-').map(Number);
         m.runOutDate = new Date(y, mo - 1, d);

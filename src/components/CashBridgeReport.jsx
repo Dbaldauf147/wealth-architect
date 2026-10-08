@@ -16,8 +16,6 @@ const signed = n => (n > 0.5 ? '+' : n < -0.5 ? '−' : '') + money(n);
 const day = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
 const SHORT_LABEL = {
-  refundsTwice: 'Refunds counted twice',
-  uncounted: 'Not counted as spending',
   outsideIncome: 'Income outside cash',
   outsideSpending: 'Spending from outside',
   timing: 'Rent timing',

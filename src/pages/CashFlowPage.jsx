@@ -2,7 +2,9 @@ import { useMemo, useState } from 'react';
 import { useData } from '../contexts/DataContext';
 import { buildCardSchedule } from '../lib/cardSchedule';
 import { downloadXlsx } from '../lib/xlsx';
-import { buildDeepDiveSheets, cashFlowMonthKey, computeMonthReconciliation, monthLabel, prevMonthKey } from '../lib/cashflowExport';
+import { buildCashPosition } from '../lib/cashPosition';
+import { SurplusSplit } from '../components/SurplusSplit';
+import { buildDeepDiveSheets, cashFlowBreakdown, cashFlowMonthKey, computeMonthReconciliation, monthLabel, prevMonthKey } from '../lib/cashflowExport';
 
 function fmt(n) {
   if (n == null) return '—';
@@ -10,16 +12,6 @@ function fmt(n) {
 }
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-// Categories that must never roll into the Expenses bucket on the Cashflow page,
-// even if they happen to have negative-signed transactions.
-// (Transfer, Credit Card Payment(s), Investments, Retirement are already excluded
-// elsewhere — see drilldownData / data aggregation — so they're not repeated here.)
-const NON_EXPENSE_CATS = new Set([
-  'paycheck',
-  'income',
-  'tax refund/payment',
-]);
 
 function csvEscape(v) {
   if (v == null) return '';
@@ -88,44 +80,16 @@ export function CashFlowPage() {
   const cardLabel = (name) => (accountGroups && accountGroups[name]) || (accountNicknames && accountNicknames[name]) || name;
 
   const data = useMemo(() => {
-    if (!transactions) return { months: [], totalIncome: 0, totalExpenses: 0, net: 0, avgIncome: 0, avgExpenses: 0, qualifyingExpCats: new Set() };
+    if (!transactions) return { months: [], totalIncome: 0, totalExpenses: 0, net: 0, avgIncome: 0, avgExpenses: 0, qualifyingExpCats: new Set(), role: () => null };
 
-    const buckets = {};
-    // Per-category per-month signed sums for the expense calculation.
-    // We mirror the Transactions page: a category counts as an expense category only
-    // when its net across the visible months is negative; the per-month value is
-    // |signed sum| so refunds reduce the displayed expense.
-    const expSignedByCat = {}; // [categoryDisplayName] -> { [monthKey]: signedSum }
+    // Every month with a transaction, gaps filled.
+    const seen = new Set();
     for (const t of transactions) {
       if (!t.date || t.amount === 0) continue;
-      const cat = (t.category || '').toLowerCase();
-      const catKey = t.category || 'Uncategorized';
-      if (cat === 'transfer' || cat === 'credit card payments' || cat === 'credit card payment') continue;
-      const d = new Date(t.date);
-      if (isNaN(d)) continue;
-      const key = cashFlowMonthKey(t);
-      if (!buckets[key]) buckets[key] = { income: 0, invested: 0, retirement: 0, incomeSubs: {} };
-      if (cat === 'investments' || cat === 'retirement') {
-        const amt = Math.abs(t.amount);
-        buckets[key].invested += amt;
-        const sub = (t.subcategory || '').toLowerCase();
-        if (cat === 'retirement' || sub === 'retirement') {
-          buckets[key].retirement += amt;
-        }
-        continue;
-      }
-      if (t.amount > 0) {
-        buckets[key].income += t.amount;
-        const subLabel = t.subcategory || t.category || 'Other';
-        buckets[key].incomeSubs[subLabel] = (buckets[key].incomeSubs[subLabel] || 0) + t.amount;
-      }
-      // Track per-cat-per-month signed amounts for the expense calc, excluding income-side cats
-      if (NON_EXPENSE_CATS.has(cat)) continue;
-      if (!expSignedByCat[catKey]) expSignedByCat[catKey] = {};
-      expSignedByCat[catKey][key] = (expSignedByCat[catKey][key] || 0) + t.amount;
+      const k = cashFlowMonthKey(t);
+      if (k) seen.add(k);
     }
-
-    const sortedKeys = Object.keys(buckets).sort();
+    const sortedKeys = [...seen].sort();
     const allKeys = [];
     if (sortedKeys.length > 0) {
       const [startY, startM] = sortedKeys[0].split('-').map(Number);
@@ -147,34 +111,33 @@ export function CashFlowPage() {
       if (need.length) recentKeys = [...new Set([...recentKeys, ...need])].sort();
     }
 
-    // Qualifying expense cats: those whose net across the visible range is negative,
-    // plus 'Uncategorized' if it has any non-zero net.
-    const qualifyingExpCats = new Set();
-    for (const cat of Object.keys(expSignedByCat)) {
-      let net = 0;
-      for (const k of recentKeys) net += expSignedByCat[cat][k] || 0;
-      if (net < 0 || (cat === 'Uncategorized' && net !== 0)) {
-        qualifyingExpCats.add(cat);
-      }
+    // Income, spending and investing as every page counts them — refunds net
+    // into their category, tax payments are spending, and money sent to a
+    // brokerage is investing, not spending (see cashFlowBreakdown).
+    const { totals, qualifying, role } = cashFlowBreakdown(transactions, recentKeys);
+    const incomeSubs = {};
+    for (const t of transactions) {
+      if (role(t) !== 'income') continue;
+      const key = cashFlowMonthKey(t);
+      const subLabel = t.subcategory || t.category || 'Other';
+      const subs = (incomeSubs[key] ||= {});
+      subs[subLabel] = (subs[subLabel] || 0) + t.amount;
     }
 
     const months = recentKeys.map(key => {
       const [y, m] = key.split('-');
-      const b = buckets[key] || { income: 0, invested: 0, retirement: 0, incomeSubs: {} };
-      let expenses = 0;
-      for (const cat of qualifyingExpCats) {
-        expenses += Math.abs(expSignedByCat[cat]?.[key] || 0);
-      }
+      const tot = totals[key];
       return {
         key,
         label: MONTH_SHORT[parseInt(m, 10) - 1],
         year: y,
-        income: b.income,
-        expenses,
-        invested: b.invested,
-        retirement: b.retirement,
-        net: b.income - expenses,
-        incomeSubs: b.incomeSubs,
+        income: tot.income,
+        expenses: tot.expenses,
+        invested: tot.invested,
+        retirement: tot.retirement,
+        kept: tot.kept,
+        net: tot.net,
+        incomeSubs: incomeSubs[key] || {},
       };
     });
 
@@ -190,16 +153,38 @@ export function CashFlowPage() {
       totalExpenses,
       totalInvested,
       totalRetirement,
+      totalKept: totalIncome - totalExpenses - totalInvested,
       net: totalIncome - totalExpenses,
       avgIncome: totalIncome / activeMonths,
       avgExpenses: totalExpenses / activeMonths,
       avgInvested: totalInvested / activeMonths,
       savingsRate: totalIncome > 0 ? (totalIncome - totalExpenses) / totalIncome : 0,
-      qualifyingExpCats,
-      expSignedByCat,
+      qualifyingExpCats: qualifying,
+      role,
       allMonthKeys: allKeys,
     };
   }, [transactions, monthCount, selectedMonth]);
+
+  // Each month's surplus split into invested and kept, beside what the cash
+  // position (cash minus card balances) actually did. Uses the accounts chosen
+  // as cash on the Overshot page, so the two pages agree.
+  const split = useMemo(() => {
+    const keys = data.months.map(m => m.key);
+    const change = {};
+    if (balanceHistory?.length && keys.length) {
+      let overrides = {};
+      try { overrides = JSON.parse(localStorage.getItem('wa-overshot-cash-accounts') || '{}') || {}; } catch { /* storage unavailable */ }
+      const [y, mo] = keys[0].split('-').map(Number);
+      const before = mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, '0')}`;
+      const pos = buildCashPosition({ balanceHistory, monthKeys: [before, ...keys], today: new Date(), overrides });
+      pos.months.forEach((m, i) => {
+        const prev = pos.months[i - 1];
+        if (i > 0 && m.net != null && prev?.net != null) change[m.key] = Math.round((m.net - prev.net) * 100) / 100;
+      });
+    }
+    const nowKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+    return data.months.map(m => ({ key: m.key, surplus: m.net, invested: m.invested, kept: m.kept, cashChange: change[m.key] ?? null, partial: m.key === nowKey }));
+  }, [data.months, balanceHistory]);
 
   // Month-end balance lookup for the tracked bank account (…1118). For each
   // visible month, find the latest Balance History snapshot dated within
@@ -264,21 +249,10 @@ export function CashFlowPage() {
     const byCat = {};
     for (const t of transactions) {
       if (!t.date || t.amount === 0) continue;
-      const tCat = (t.category || '').toLowerCase();
-      if (tCat === 'transfer' || tCat === 'credit card payments' || tCat === 'credit card payment') continue;
-      if (tCat === 'investments' || tCat === 'retirement') continue;
-      const d = new Date(t.date);
-      if (isNaN(d)) continue;
-      const k = cashFlowMonthKey(t);
-      if (k !== monthKey) continue;
-      if (kind === 'income' && t.amount <= 0) continue;
-      if (kind === 'expenses') {
-        if (NON_EXPENSE_CATS.has(tCat)) continue;
-        const cat0 = t.category || 'Uncategorized';
-        if (!data.qualifyingExpCats.has(cat0)) continue;
-        // Note: positive amounts (refunds) in qualifying cats are intentionally NOT
-        // skipped — they reduce the cat's net for the month.
-      }
+      if (cashFlowMonthKey(t) !== monthKey) continue;
+      // The rule the totals use: a refund sits with its category on the
+      // expenses side, netting it down, and isn't income as well.
+      if (data.role(t) !== (kind === 'income' ? 'income' : 'expense')) continue;
       const cat = t.category || 'Uncategorized';
       const sub = t.subcategory || '';
       if (!byCat[cat]) byCat[cat] = { signedTotal: 0, count: 0, subs: {}, txns: [] };
@@ -338,7 +312,7 @@ export function CashFlowPage() {
       }))
       .sort((a, b) => b.total - a.total);
     return { rows, total, monthKey, kind };
-  }, [drilldown, transactions, data.qualifyingExpCats]);
+  }, [drilldown, transactions, data]);
 
   const revenueBreakdown = useMemo(() => {
     if (!transactions) return null;
@@ -346,12 +320,7 @@ export function CashFlowPage() {
     const bySub = {};
     let total = 0;
     for (const t of transactions) {
-      if (!t.date || t.amount <= 0) continue;
-      const cat = (t.category || '').toLowerCase();
-      if (cat === 'transfer' || cat === 'credit card payments' || cat === 'credit card payment') continue;
-      if (cat === 'investments' || cat === 'retirement') continue;
-      const d = new Date(t.date);
-      if (isNaN(d)) continue;
+      if (data.role(t) !== 'income') continue;
       const key = cashFlowMonthKey(t);
       if (monthFilter) {
         if (key !== monthFilter) continue;
@@ -376,7 +345,7 @@ export function CashFlowPage() {
       }))
       .sort((a, b) => b.total - a.total);
     return { rows, total, monthFilter };
-  }, [transactions, data.months, drilldown]);
+  }, [transactions, data, drilldown]);
 
   /* This-month projection. MTD actuals + projected remainder, where the
      remainder is (daysRemaining / daysInMonth) × baseline. Baseline blends
@@ -496,27 +465,8 @@ export function CashFlowPage() {
     if (!transactions || !monthKey) return;
     const [yy, mm] = monthKey.split('-');
     const rows = transactions
-      .filter(t => {
-        if (!t.date || t.amount === 0) return false;
-        const d = new Date(t.date);
-        if (isNaN(d)) return false;
-        const k = cashFlowMonthKey(t);
-        if (k !== monthKey) return false;
-        const tCat = (t.category || '').toLowerCase();
-        // Mirrors drilldownData's exclusion list so the export matches
-        // what the user is looking at.
-        if (tCat === 'transfer' || tCat === 'credit card payments' || tCat === 'credit card payment') return false;
-        if (tCat === 'investments' || tCat === 'retirement') return false;
-        if (kind === 'income' && t.amount <= 0) return false;
-        if (kind === 'expenses') {
-          if (NON_EXPENSE_CATS.has(tCat)) return false;
-          const cat0 = t.category || 'Uncategorized';
-          if (!data.qualifyingExpCats.has(cat0)) return false;
-          // Include refunds (positive amounts) in qualifying cats — they net
-          // against spending and reduce the displayed total.
-        }
-        return true;
-      })
+      // The same rule as the drill-down, so the export matches what's on screen.
+      .filter(t => cashFlowMonthKey(t) === monthKey && data.role(t) === (kind === 'income' ? 'income' : 'expense'))
       .map(t => ({
         Date: t.date,
         Description: t.description || t.fullDescription || '',
@@ -648,9 +598,10 @@ export function CashFlowPage() {
         <StatCard label="Total Expenses" value={fmt(data.totalExpenses)} color={expenseColor} icon="trending_down" />
         <StatCard label="Net Cash Flow" value={`${data.net >= 0 ? '+' : ''}${fmt(data.net)}`} color={netColor} icon="payments" />
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
         <StatCard label="Total Invested" value={fmt(data.totalInvested)} color={investColor} icon="show_chart" />
         <StatCard label="Retirement" value={fmt(data.totalRetirement)} color={retireColor} icon="elderly" />
+        <StatCard label="Kept as Cash" value={`${data.totalKept >= 0 ? '+' : ''}${fmt(data.totalKept)}`} color={data.totalKept >= 0 ? incomeColor : expenseColor} icon="account_balance_wallet" />
         <StatCard
           label="Savings Rate"
           value={`${Math.round(data.savingsRate * 100)}%`}
@@ -805,6 +756,8 @@ export function CashFlowPage() {
         </div>
       </div>
 
+      <SurplusSplit months={split} />
+
       {/* Monthly breakdown table */}
       <div style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
@@ -831,6 +784,7 @@ export function CashFlowPage() {
               <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Invested</th>
               <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Retirement</th>
               <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}>Net</th>
+              <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }} title="Net minus what was invested: what earning and spending left as cash">Kept as cash</th>
               <th
                 style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-tertiary)' }}
                 title={`Last balance snapshot in each month for the bank account ending in ${TRACK_ACCOUNT_SUFFIX}. The Δ underneath is the change vs. the prior month's snapshot — if it doesn't match Net, transfers / CC payments / investments / retirement are likely moving money you wouldn't see in the Cash Flow Net column.`}
@@ -894,13 +848,17 @@ export function CashFlowPage() {
                     {m.expenses > 0 ? fmt(m.expenses) : '—'}
                   </td>
                   <td style={{ padding: '10px 12px', textAlign: 'right', color: investColor, fontFamily: 'var(--font-headline)', fontWeight: 600 }}>
-                    {m.invested > 0 ? fmt(m.invested) : '—'}
+                    {Math.abs(m.invested) >= 0.5 ? fmt(m.invested) : '—'}
                   </td>
                   <td style={{ padding: '10px 12px', textAlign: 'right', color: retireColor, fontFamily: 'var(--font-headline)', fontWeight: 600 }}>
-                    {m.retirement > 0 ? fmt(m.retirement) : '—'}
+                    {Math.abs(m.retirement) >= 0.5 ? fmt(m.retirement) : '—'}
                   </td>
                   <td style={{ padding: '10px 12px', textAlign: 'right', color: m.net >= 0 ? incomeColor : expenseColor, fontFamily: 'var(--font-headline)', fontWeight: 700 }}>
                     {m.net >= 0 ? '+' : ''}{fmt(m.net)}
+                  </td>
+                  <td style={{ padding: '10px 12px', textAlign: 'right', color: m.kept >= 0 ? incomeColor : expenseColor, fontFamily: 'var(--font-headline)', fontWeight: 600 }}
+                    title={m.kept < 0 && m.invested > 0 ? 'Negative because more was invested than saved this month' : undefined}>
+                    {m.kept >= 0 ? '+' : ''}{fmt(m.kept)}
                   </td>
                   {(() => {
                     const bh = trackedAccountMonthly[m.key];

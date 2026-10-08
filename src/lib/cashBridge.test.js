@@ -55,8 +55,6 @@ describe('computeCashBridge', () => {
     expect(line('transfers')).toBe(0);
     expect(line('outsideSpending')).toBe(0);
     expect(line('other')).toBe(0);
-    expect(line('refundsTwice')).toBe(0);
-    expect(line('uncounted')).toBe(0);
     expect(line('timing')).toBe(0);
     expect(line('accounts')).toBe(400);          // card …7676 stopped updating
     expect(line('unexplained')).toBe(10);        // interest with no transaction
@@ -99,9 +97,9 @@ describe('computeCashBridge', () => {
     expect(out.internal).toMatchObject({ count: 2, volume: 500 });
   });
 
-  it('takes out the second copy of a refund, and adds back a tax payment', () => {
-    // A 100 refund in Groceries: Cash Flow adds it to income AND lowers Groceries.
-    // A 700 tax payment under Tax Refund/Payment: never counted as spending.
+  it('counts a refund once and a tax payment as spending, so nothing is left to correct', () => {
+    // A 100 refund in Groceries nets against Groceries (not income as well);
+    // a 700 tax payment under Tax Refund/Payment is spending that month.
     const t = [...ledger(),
       tx('2/12/2026', 100, 'Groceries', 'Dan checking', 'xxxx1118', 'Refund'),
       tx('3/15/2026', -700, 'Tax Refund/Payment', 'Dan checking', 'xxxx1118', 'IRS payment')];
@@ -110,25 +108,29 @@ describe('computeCashBridge', () => {
         : x.date === '3/31/2026' ? { ...x, balance: 2510 + 100 - 700 } : x));
     const out = computeCashBridge({ transactions: t, balanceHistory: b, from: '2026-02', to: '2026-03', today: new Date(2026, 3, 5) });
     const l = id => out.lines.find(x => x.id === id).amount;
-    expect(out.surplus).toBe(2750 + 100 + 100);   // the refund, twice
-    expect(l('refundsTwice')).toBe(-100);
-    expect(l('uncounted')).toBe(-700);
+    expect(out.surplus).toBe(2750 + 100 - 700);
+    expect(out.lines.map(x => x.id)).not.toContain('refundsTwice');
     expect(l('other')).toBe(0);
     expect(l('unexplained')).toBe(10);
-    expect(out.lines.find(x => x.id === 'uncounted').items[0]).toMatchObject({ description: 'IRS payment', effect: -700 });
-    const total = out.surplus + out.lines.reduce((s, x) => s + x.amount, 0);
+    const total = out.surplus + out.lines.reduce((sum, x) => sum + x.amount, 0);
     expect(Math.round(total * 100) / 100).toBe(out.actualChange);
   });
 
-  it('adds back a refund-only month, which Cash Flow counts as spending', () => {
-    // Groceries in March is only a +100 refund: Cash Flow takes |net| = 100 as
-    // spending AND 100 as income, so the surplus misses it; cash got +100.
+  it('counts a refund-only month as money in', () => {
     const t = [...ledger(), tx('3/12/2026', 100, 'Groceries', 'Dan checking', 'xxxx1118', 'Refund')];
     const b = balances().map(x => (x.accountNum === 'xxxx1118' && x.date === '3/31/2026' ? { ...x, balance: 2610 } : x));
     const out = computeCashBridge({ transactions: t, balanceHistory: b, from: '2026-02', to: '2026-03', today: new Date(2026, 3, 5) });
-    expect(out.surplus).toBe(2750);
-    expect(out.lines.find(x => x.id === 'refundsTwice').amount).toBe(100);
+    expect(out.surplus).toBe(2850);
     expect(out.lines.find(x => x.id === 'other').amount).toBe(0);
+  });
+
+  it('counts a "Transfer" to a brokerage as investing', () => {
+    // How the live ledger files Robinhood deposits: category Transfer, the
+    // brokerage named only in the description.
+    const t = ledger().map(x => (x.description === 'To Robinhood' ? { ...x, category: 'Transfer', description: 'Robinhood, Des:funds, ID:x1793' } : x));
+    const out = computeCashBridge({ transactions: t, balanceHistory: balances(), from: '2026-02', to: '2026-03', today: new Date(2026, 3, 5) });
+    expect(out.lines.find(x => x.id === 'investing').amount).toBe(-1000);
+    expect(out.lines.find(x => x.id === 'transfers').amount).toBe(0);
   });
 
   it('flags an old card frozen while a new one had started (a replaced card)', () => {

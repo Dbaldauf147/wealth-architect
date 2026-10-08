@@ -12,6 +12,7 @@
  */
 
 import { buildCardSchedule } from './cardSchedule';
+import { classifyAccount } from './cashPosition.js';
 
 const NON_EXPENSE_CATS = new Set(['paycheck', 'income', 'tax refund/payment']);
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -20,7 +21,6 @@ function lc(t) { return (t.category || '').toLowerCase(); }
 const isTransfer = (c) => c === 'transfer';
 const isCCPayment = (c) => c === 'credit card payment' || c === 'credit card payments';
 const isInvesting = (c) => c === 'investments' || c === 'retirement';
-const isSpecial = (c) => isTransfer(c) || isCCPayment(c) || isInvesting(c);
 
 function parseDate(v) {
   if (!v) return null;
@@ -95,42 +95,130 @@ function digitsMatch(rawAcctNum, suffix) {
   return String(rawAcctNum).replace(/\D+/g, '').endsWith(suffix);
 }
 
-// Page-equivalent per-month income/expense totals (all accounts) for a set of
-// month keys. Returns { totals: { [key]: { income, expenses, net } }, qualifying }.
-// Exported so other pages (Overshot) count income and spending the same way.
-export function pageTotalsByMonth(transactions, monthKeys) {
+// ── Income, spending and investing, as every page counts them ────────────
+//
+// One definition, used by Cash Flow, Overshot, the cash bridge and the export:
+//
+//   • Moving your own money is neither income nor spending: transfers, card
+//     payments, and anything to or from investments.
+//   • Investing is recognised by category (Investments, Retirement) or, on a
+//     cash account, by naming a brokerage (a "Transfer" to Robinhood is money
+//     invested, not money gone). It's counted from the cash side only, so the
+//     brokerage's matching deposit doesn't count it twice.
+//   • Activity inside an investment or retirement account that isn't earning
+//     or spending — buys, sells, reinvestments, the brokerage's side of a
+//     transfer, anything left uncategorised there — is money moving too.
+//     Dividends, interest and fees there still count.
+//   • Refunds net against the category they're in. A category is spending when
+//     it nets negative over the window; in a month where it nets positive (a
+//     refund with nothing to refund against), that month's net is money in.
+//   • Everything else that nets positive is income; a category that's mostly
+//     income (Paycheck, Tax Refund/Payment) but nets negative in a month — a
+//     tax payment — is spending that month.
+//
+// So income − spending is exactly what earning and spending did to your money,
+// and surplus − invested is what was left to keep as cash.
+//
+// This replaced a version that added every positive amount to income *and*
+// netted it out of its category's spending, which counted refunds twice (about
+// $29k over a year on the live ledger) and never counted tax payments.
+
+// The other side of a move is a brokerage or retirement provider.
+export const BROKERAGE_NAME = /\b(robinhood|fidelity|vanguard|schwab|e\*?trade|merrill|wealthfront|betterment|coinbase|acorns|webull|treasury ?direct|m1 finance|interactive brokers)\b/i;
+const RETIREMENT_NAME = /\b(ira|roth|401\s?\(?k\)?|403\s?\(?b\)?|retirement|savings plan)\b/i;
+const describe = t => `${t.description || ''} ${t.fullDescription || ''}`;
+const isCashAccount = t => classifyAccount(t.account, '') === 'cash';
+const INSIDE_ACTIVITY = /\b(buy|bought|sell|sold|purchase|reinvest\w*|ach|withdrawal|deposit|transfer|journal|exchange)\b/i;
+
+/** Activity inside an investment account that only moves money around in it
+ *  (a $30k uncategorised fund conversion is not income). */
+export function isInsideInvestments(t) {
+  return classifyAccount(t.account, '') === 'other' && (!t.category || INSIDE_ACTIVITY.test(describe(t)));
+}
+
+/** Money going to (or coming back from) investments. */
+export function isInvestingMove(t) {
+  return isInvesting(lc(t)) || (isCashAccount(t) && BROKERAGE_NAME.test(describe(t)));
+}
+
+/** Moving your own money: transfers, card payments, investing. */
+export function isMoneyMove(t) {
+  const c = lc(t);
+  return isTransfer(c) || isCCPayment(c) || isInvestingMove(t) || isInsideInvestments(t);
+}
+
+/**
+ * Per-month income, spending and investing for a window of month keys.
+ * @returns {
+ *   totals: { [key]: { income, expenses, net, invested, retirement, kept } },
+ *   qualifying: Set of spending categories over the window,
+ *   role: t => 'income' | 'expense' | 'move' | null   (null = outside the window)
+ * }
+ *   invested — cash sent to investments that month, net of money taken back
+ *   retirement — the part of `invested` going to retirement accounts
+ *   kept — net − invested: what earning and spending left as cash
+ */
+export function cashFlowBreakdown(transactions, monthKeys) {
   const keys = new Set(monthKeys);
-  const expSignedByCat = {};
-  const income = {};
-  for (const k of monthKeys) income[k] = 0;
+  const signed = {};      // category → month → signed sum
+  const invested = {};
+  const retirement = {};
+  for (const k of monthKeys) { invested[k] = 0; retirement[k] = 0; }
 
   for (const t of transactions || []) {
-    if (!t.date || t.amount === 0) continue;
-    const c = lc(t);
-    if (isTransfer(c) || isCCPayment(c) || isInvesting(c)) continue;
+    if (!t.date || !t.amount) continue;
     const key = cashFlowMonthKey(t);
     if (!keys.has(key)) continue;
-    if (t.amount > 0) income[key] += t.amount;
-    if (NON_EXPENSE_CATS.has(c)) continue;
-    const catKey = t.category || 'Uncategorized';
-    if (!expSignedByCat[catKey]) expSignedByCat[catKey] = {};
-    expSignedByCat[catKey][key] = (expSignedByCat[catKey][key] || 0) + t.amount;
+    if (isInvestingMove(t)) {
+      if (isCashAccount(t)) {
+        invested[key] -= t.amount;
+        if (lc(t) === 'retirement' || RETIREMENT_NAME.test(describe(t))) retirement[key] -= t.amount;
+      }
+      continue;
+    }
+    if (isMoneyMove(t)) continue;
+    const cat = t.category || 'Uncategorized';
+    (signed[cat] ||= {})[key] = (signed[cat][key] || 0) + t.amount;
   }
 
   const qualifying = new Set();
-  for (const cat of Object.keys(expSignedByCat)) {
+  for (const cat of Object.keys(signed)) {
+    if (NON_EXPENSE_CATS.has(cat.toLowerCase())) continue;
     let net = 0;
-    for (const k of monthKeys) net += expSignedByCat[cat][k] || 0;
+    for (const k of monthKeys) net += signed[cat][k] || 0;
     if (net < 0 || (cat === 'Uncategorized' && net !== 0)) qualifying.add(cat);
   }
 
-  const out = {};
+  const totals = {};
   for (const k of monthKeys) {
+    let income = 0;
     let expenses = 0;
-    for (const cat of qualifying) expenses += Math.abs(expSignedByCat[cat]?.[k] || 0);
-    out[k] = { income: income[k], expenses, net: income[k] - expenses };
+    for (const cat of Object.keys(signed)) {
+      const v = signed[cat][k] || 0;
+      if (v > 0) income += v; else expenses -= v;
+    }
+    const net = income - expenses;
+    totals[k] = { income, expenses, net, invested: invested[k], retirement: retirement[k], kept: net - invested[k] };
   }
-  return { totals: out, qualifying };
+
+  const role = (t) => {
+    if (!t?.date || !t.amount) return null;
+    const key = cashFlowMonthKey(t);
+    if (!keys.has(key)) return null;
+    if (isMoneyMove(t)) return 'move';
+    const v = signed[t.category || 'Uncategorized']?.[key] || 0;
+    return v > 0 ? 'income' : 'expense';
+  };
+
+  return { totals, qualifying, role };
+}
+
+// Per-month income/expense totals (all accounts) for a set of month keys, as
+// every page counts them. Returns { totals: { [key]: { income, expenses, net,
+// invested, retirement, kept } }, qualifying }.
+export function pageTotalsByMonth(transactions, monthKeys) {
+  const { totals, qualifying } = cashFlowBreakdown(transactions, monthKeys);
+  return { totals, qualifying };
 }
 
 /** Reconcile one month's tracked-account balance change against its
@@ -513,21 +601,11 @@ export function buildDeepDiveSheets({
   const keySet = new Set(monthKeys);
   const inWindow = (transactions || []).filter((t) => keySet.has(cashFlowMonthKey(t)) && t.amount !== 0);
 
-  const { qualifying } = pageTotalsByMonth(transactions, monthKeys);
-
-  // Income: positive amounts, excluding the special (own-money) categories.
-  const incomeTxns = inWindow.filter((t) => {
-    const c = lc(t);
-    return t.amount > 0 && !isSpecial(c);
-  });
-
-  // Expenses: transactions in qualifying expense categories (refunds included
-  // so they net down the totals), excluding income-side categories.
-  const expenseTxns = inWindow.filter((t) => {
-    const c = lc(t);
-    if (isSpecial(c) || NON_EXPENSE_CATS.has(c)) return false;
-    return qualifying.has(t.category || 'Uncategorized');
-  });
+  // Same split as the page: each category-month is income or spending as a
+  // whole, so a refund sits on the Expenses sheet netting its category down.
+  const { role } = cashFlowBreakdown(transactions, monthKeys);
+  const incomeTxns = inWindow.filter((t) => role(t) === 'income');
+  const expenseTxns = inWindow.filter((t) => role(t) === 'expense');
 
   const windowLabel = monthKeys.map(monthLabel).join(' + ');
 

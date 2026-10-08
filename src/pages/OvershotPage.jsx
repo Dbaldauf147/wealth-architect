@@ -3,6 +3,7 @@ import { useData } from '../contexts/DataContext';
 import { computeOvershot, monthsSpanned } from '../lib/overshot';
 import { buildCashPosition } from '../lib/cashPosition';
 import { CashBridgeReport } from '../components/CashBridgeReport';
+import { SurplusSplit } from '../components/SurplusSplit';
 import styles from './OvershotPage.module.css';
 
 /* When spending overtakes income. Same income/spending definitions as Cash
@@ -87,6 +88,24 @@ export function OvershotPage() {
     return pos.now ? pos : null;
   }, [result, balanceHistory, cashOverrides]);
 
+  // Each month's surplus split into invested and kept, beside what the cash
+  // position actually did (needs the month-end before the window too).
+  const split = useMemo(() => {
+    if (!result) return [];
+    const keys = result.months.map(m => m.key);
+    const change = {};
+    if (balanceHistory?.length && keys.length) {
+      const [y, mo] = keys[0].split('-').map(Number);
+      const before = mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, '0')}`;
+      const pos = buildCashPosition({ balanceHistory, monthKeys: [before, ...keys], today: new Date(), overrides: cashOverrides });
+      pos.months.forEach((m, i) => {
+        const prev = pos.months[i - 1];
+        if (i > 0 && m.net != null && prev?.net != null) change[m.key] = Math.round((m.net - prev.net) * 100) / 100;
+      });
+    }
+    return result.months.map(m => ({ key: m.key, surplus: m.net, invested: m.invested, kept: m.kept, cashChange: change[m.key] ?? null, partial: m.partial }));
+  }, [result, balanceHistory, cashOverrides]);
+
   // Months the cash report can cover: from the first month that has a
   // month-end before it (balance history began the month before) to now.
   const bridgeMonths = useMemo(() => {
@@ -127,7 +146,7 @@ export function OvershotPage() {
           ))}
         </div>
         <div className={styles.controlsNote}>
-          Income and spending counted as on Cash Flow — transfers, card payments and investments are left out, refunds netted in.
+          Income and spending counted as on Cash Flow — transfers, card payments and investing are left out, refunds netted into their category.
         </div>
       </div>
 
@@ -147,6 +166,8 @@ export function OvershotPage() {
         </div>
         <MonthlyChart months={months} />
       </section>
+
+      <SurplusSplit months={split} />
 
       <section className={styles.card} data-testid="overshot-surplus">
         <div className={styles.cardHead}>
