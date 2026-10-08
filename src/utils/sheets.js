@@ -149,6 +149,8 @@ export async function fetchBalanceHistory() {
   const acctNumI = idxOf('Account #');
   const acctIdI = idxOf('Account ID');
   const instI = idxOf('Institution');
+  // "Asset" or "Liability" — what tells a checking account from a card.
+  const classI = idxOf('Class');
   if (dateI === -1 || balI === -1) return [];
 
   const out = [];
@@ -162,6 +164,7 @@ export async function fetchBalanceHistory() {
       accountNum: acctNumI !== -1 ? (row[acctNumI] || '').trim() : '',
       accountId: acctIdI !== -1 ? (row[acctIdI] || '').trim() : '',
       institution: instI !== -1 ? (row[instI] || '').trim() : '',
+      class: classI !== -1 ? (row[classI] || '').trim() : '',
       balance: parseMoney((row[balI] || '').trim()),
     });
   }
