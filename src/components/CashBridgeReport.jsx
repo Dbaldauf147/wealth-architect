@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import { computeCashBridge } from '../lib/cashBridge';
+import { buildCashBridgeSheets } from '../lib/cashBridgeExport';
+import { downloadXlsx } from '../lib/xlsx';
 import styles from './CashBridgeReport.module.css';
 
 /* "I earned more than I spent — so why is my cash underwater?" A walk from
@@ -47,6 +49,7 @@ export function CashBridgeReport({ transactions, balanceHistory, overrides, mont
   }, [transactions, balanceHistory, overrides, from, to]);
 
   const preset = n => { setFrom(back(n)); setTo(lastComplete); };
+  const exportXlsx = () => bridge && downloadXlsx(buildCashBridgeSheets(bridge), `cash-vs-surplus_${bridge.from}_to_${bridge.to}.xlsx`);
   const isPreset = n => from === back(n) && to === lastComplete;
   const toggle = id => setOpen(prev => { const s = new Set(prev); if (s.has(id)) s.delete(id); else s.add(id); return s; });
 
@@ -79,6 +82,11 @@ export function CashBridgeReport({ transactions, balanceHistory, overrides, mont
               {monthKeys.map(k => <option key={k} value={k}>{short(k)}{k === monthKeys[monthKeys.length - 1] ? ' (so far)' : ''}</option>)}
             </select>
           </label>
+          <button type="button" className={styles.exportBtn} onClick={exportXlsx} disabled={!bridge}
+            title="Download an Excel workbook: the walk from income − spending to your cash, the same walk by month, and every transaction behind each reason">
+            <span className="material-symbols-outlined">download</span>
+            Export (.xlsx)
+          </button>
         </div>
       </div>
 
