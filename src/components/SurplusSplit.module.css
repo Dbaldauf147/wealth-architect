@@ -189,3 +189,26 @@
   text-transform: uppercase;
   color: var(--color-text-tertiary);
 }
+
+.exportBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: var(--border-ghost);
+  border-radius: 8px;
+  background: var(--color-surface-alt);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.exportBtn:hover {
+  color: var(--color-text-primary);
+}
+
+.exportBtn .material-symbols-outlined {
+  font-size: 16px;
+}

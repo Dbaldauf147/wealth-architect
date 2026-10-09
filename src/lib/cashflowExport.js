@@ -141,6 +141,14 @@ export function isInvestingMove(t) {
   return isInvesting(lc(t)) || (isCashAccount(t) && BROKERAGE_NAME.test(describe(t)));
 }
 
+/** The cash side of money sent to investments: { invested, retirement }, where
+ *  invested is positive for money sent and negative for money taken back, or
+ *  null when the transaction isn't one. */
+export function investingLeg(t) {
+  if (!isInvestingMove(t) || !isCashAccount(t)) return null;
+  return { invested: -t.amount, retirement: lc(t) === 'retirement' || RETIREMENT_NAME.test(describe(t)) };
+}
+
 /** Moving your own money: transfers, card payments, investing. */
 export function isMoneyMove(t) {
   const c = lc(t);
@@ -170,9 +178,10 @@ export function cashFlowBreakdown(transactions, monthKeys) {
     const key = cashFlowMonthKey(t);
     if (!keys.has(key)) continue;
     if (isInvestingMove(t)) {
-      if (isCashAccount(t)) {
-        invested[key] -= t.amount;
-        if (lc(t) === 'retirement' || RETIREMENT_NAME.test(describe(t))) retirement[key] -= t.amount;
+      const leg = investingLeg(t);
+      if (leg) {
+        invested[key] += leg.invested;
+        if (leg.retirement) retirement[key] += leg.invested;
       }
       continue;
     }

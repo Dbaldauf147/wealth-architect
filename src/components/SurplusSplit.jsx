@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { buildSurplusSheets } from '../lib/surplusExport';
+import { downloadXlsx } from '../lib/xlsx';
 import styles from './SurplusSplit.module.css';
 
 /* Where each month's surplus went: invested, or kept as cash.
@@ -46,9 +48,10 @@ function useWidth(initial) {
 }
 
 /**
- * @param months  [{ key, surplus, invested, kept, cashChange (number | null), partial? }], oldest first
+ * @param months        [{ key, surplus, invested, kept, cashChange (number | null), partial? }], oldest first
+ * @param transactions  the ledger, for the Excel export (summary + every transaction behind it)
  */
-export function SurplusSplit({ months, title = 'Where the surplus went' }) {
+export function SurplusSplit({ months, transactions, title = 'Where the surplus went' }) {
   const [wrapRef, width] = useWidth(640);
   const [hover, setHover] = useState(null);
   if (!months?.length) return null;
@@ -89,6 +92,11 @@ export function SurplusSplit({ months, title = 'Where the surplus went' }) {
 
   // Months the cash went down because the money went into investments.
   const investedNotKept = [...months].reverse().filter(m => !m.partial && m.invested > 0 && m.kept < 0).slice(0, 3);
+  function exportXlsx() {
+    const sheets = buildSurplusSheets({ transactions, months });
+    downloadXlsx(sheets, `where-the-surplus-went_${months[0].key}_to_${months[months.length - 1].key}.xlsx`);
+  }
+
   const tip = m => [
     `${short(m.key)}${m.partial ? ' (so far)' : ''}`,
     `Surplus ${signed(m.surplus)}`,
@@ -111,6 +119,13 @@ export function SurplusSplit({ months, title = 'Where the surplus went' }) {
           <span><i style={{ background: INVESTED }} />Invested</span>
           <span><i style={{ background: KEPT }} />Kept as cash</span>
           {withCash.length > 0 && <span><i className={styles.markerKey} />Cash actually changed</span>}
+          {transactions?.length > 0 && (
+            <button type="button" className={styles.exportBtn} onClick={exportXlsx}
+              title="Download an Excel workbook: the monthly summary, spending and income by category, and every transaction behind each number">
+              <span className="material-symbols-outlined">download</span>
+              Export (.xlsx)
+            </button>
+          )}
         </div>
       </div>
 

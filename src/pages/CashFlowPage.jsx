@@ -756,7 +756,7 @@ export function CashFlowPage() {
         </div>
       </div>
 
-      <SurplusSplit months={split} />
+      <SurplusSplit months={split} transactions={transactions} />
 
       {/* Monthly breakdown table */}
       <div style={{ background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' }}>
