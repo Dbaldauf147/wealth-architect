@@ -156,7 +156,7 @@ export const LINE_ORDER = ['outsideIncome', 'outsideSpending', 'timing', 'invest
  * @param from, to    'YYYY-MM', inclusive
  * @returns null when there's no balance history for the period, else
  *   { from, to, start, end, surplus, income, spending, actualChange, explainedChange,
- *     lines: [{ id, label, hint, amount, items, count }], internal: { count, volume },
+ *     lines: [{ id, label, hint, amount, items (the biggest), all (every one, by date), count }], internal: { count, volume },
  *     months: [{ key, surplus, actual, gap, lines, top }] }
  */
 export function computeCashBridge({ transactions, balanceHistory, overrides = {}, from, to, today = new Date() }) {
@@ -307,6 +307,8 @@ export function computeCashBridge({ transactions, balanceHistory, overrides = {}
     ...LINE_TEXT[id],
     amount: id === 'unexplained' ? round2(actualChange - countedTotal - sum('accounts')) : sum(id),
     items: topItems(items[id]),
+    // Every transaction behind the line, by date — for the Excel export.
+    all: [...items[id]].sort((x, y) => x.date - y.date),
     count: items[id].length,
   }));
 

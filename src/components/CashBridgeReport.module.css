@@ -160,7 +160,7 @@ button.row:hover {
   min-width: 0;
 }
 
-.label .material-symbols-outlined {
+.label :global(.material-symbols-outlined) {
   color: var(--color-text-tertiary);
   transition: transform 0.15s;
 }
@@ -288,7 +288,7 @@ button.row:hover {
   border-bottom: var(--border-ghost);
 }
 
-.rowInfo .material-symbols-outlined {
+.rowInfo :global(.material-symbols-outlined) {
   color: var(--color-text-tertiary);
 }
 
@@ -316,7 +316,7 @@ button.row:hover {
   color: var(--color-text-primary);
 }
 
-.overlap .material-symbols-outlined {
+.overlap :global(.material-symbols-outlined) {
   flex: none;
   font-size: 20px;
   color: var(--color-warning, #b26b00);
@@ -338,4 +338,33 @@ button.row:hover {
   font-weight: 600;
   color: var(--color-secondary);
   cursor: pointer;
+}
+
+.exportBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-end;
+  padding: 6px 12px;
+  border: var(--border-ghost);
+  border-radius: 8px;
+  background: var(--color-surface-alt);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.exportBtn:hover:not(:disabled) {
+  color: var(--color-text-primary);
+}
+
+.exportBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.exportBtn :global(.material-symbols-outlined) {
+  font-size: 16px;
 }
