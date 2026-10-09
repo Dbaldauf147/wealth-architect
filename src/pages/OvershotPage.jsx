@@ -167,7 +167,7 @@ export function OvershotPage() {
         <MonthlyChart months={months} />
       </section>
 
-      <SurplusSplit months={split} />
+      <SurplusSplit months={split} transactions={transactions} />
 
       <section className={styles.card} data-testid="overshot-surplus">
         <div className={styles.cardHead}>
