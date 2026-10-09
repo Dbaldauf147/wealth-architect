@@ -54,7 +54,9 @@ export function payerName(description) {
     // "Cash dividend of $94.26 from Vug" → "Vug": the holding is the payer.
     .replace(/^cash dividend of \$?[\d,.]+ from\s+/i, '')
     // "Zelle payment from, Name, for, "memo"" → "Zelle payment from, Name".
-    .replace(/,\s*for,?\s.*$/i, '');
+    .replace(/,\s*for,?\s.*$/i, '')
+    // "…, Conf# mufrht": a confirmation code, different every time.
+    .replace(/[,;]?\s*conf(?:irmation)?\s*#\s*\S*.*$/i, '');
   const cut = s.split(/\s+(?:des|id|indn|co id|ppd id|trn|ref)\s*:|\s+(?:ppd|ccd)\s*$/i)[0];
   return cut.replace(/\s+x-?X*\d{3,}\b/gi, '').replace(/\s{2,}/g, ' ').replace(/[\s,;:-]+$/, '').trim().slice(0, 48) || s.slice(0, 48) || 'Unknown';
 }

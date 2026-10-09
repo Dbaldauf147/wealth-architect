@@ -4,6 +4,10 @@ import { computeOvershot, monthsSpanned } from '../lib/overshot';
 import { buildCashPosition } from '../lib/cashPosition';
 import { CashBridgeReport } from '../components/CashBridgeReport';
 import { SurplusSplit } from '../components/SurplusSplit';
+import { UpcomingCashPlan } from '../components/UpcomingCashPlan';
+import { upcomingCardPayments } from '../lib/paymentReminder';
+import { countedAccountMatcher } from '../lib/cashBridge';
+import { detectPaychecks, detectCashBills, planUpcomingCash } from '../lib/upcomingCash';
 import styles from './OvershotPage.module.css';
 
 /* When spending overtakes income. Same income/spending definitions as Cash
@@ -57,7 +61,7 @@ function niceMax(v) {
 }
 
 export function OvershotPage() {
-  const { transactions, balanceHistory, loading } = useData();
+  const { transactions, balanceHistory, balances, incomeCategories, hiddenCards, statementCloseDays, accountNicknames, accountGroups, loading } = useData();
   const [range, setRange] = useState(12);
   const [surplusMode, setSurplusMode] = useState('cash'); // 'cash' | 'flow'
   // Which accounts count as cash on hand, beyond the defaults. Kept in this
@@ -87,6 +91,24 @@ export function OvershotPage() {
     const pos = buildCashPosition({ balanceHistory, monthKeys: result.months.map(m => m.key), today: new Date(), overrides: cashOverrides });
     return pos.now ? pos : null;
   }, [result, balanceHistory, cashOverrides]);
+
+  // What's coming up: paychecks, card payments and bills paid from cash over
+  // the next few weeks, and which money pays for each. Card payments come
+  // from the same schedule the reminder email uses.
+  const upcoming = useMemo(() => {
+    if (!transactions?.length || !cash) return null;
+    const today = new Date();
+    const isCounted = countedAccountMatcher(cash.accounts);
+    const names = { ...(accountNicknames || {}), ...(accountGroups || {}) };
+    const plan = planUpcomingCash({
+      cashOnHand: cash.now.cash,
+      cardPayments: upcomingCardPayments({ transactions, balances, hiddenCards, nicknames: names, closeDays: statementCloseDays, asOf: today }),
+      paychecks: detectPaychecks({ transactions, incomeCategories, today }),
+      bills: detectCashBills({ transactions, isCashAccount: t => { const w = isCounted(t); return w.counted && w.kind === 'cash'; }, today }),
+      today,
+    });
+    return { ...plan, cashAsOf: cash.now.asOf };
+  }, [transactions, cash, balances, hiddenCards, statementCloseDays, accountNicknames, accountGroups, incomeCategories]);
 
   // Each month's surplus split into invested and kept, beside what the cash
   // position actually did (needs the month-end before the window too).
@@ -131,6 +153,8 @@ export function OvershotPage() {
   return (
     <div className={styles.page}>
       <Hero summary={summary} complete={complete} cash={cash} />
+
+      {upcoming && <UpcomingCashPlan plan={upcoming} />}
 
       <div className={styles.controls}>
         <div className={styles.segment} role="group" aria-label="Time range">
