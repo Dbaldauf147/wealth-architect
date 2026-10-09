@@ -1,0 +1,199 @@
+.card {
+  padding: 20px 22px;
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xs);
+  min-width: 0;
+}
+
+.head {
+  margin-bottom: 14px;
+}
+
+.title {
+  font-family: var(--font-headline);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0 0 4px;
+}
+
+.hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+  max-width: 720px;
+}
+
+/* ── Tiles ────────────────────────────────────────────────────────────── */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.tile {
+  padding: 14px 16px;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-alt);
+  min-width: 0;
+}
+
+.tileShort {
+  background: rgba(208, 59, 59, 0.08);
+}
+
+.tileOk {
+  background: rgba(0, 150, 104, 0.08);
+}
+
+.tileLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin-bottom: 8px;
+}
+
+.tileLabel .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.tileShort .tileLabel {
+  color: var(--color-error);
+}
+
+.tileOk .tileLabel {
+  color: var(--color-success);
+}
+
+.tileValue {
+  font-family: var(--font-headline);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+  line-height: 1.1;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.tileWhen {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.tileNote {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
+}
+
+.lede {
+  margin: 0 0 14px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.lede b {
+  color: var(--color-text-primary);
+}
+
+/* ── Plan table ───────────────────────────────────────────────────────── */
+
+/* contain: the table scrolls inside the card instead of widening the page. */
+.tableWrap {
+  overflow-x: auto;
+  contain: inline-size;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  background: var(--color-surface-alt);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 10px 12px;
+  border-bottom: var(--border-ghost);
+  color: var(--color-text-primary);
+  vertical-align: top;
+}
+
+.num {
+  text-align: right !important;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.what {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.what .material-symbols-outlined {
+  font-size: 16px;
+  color: var(--color-text-tertiary);
+}
+
+.startRow td {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+
+.inRow td {
+  background: rgba(0, 150, 104, 0.04);
+}
+
+.shortRow td {
+  background: rgba(208, 59, 59, 0.06);
+}
+
+.good {
+  color: var(--color-success);
+}
+
+.bad {
+  color: var(--color-error);
+}
+
+.muted {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+}
+
+.foot {
+  margin-top: 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}

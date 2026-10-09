@@ -88,6 +88,7 @@ describe('helpers', () => {
   it('trims memos and stray punctuation from a payer name', () => {
     expect(payerName('NY State, Des:nysttaxrfd ID:x6-25, Indn:baldauf,daniel B, CO ID:x3200 Ppd')).toBe('NY State');
     expect(payerName('Zelle payment from, Pat Lee, for, "dinner"; Conf# 123')).toBe('Zelle payment from, Pat Lee');
+    expect(payerName('Zelle payment to, Ye Tian Landlord, Conf# mufrht')).toBe('Zelle payment to, Ye Tian Landlord');
   });
   it('reads cadence from the gaps', () => {
     const every = n => Array.from({ length: 6 }, (_, i) => d(2026, 1, 1 + i * n));

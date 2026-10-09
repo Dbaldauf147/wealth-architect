@@ -417,6 +417,38 @@ export function previewPaymentReminder(opts) {
   return { payload, previewAsOf, projectedDate };
 }
 
+/**
+ * Every visible card's next projected payment, built exactly as the reminder
+ * email builds it (cards from Balances, transactions renamed to their card,
+ * the closing days you set) — so a page showing what's coming up and the
+ * email the day before can't disagree about a date or an amount.
+ *
+ * @returns [{ card, displayName, date, amount, statementFrom, statementClose,
+ *             statementClosed, chargeCount, recurrence }], soonest first
+ */
+export function upcomingCardPayments(opts) {
+  const { transactions, balances, hiddenCards, nicknames = {}, closeDays = {}, asOf = new Date() } = opts || {};
+  const cards = deriveCardsFromLiabilities(balances);
+  if (!cards.length) return [];
+  const canonical = canonicalizeTransactionAccounts(transactions, cards);
+  const schedule = buildCardSchedule({ cards, transactions: canonical, asOf, closeDays: canonicalizeCloseDays(closeDays, cards) });
+  const hidden = new Set(hiddenCards || []);
+  return schedule
+    .filter(s => s.nextPaymentDate && !hidden.has(s.card))
+    .map(s => ({
+      card: s.card,
+      displayName: nicknames[s.card] || s.card,
+      date: s.nextPaymentDate,
+      amount: Math.round((s.estimatedNextAmount || 0) * 100) / 100,
+      statementFrom: s.statementFrom || null,
+      statementClose: s.statementClose || null,
+      statementClosed: !!s.statementClosed,
+      chargeCount: (s.nextPaymentCharges || []).length,
+      recurrence: s.recurrence || null,
+    }))
+    .sort((a, b) => a.date - b.date);
+}
+
 function escapeHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
