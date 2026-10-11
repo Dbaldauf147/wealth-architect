@@ -16,6 +16,7 @@ import { normalizeEmailSections } from '../lib/renderWeeklyEmail';
 import { SEED_PROMOS } from '../lib/cardPromos';
 import { keepRentDismissals } from '../lib/rentDuplicates';
 import { paymentFromTransaction, mergeLoan } from '../lib/loanInterest';
+import { mergePromos, mergeTrades } from '../lib/syncMerge';
 import {
   normalizeExpenses as normalizeSplitwiseExpenses,
   summarizeBalances as summarizeSplitwiseBalances,
@@ -272,6 +273,10 @@ const savePlaceRules = (v) => saveJSON('placeRules', v);
 // overwriting a curated one during the hydration merge.
 const loadCardPromos = () => loadJSON('cardPromos', null);
 const saveCardPromos = (v) => saveJSON('cardPromos', v);
+// When the promo list was last edited, so the load-time merge can tell a
+// stale device's list from a newer one (see mergePromos).
+const loadCardPromosUpdatedAt = () => loadJSON('cardPromosUpdatedAt', null);
+const saveCardPromosUpdatedAt = (v) => saveJSON('cardPromosUpdatedAt', v);
 
 // Transactions hand-tagged to a card promotion, as { [transactionId]: promoId }.
 // The promos' match rules only get you so far — a $300 travel credit redeemed
@@ -523,6 +528,9 @@ function mergedDiffersFromRemote(merged, remote) {
   if (JSON.stringify(merged.cardPromos ?? null) !== JSON.stringify(remote.cardPromos ?? null)) {
     return true;
   }
+  if ((merged.cardPromosUpdatedAt ?? null) !== (remote.cardPromosUpdatedAt ?? null)) {
+    return true;
+  }
   // Imported Robinhood trades — single object, compare serialized.
   if (JSON.stringify(merged.robinhoodTrades ?? null) !== JSON.stringify(remote.robinhoodTrades ?? null)) {
     return true;
@@ -549,7 +557,7 @@ const EMPTY_LOCALS = {
   assetClasses: {}, netWorthCategories: {}, netWorthLiquidCategories: {}, netWorthPrefs: null,
   customAssets: [], customLiabilities: [], customAssetClasses: [],
   hiddenCards: [], paymentReminderPrefs: {}, calendarSyncPrefs: {}, splitwisePrefs: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
-  cardPromos: null, promoTags: {},
+  cardPromos: null, cardPromosUpdatedAt: null, promoTags: {},
   hiddenCategories: new Set(), rangeExcludedCategories: [], rangeExcludedSeeded: false, shortTermLoan: null, robinhoodTrades: null,
   organizedCategories: new Set(), incomeCategories: new Set(), savedTxnViews: {},
   chartHiddenCats: new Set(), chartHiddenSubs: new Set(), txnColumnWidths: {},
@@ -575,6 +583,7 @@ function readLocalConfig() {
     placeLinks: loadPlaceLinks(),
     placeRules: loadPlaceRules(),
     cardPromos: loadCardPromos(),
+    cardPromosUpdatedAt: loadCardPromosUpdatedAt(),
     promoTags: loadPromoTags(),
     assetClasses: loadAssetClasses(),
     netWorthCategories: loadNetWorthCategories(),
@@ -629,7 +638,15 @@ function mergeConfig(remote, locals) {
     statementCloseDays: unionMap(locals.statementCloseDays, remote.statementCloseDays),
     placeLinks: unionMap(locals.placeLinks, remote.placeLinks),
     placeRules: unionMap(locals.placeRules, remote.placeRules),
-    cardPromos: locals.cardPromos || remote.cardPromos || null,
+    // Merged rather than either copy whole, like the loan: a device with an
+    // older list used to win here and write it over everyone else's edits.
+    ...(() => {
+      const m = mergePromos(
+        locals.cardPromos, Array.isArray(remote.cardPromos) ? remote.cardPromos : null,
+        locals.cardPromosUpdatedAt, remote.cardPromosUpdatedAt,
+      );
+      return { cardPromos: m.promos, cardPromosUpdatedAt: m.at };
+    })(),
     promoTags: unionMap(locals.promoTags, remote.promoTags),
     assetClasses: unionMap(locals.assetClasses, remote.assetClasses),
     netWorthCategories: unionMap(locals.netWorthCategories, remote.netWorthCategories),
@@ -665,7 +682,7 @@ function mergeConfig(remote, locals) {
     // Merged, not either copy whole — a device with an older loan used to win
     // here and then write it over the cloud, erasing tags made elsewhere.
     shortTermLoan: mergeLoan(locals.shortTermLoan, remote.shortTermLoan),
-    robinhoodTrades: locals.robinhoodTrades || remote.robinhoodTrades || null,
+    robinhoodTrades: mergeTrades(locals.robinhoodTrades, remote.robinhoodTrades),
     organizedCategories: unionSet(locals.organizedCategories, remote.organizedCategories),
     incomeCategories: unionSet(locals.incomeCategories, remote.incomeCategories),
     savedTxnViews: unionMap(locals.savedTxnViews, remote.savedTxnViews),
@@ -699,6 +716,7 @@ function buildSyncPayload(v) {
     placeLinks: v.placeLinks || {},
     placeRules: v.placeRules || {},
     cardPromos: v.cardPromos ?? null,
+    cardPromosUpdatedAt: v.cardPromosUpdatedAt ?? null,
     promoTags: v.promoTags,
     assetClasses: v.assetClasses,
     netWorthCategories: v.netWorthCategories,
@@ -810,6 +828,7 @@ export function DataProvider({ children }) {
   const [placeLinks, setPlaceLinksState] = useState(loadPlaceLinks);
   const [placeRules, setPlaceRulesState] = useState(loadPlaceRules);
   const [cardPromos, setCardPromosState] = useState(loadCardPromos);
+  const [cardPromosUpdatedAt, setCardPromosUpdatedAt] = useState(loadCardPromosUpdatedAt);
   const [promoTags, setPromoTags] = useState(loadPromoTags);
   const [assetClasses, setAssetClasses] = useState(loadAssetClasses);
   const [netWorthCategories, setNetWorthCategories] = useState(loadNetWorthCategories);
@@ -881,6 +900,7 @@ export function DataProvider({ children }) {
     setPlaceLinksState(m.placeLinks || {}); savePlaceLinks(m.placeLinks || {});
     setPlaceRulesState(m.placeRules || {}); savePlaceRules(m.placeRules || {});
     setCardPromosState(m.cardPromos); saveCardPromos(m.cardPromos);
+    setCardPromosUpdatedAt(m.cardPromosUpdatedAt ?? null); saveCardPromosUpdatedAt(m.cardPromosUpdatedAt ?? null);
     setPromoTags(m.promoTags); savePromoTags(m.promoTags);
     setAssetClasses(m.assetClasses); saveAssetClasses(m.assetClasses);
     setNetWorthCategories(m.netWorthCategories); saveNetWorthCategories(m.netWorthCategories);
@@ -1013,7 +1033,7 @@ export function DataProvider({ children }) {
     if (!syncHydrated.current) return;
     const currentConfig = {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
-      transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, statementCloseDays, placeLinks, placeRules, cardPromos, promoTags, assetClasses,
+      transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, statementCloseDays, placeLinks, placeRules, cardPromos, cardPromosUpdatedAt, promoTags, assetClasses,
       netWorthCategories, netWorthLiquidCategories, netWorthPrefs, customAssets,
       customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, splitwisePrefs, weeklyEmailSections, weeklyEmailDay,
       customCategories, hiddenCategories, rangeExcludedCategories, rangeExcludedSeeded, shortTermLoan, robinhoodTrades, organizedCategories,
@@ -1056,6 +1076,7 @@ export function DataProvider({ children }) {
     placeLinks,
     placeRules,
     cardPromos,
+    cardPromosUpdatedAt,
     promoTags,
     assetClasses,
     netWorthCategories,
@@ -1517,8 +1538,11 @@ export function DataProvider({ children }) {
 
   const setCardPromos = useCallback((promos) => {
     const next = Array.isArray(promos) ? promos : [];
+    const at = new Date().toISOString();
     setCardPromosState(next);
     saveCardPromos(next);
+    setCardPromosUpdatedAt(at);
+    saveCardPromosUpdatedAt(at);
   }, []);
 
   // Tag transactions to a card promotion so their spend counts against that
