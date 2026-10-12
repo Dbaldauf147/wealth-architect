@@ -278,6 +278,14 @@ const saveCardPromos = (v) => saveJSON('cardPromos', v);
 const loadCardPromosUpdatedAt = () => loadJSON('cardPromosUpdatedAt', null);
 const saveCardPromosUpdatedAt = (v) => saveJSON('cardPromosUpdatedAt', v);
 
+// Vendor spend alerts — "tell me when I pass $X at Y" (see lib/vendorAlerts).
+// Synced so the daily vendor-alerts cron can read them, and stamped like the
+// promos so a stale device can't overwrite a newer list on load.
+const loadVendorAlerts = () => loadJSON('vendorAlerts', []) || [];
+const saveVendorAlerts = (v) => saveJSON('vendorAlerts', v);
+const loadVendorAlertsUpdatedAt = () => loadJSON('vendorAlertsUpdatedAt', null);
+const saveVendorAlertsUpdatedAt = (v) => saveJSON('vendorAlertsUpdatedAt', v);
+
 // Transactions hand-tagged to a card promotion, as { [transactionId]: promoId }.
 // The promos' match rules only get you so far — a $300 travel credit redeemed
 // against one specific hotel charge has no rule that describes it. Synced so
@@ -531,6 +539,13 @@ function mergedDiffersFromRemote(merged, remote) {
   if ((merged.cardPromosUpdatedAt ?? null) !== (remote.cardPromosUpdatedAt ?? null)) {
     return true;
   }
+  // Vendor alerts — ordered list of objects, compare serialized.
+  if (JSON.stringify(merged.vendorAlerts ?? []) !== JSON.stringify(Array.isArray(remote.vendorAlerts) ? remote.vendorAlerts : [])) {
+    return true;
+  }
+  if ((merged.vendorAlertsUpdatedAt ?? null) !== (remote.vendorAlertsUpdatedAt ?? null)) {
+    return true;
+  }
   // Imported Robinhood trades — single object, compare serialized.
   if (JSON.stringify(merged.robinhoodTrades ?? null) !== JSON.stringify(remote.robinhoodTrades ?? null)) {
     return true;
@@ -557,7 +572,7 @@ const EMPTY_LOCALS = {
   assetClasses: {}, netWorthCategories: {}, netWorthLiquidCategories: {}, netWorthPrefs: null,
   customAssets: [], customLiabilities: [], customAssetClasses: [],
   hiddenCards: [], paymentReminderPrefs: {}, calendarSyncPrefs: {}, splitwisePrefs: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
-  cardPromos: null, cardPromosUpdatedAt: null, promoTags: {},
+  cardPromos: null, cardPromosUpdatedAt: null, promoTags: {}, vendorAlerts: [], vendorAlertsUpdatedAt: null,
   hiddenCategories: new Set(), rangeExcludedCategories: [], rangeExcludedSeeded: false, shortTermLoan: null, robinhoodTrades: null,
   organizedCategories: new Set(), incomeCategories: new Set(), savedTxnViews: {},
   chartHiddenCats: new Set(), chartHiddenSubs: new Set(), txnColumnWidths: {},
@@ -585,6 +600,8 @@ function readLocalConfig() {
     cardPromos: loadCardPromos(),
     cardPromosUpdatedAt: loadCardPromosUpdatedAt(),
     promoTags: loadPromoTags(),
+    vendorAlerts: loadVendorAlerts(),
+    vendorAlertsUpdatedAt: loadVendorAlertsUpdatedAt(),
     assetClasses: loadAssetClasses(),
     netWorthCategories: loadNetWorthCategories(),
     netWorthLiquidCategories: loadNetWorthLiquidCategories(),
@@ -646,6 +663,14 @@ function mergeConfig(remote, locals) {
         locals.cardPromosUpdatedAt, remote.cardPromosUpdatedAt,
       );
       return { cardPromos: m.promos, cardPromosUpdatedAt: m.at };
+    })(),
+    // Same merge as the promos: newer cloud list wins, otherwise union by id.
+    ...(() => {
+      const m = mergePromos(
+        locals.vendorAlerts, Array.isArray(remote.vendorAlerts) ? remote.vendorAlerts : null,
+        locals.vendorAlertsUpdatedAt, remote.vendorAlertsUpdatedAt,
+      );
+      return { vendorAlerts: m.promos || [], vendorAlertsUpdatedAt: m.at };
     })(),
     promoTags: unionMap(locals.promoTags, remote.promoTags),
     assetClasses: unionMap(locals.assetClasses, remote.assetClasses),
@@ -718,6 +743,8 @@ function buildSyncPayload(v) {
     cardPromos: v.cardPromos ?? null,
     cardPromosUpdatedAt: v.cardPromosUpdatedAt ?? null,
     promoTags: v.promoTags,
+    vendorAlerts: v.vendorAlerts || [],
+    vendorAlertsUpdatedAt: v.vendorAlertsUpdatedAt ?? null,
     assetClasses: v.assetClasses,
     netWorthCategories: v.netWorthCategories,
     netWorthLiquidCategories: v.netWorthLiquidCategories,
@@ -829,6 +856,8 @@ export function DataProvider({ children }) {
   const [placeRules, setPlaceRulesState] = useState(loadPlaceRules);
   const [cardPromos, setCardPromosState] = useState(loadCardPromos);
   const [cardPromosUpdatedAt, setCardPromosUpdatedAt] = useState(loadCardPromosUpdatedAt);
+  const [vendorAlerts, setVendorAlertsState] = useState(loadVendorAlerts);
+  const [vendorAlertsUpdatedAt, setVendorAlertsUpdatedAt] = useState(loadVendorAlertsUpdatedAt);
   const [promoTags, setPromoTags] = useState(loadPromoTags);
   const [assetClasses, setAssetClasses] = useState(loadAssetClasses);
   const [netWorthCategories, setNetWorthCategories] = useState(loadNetWorthCategories);
@@ -901,6 +930,8 @@ export function DataProvider({ children }) {
     setPlaceRulesState(m.placeRules || {}); savePlaceRules(m.placeRules || {});
     setCardPromosState(m.cardPromos); saveCardPromos(m.cardPromos);
     setCardPromosUpdatedAt(m.cardPromosUpdatedAt ?? null); saveCardPromosUpdatedAt(m.cardPromosUpdatedAt ?? null);
+    setVendorAlertsState(m.vendorAlerts || []); saveVendorAlerts(m.vendorAlerts || []);
+    setVendorAlertsUpdatedAt(m.vendorAlertsUpdatedAt ?? null); saveVendorAlertsUpdatedAt(m.vendorAlertsUpdatedAt ?? null);
     setPromoTags(m.promoTags); savePromoTags(m.promoTags);
     setAssetClasses(m.assetClasses); saveAssetClasses(m.assetClasses);
     setNetWorthCategories(m.netWorthCategories); saveNetWorthCategories(m.netWorthCategories);
@@ -1033,7 +1064,7 @@ export function DataProvider({ children }) {
     if (!syncHydrated.current) return;
     const currentConfig = {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
-      transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, statementCloseDays, placeLinks, placeRules, cardPromos, cardPromosUpdatedAt, promoTags, assetClasses,
+      transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, statementCloseDays, placeLinks, placeRules, cardPromos, cardPromosUpdatedAt, promoTags, vendorAlerts, vendorAlertsUpdatedAt, assetClasses,
       netWorthCategories, netWorthLiquidCategories, netWorthPrefs, customAssets,
       customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, splitwisePrefs, weeklyEmailSections, weeklyEmailDay,
       customCategories, hiddenCategories, rangeExcludedCategories, rangeExcludedSeeded, shortTermLoan, robinhoodTrades, organizedCategories,
@@ -1078,6 +1109,8 @@ export function DataProvider({ children }) {
     cardPromos,
     cardPromosUpdatedAt,
     promoTags,
+    vendorAlerts,
+    vendorAlertsUpdatedAt,
     assetClasses,
     netWorthCategories,
     netWorthLiquidCategories,
@@ -1543,6 +1576,15 @@ export function DataProvider({ children }) {
     saveCardPromos(next);
     setCardPromosUpdatedAt(at);
     saveCardPromosUpdatedAt(at);
+  }, []);
+
+  const setVendorAlerts = useCallback((alerts) => {
+    const next = Array.isArray(alerts) ? alerts : [];
+    const at = new Date().toISOString();
+    setVendorAlertsState(next);
+    saveVendorAlerts(next);
+    setVendorAlertsUpdatedAt(at);
+    saveVendorAlertsUpdatedAt(at);
   }, []);
 
   // Tag transactions to a card promotion so their spend counts against that
@@ -2432,6 +2474,7 @@ export function DataProvider({ children }) {
     updatePlaceLinks,
     updatePlaceRules,
     setCardPromos,
+    setVendorAlerts,
     setPromoTagForTransactions,
     clearPromoTagsFor,
     setAccountGroup,
@@ -2507,6 +2550,7 @@ export function DataProvider({ children }) {
     updatePlaceLinks,
     updatePlaceRules,
     setCardPromos,
+    setVendorAlerts,
     setPromoTagForTransactions,
     clearPromoTagsFor,
     setAccountGroup,
@@ -2602,6 +2646,7 @@ export function DataProvider({ children }) {
     placeLinks,
     placeRules,
     cardPromos: cardPromos ?? SEED_PROMOS,
+    vendorAlerts,
     promoTags,
     assetClasses: shownMaps.assetClasses,
     netWorthCategories: shownMaps.netWorthCategories,
@@ -2663,6 +2708,7 @@ export function DataProvider({ children }) {
     hiddenIds,
     splitTags,
     cardPromos,
+    vendorAlerts,
     placeLinks,
     placeRules,
     promoTags,

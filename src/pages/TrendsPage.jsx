@@ -3,6 +3,7 @@ import { useData } from '../contexts/DataContext';
 import { buildWedgeBands, axisTicks, restackBands, OTHER_LABEL } from '../lib/wedgeChart';
 import { monthLabelShort, monthLabel } from '../lib/netWorthSnapshot';
 import { absorbedStepUp, MAX_AGE, PRE_LOOKBACK } from '../lib/levelShift';
+import { VendorAlerts } from '../components/VendorAlerts';
 import styles from './TrendsPage.module.css';
 
 function fmt(n) {
@@ -393,6 +394,8 @@ export function TrendsPage() {
           )}
         </div>
       </div>
+
+      <VendorAlerts />
 
       <div className={styles.controls}>
         <div className={styles.pillGroup}>
