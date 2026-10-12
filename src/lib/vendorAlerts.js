@@ -153,3 +153,70 @@ export function newVendorAlert({ vendor, threshold, period = 'month', email = tr
     createdAt: new Date().toISOString(),
   };
 }
+
+/**
+ * What still needs emailing: crossed alerts with email on that haven't been
+ * sent for this period (or, per-purchase, for this purchase) before.
+ *
+ * @param {object[]} results   from evaluateVendorAlerts
+ * @param {Set<string>} sent   send keys already recorded
+ * @returns {{ result: object, sendKeys: string[], newOver: object[] }[]}
+ */
+export function pendingSends(results, sent) {
+  const out = [];
+  for (const r of results) {
+    if (!r.crossed || r.rule.email === false) continue;
+    if (r.rule.period === 'purchase') {
+      const fresh = r.over.filter(t => !sent.has(sendKey(r.rule, txnKey(t))));
+      if (fresh.length) out.push({ result: r, sendKeys: fresh.map(t => sendKey(r.rule, txnKey(t))), newOver: fresh });
+    } else {
+      const key = sendKey(r.rule, r.periodKey);
+      if (!sent.has(key)) out.push({ result: r, sendKeys: [key], newOver: [] });
+    }
+  }
+  return out;
+}
+
+/** A Firestore-safe document id for one email about one rule. */
+export function sendKey(rule, part) {
+  const raw = `${rule.id}__${part}`;
+  // Doc ids can't contain "/"; transaction ids and fallback keys can.
+  return raw.replace(/[/\s]+/g, '_').slice(0, 1400);
+}
+
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const money = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+
+/** Subject and HTML body for one email covering every pending alert. */
+export function renderVendorAlertEmail(pending, { siteUrl = '' } = {}) {
+  const lines = pending.map(({ result: r, newOver }) => {
+    const label = PERIODS.find(p => p.id === r.rule.period)?.label || '';
+    const headline = r.rule.period === 'purchase'
+      ? `${newOver.length === 1 ? 'A purchase' : `${newOver.length} purchases`} of ${money(r.threshold)} or more`
+      : `${money(r.spent)} spent ${r.rule.period === 'week' ? 'this week' : 'this month'} — ${money(r.spent - r.threshold)} over`;
+    const rows = (r.rule.period === 'purchase' ? newOver : r.matches).slice(-12).reverse().map(t => `
+        <tr>
+          <td style="padding:2px 12px 2px 0;color:#64748b;white-space:nowrap">${esc(t.date)}</td>
+          <td style="padding:2px 12px 2px 0;color:#334155">${esc(t.description)}</td>
+          <td style="padding:2px 0;text-align:right;white-space:nowrap;color:${Number(t.amount) < 0 ? '#0f172a' : '#009668'}">${Number(t.amount) < 0 ? money(-Number(t.amount)) : `−${money(Number(t.amount))}`}</td>
+        </tr>`).join('');
+    return `
+      <div style="margin:0 0 20px;padding:14px 16px;border:1px solid #f1c4c4;border-radius:8px;background:#fdf6f6">
+        <div style="font-size:15px;font-weight:700;color:#0f172a">${esc(r.rule.vendor)}
+          <span style="font-weight:400;color:#64748b;font-size:13px">· alert at ${money(r.threshold)} ${esc(label)}</span></div>
+        <div style="margin:4px 0 10px;font-size:14px;font-weight:600;color:#ba1a1a">${esc(headline)}</div>
+        <table style="border-collapse:collapse;font-size:13px">${rows}</table>
+      </div>`;
+  }).join('');
+  const names = pending.map(p => p.result.rule.vendor);
+  const subject = pending.length === 1
+    ? `Spending alert: ${names[0]} passed ${money(pending[0].result.threshold)}`
+    : `Spending alerts: ${names.slice(0, 3).join(', ')}${names.length > 3 ? ` and ${names.length - 3} more` : ''}`;
+  const html = `<!doctype html><html><body style="margin:0;padding:24px;font-family:Inter,Arial,sans-serif;background:#f9f9f8">
+    <div style="max-width:560px;margin:0 auto">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#94a3b8;margin-bottom:12px">Wealth Architect · Vendor alerts</div>
+      ${lines}
+      <div style="font-size:12px;color:#94a3b8">You'll get this once per alert per period.${siteUrl ? ` Change or remove alerts on <a href="${esc(siteUrl)}/#trends" style="color:#0058be">Spending Trends</a>.` : ''}</div>
+    </div></body></html>`;
+  return { subject, html };
+}

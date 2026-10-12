@@ -13,6 +13,10 @@
       "schedule": "30 14 * * *"
     },
     {
+      "path": "/api/vendor-alerts",
+      "schedule": "0 15 * * *"
+    },
+    {
       "path": "/api/portfolio-snapshot",
       "schedule": "0 22 * * 1-5"
     }

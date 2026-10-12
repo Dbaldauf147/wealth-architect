@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   matchesVendor, periodRange, evaluateVendorAlert, evaluateVendorAlerts, todayIn, newVendorAlert,
+  pendingSends, renderVendorAlertEmail,
 } from './vendorAlerts.js';
 
 const t = (date, description, amount, extra = {}) => ({ date, description, amount, ...extra });
@@ -99,5 +100,34 @@ describe('todayIn / newVendorAlert', () => {
     const r = newVendorAlert({ vendor: '  Amazon ', threshold: '199.999', period: 'bogus' });
     expect(r).toMatchObject({ vendor: 'Amazon', threshold: 200, period: 'month', email: true });
     expect(r.id).toMatch(/^va_/);
+  });
+});
+
+describe('pendingSends', () => {
+  const ledger = [
+    t('2026-10-02', 'AMAZON', -150, { transactionId: 'a1' }),
+    t('2026-10-06', 'AMAZON', -130, { transactionId: 'a2' }),
+  ];
+  const monthly = { id: 'm', vendor: 'amazon', threshold: 200, period: 'month' };
+  const perBuy = { id: 'p', vendor: 'amazon', threshold: 100, period: 'purchase' };
+  const quiet = { id: 'q', vendor: 'amazon', threshold: 200, period: 'month', email: false };
+
+  it('sends a total once per period, and a purchase once per purchase', () => {
+    const results = evaluateVendorAlerts([monthly, perBuy, quiet], ledger, '2026-10-12');
+    const first = pendingSends(results, new Set());
+    expect(first.map(p => p.sendKeys)).toEqual([['m__2026-10'], ['p__a1', 'p__a2']]);
+
+    const later = pendingSends(results, new Set(['m__2026-10', 'p__a1']));
+    expect(later).toHaveLength(1);
+    expect(later[0].newOver.map(x => x.transactionId)).toEqual(['a2']);
+  });
+
+  it('renders one email naming every alert', () => {
+    const results = evaluateVendorAlerts([monthly, perBuy], ledger, '2026-10-12');
+    const { subject, html } = renderVendorAlertEmail(pendingSends(results, new Set()), { siteUrl: 'https://x.test' });
+    expect(subject).toBe('Spending alerts: amazon, amazon');
+    expect(html).toContain('$280.00 spent this month');
+    expect(html).toContain('2 purchases of $100.00 or more');
+    expect(html).toContain('https://x.test/#trends');
   });
 });
