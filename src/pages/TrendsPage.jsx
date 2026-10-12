@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../contexts/DataContext';
 import { buildWedgeBands, axisTicks, restackBands, OTHER_LABEL } from '../lib/wedgeChart';
 import { monthLabelShort, monthLabel } from '../lib/netWorthSnapshot';
+import { absorbedStepUp, MAX_AGE, PRE_LOOKBACK } from '../lib/levelShift';
 import styles from './TrendsPage.module.css';
 
 function fmt(n) {
@@ -296,6 +297,10 @@ export function TrendsPage() {
     const baselineMonths = analysisMonths.slice(0, opts.baseline);
 
     const sparkWindow = allMonths.slice(-Math.max(12, needed));
+    // Longer than the sparkline: finding a step needs the old level as well
+    // as the new one. Only months the data actually covers, so the start of
+    // the history doesn't read as a category appearing from nothing.
+    const stepWindow = allMonths.slice(-(MAX_AGE + PRE_LOOKBACK));
 
     const rows = [];
     for (const [cat, m] of byCatMonth) {
@@ -309,7 +314,9 @@ export function TrendsPage() {
       const totalEverSpent = [...m.values()].reduce((s, v) => s + v, 0);
       // Only flag INCREASES that are both material ($) and significant (%)
       const flagged = deltaAbs >= FLAG_ABS && deltaPct >= FLAG_PCT;
-      rows.push({ cat, recent, baseline, deltaAbs, deltaPct, series, flagged, totalEverSpent });
+      const found = absorbedStepUp(stepWindow.map(k => m.get(k) || 0), opts.recent, opts.baseline);
+      const step = found && { ...found, month: stepWindow[found.index] };
+      rows.push({ cat, recent, baseline, deltaAbs, deltaPct, series, flagged, totalEverSpent, step });
     }
     rows.sort((a, b) => b.deltaAbs - a.deltaAbs);
     return { rows, months: sparkWindow };
@@ -358,6 +365,7 @@ export function TrendsPage() {
   const flaggedCount = (data.rows || []).filter(r => r.flagged).length;
   const topMover = (data.rows || []).filter(r => r.flagged).sort((a, b) => b.deltaAbs - a.deltaAbs)[0];
   const totalIncreaseMo = (data.rows || []).filter(r => r.flagged).reduce((s, r) => s + r.deltaAbs, 0);
+  const stepRows = (data.rows || []).filter(r => r.step).sort((a, b) => (b.step.after - b.step.before) - (a.step.after - a.step.before));
 
   return (
     <div className={styles.page}>
@@ -472,6 +480,37 @@ export function TrendsPage() {
         </div>
       )}
 
+      {!loading && stepRows.length > 0 && (
+        <div className={styles.stepCard} role="note">
+          <div className={styles.stepHead}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>warning</span>
+            <div>
+              <div className={styles.stepTitle}>
+                {stepRows.length === 1 ? '1 category has' : `${stepRows.length} categories have`} moved to a higher level that is now the baseline
+              </div>
+              <div className={styles.stepSub}>
+                The step up is already inside the baseline window, so this comparison treats the new level as
+                normal and won't flag it. Compared with before the step, spend is still higher.
+              </div>
+            </div>
+          </div>
+          <ul className={styles.stepList}>
+            {stepRows.map(r => (
+              <li key={r.cat} className={styles.stepItem}>
+                <span className={styles.stepCat}>{r.cat}</span>
+                <span className={styles.stepDetail}>
+                  {r.step.isNew
+                    ? <>new since {monthLabel(r.step.month)} · {fmt(r.step.after)}/mo</>
+                    : <>{fmt(r.step.before)} → {fmt(r.step.after)}/mo since {monthLabel(r.step.month)}</>}
+                  {' · '}
+                  <span className={styles.deltaUp}>{fmtSigned(r.step.after - r.step.before)}/mo</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {loading ? (
         <div className={styles.emptyState}>Loading transactions...</div>
       ) : data.insufficient ? (
@@ -520,7 +559,20 @@ export function TrendsPage() {
                         <span className={styles.flagMuted}>·</span>
                       )}
                     </td>
-                    <td><div className={styles.catName}>{r.cat}</div></td>
+                    <td>
+                      <div className={styles.catName}>
+                        {r.cat}
+                        {r.step && (
+                          <span
+                            className={styles.stepChip}
+                            title={`${r.step.isNew ? `New since ${monthLabel(r.step.month)}` : `Stepped up from ${fmt(r.step.before)} to ${fmt(r.step.after)}/mo in ${monthLabel(r.step.month)}`} — the baseline already includes the higher level`}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>warning</span>
+                            {r.step.isNew ? 'New' : 'New level'}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td>
                       <Sparkline series={r.series} flagged={r.flagged} />
                     </td>

@@ -385,3 +385,73 @@
     gap: 6px 12px;
   }
 }
+
+/* A step up the baseline has absorbed. Amber rather than the flag's red: it
+   isn't a rise the comparison is reporting, it's one it can no longer see. */
+.stepCard {
+  background: var(--color-surface);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 45%, transparent);
+  border-left: 4px solid var(--color-warning);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xs);
+  padding: 16px 20px;
+}
+
+.stepHead {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: var(--color-warning);
+}
+
+.stepTitle {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--color-text-primary);
+}
+
+.stepSub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.stepList {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0 0 0 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stepItem {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 13px;
+}
+
+.stepCat {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.stepDetail {
+  color: var(--color-text-secondary);
+}
+
+.stepChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  vertical-align: middle;
+  border-radius: var(--radius-full, 50px);
+  color: color-mix(in srgb, var(--color-warning) 70%, var(--color-text-primary));
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  cursor: help;
+}
