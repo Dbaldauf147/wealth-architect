@@ -39,6 +39,12 @@ const PAYMENT_REMINDERS_PATH = 'paymentReminders';
 // One document per purchase, and every device reads the collection, so the
 // subscription is capped rather than left to grow without limit.
 const ALERTS_LIMIT = 60;
+// Amazon orders read out of the user's Gmail by api/amazon-email. Read-only
+// here; the review deck joins them to card rows to suggest categories. The cap
+// is about a year and a half of ordering, which is also how far back a
+// backfill is worth learning from.
+const AMAZON_ORDERS_PATH = 'amazonOrders';
+const AMAZON_ORDERS_LIMIT = 600;
 
 const DataContext = createContext(null);
 const DataActionsContext = createContext(null);
@@ -880,6 +886,7 @@ export function DataProvider({ children }) {
   // there is nothing to hydrate from localStorage — an alert that has not
   // reached Firestore does not exist.
   const [spendAlerts, setSpendAlerts] = useState([]);
+  const [amazonOrders, setAmazonOrders] = useState([]);
   const [paymentReminders, setPaymentReminders] = useState([]);
   const [rawBalances, setRawBalances] = useState(initialCache?.balances || null);
   const [balanceHistory, setBalanceHistory] = useState(initialCache?.balanceHistory || []);
@@ -987,6 +994,22 @@ export function DataProvider({ children }) {
         // down for — the rest of it does not depend on alerts existing.
         console.warn('Purchase alerts unavailable:', err?.message || err);
         setSpendAlerts([]);
+      },
+    );
+    return unsub;
+  }, []);
+
+  /* Amazon orders, newest first. Same failure posture as the alerts: until the
+     rule is published the read is denied, and the deck simply falls back to
+     its ordinary merchant suggestions. */
+  useEffect(() => {
+    const q = query(collection(db, AMAZON_ORDERS_PATH), orderBy('orderDate', 'desc'), limit(AMAZON_ORDERS_LIMIT));
+    const unsub = onSnapshot(
+      q,
+      (snap) => setAmazonOrders(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      (err) => {
+        console.warn('Amazon orders unavailable:', err?.message || err);
+        setAmazonOrders([]);
       },
     );
     return unsub;
@@ -2605,6 +2628,7 @@ export function DataProvider({ children }) {
   const reads = useMemo(() => ({
     transactions,
     spendAlerts,
+    amazonOrders,
     paymentReminders,
     balances,
     balanceHistory: shownBalanceHistory,
@@ -2672,6 +2696,7 @@ export function DataProvider({ children }) {
   }), [
     transactions,
     spendAlerts,
+    amazonOrders,
     paymentReminders,
     balances,
     analytics,

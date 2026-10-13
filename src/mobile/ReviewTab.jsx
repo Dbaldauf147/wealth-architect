@@ -8,6 +8,9 @@ import { buildReviewQueue, reviewStats, latestTransactionDate, SORTS } from '../
 import { ALL_CATEGORIES, getCategoryIcon, catColor, catBg, SUBCATEGORIES } from '../lib/categories';
 import { CategorySheet, SubcategorySheet } from './CategorySheet';
 import { AlertsStrip } from './AlertsStrip';
+import {
+  matchAmazonOrders, buildItemIndex, suggestFromItems, withItemSuggestions, itemSummary,
+} from '../lib/amazonOrders';
 import { fmt, fmtCompact, fmtRelative, fmtDate, parseDate } from './format';
 import styles from './MobileApp.module.css';
 
@@ -19,7 +22,7 @@ const UNDO_MS = 7000;
 export function ReviewTab({ sort, onSortChange, askSub }) {
   const {
     transactions, categoryRules, customCategories, hiddenCategories,
-    categoryColors, splitTags, spendAlerts,
+    categoryColors, splitTags, spendAlerts, amazonOrders,
   } = useData();
   const {
     updateTransactionCategory, updateTransactionSubcategory, bulkUpdateCategoryByIds,
@@ -58,9 +61,24 @@ export function ReviewTab({ sort, onSortChange, askSub }) {
     return { actionable: list, unkeyedCount: unkeyed };
   }, [transactions]);
 
+  // Amazon rows joined to the order email that explains them. Every Amazon
+  // charge reads the same on the statement, so these are the only rows where
+  // the item names — not the merchant — are what a suggestion can go on.
+  const amazonMatches = useMemo(
+    () => matchAmazonOrders(amazonOrders, actionable),
+    [amazonOrders, actionable],
+  );
+  const itemIndex = useMemo(
+    () => buildItemIndex(actionable, amazonMatches),
+    [actionable, amazonMatches],
+  );
+
   const queue = useMemo(
-    () => buildReviewQueue(actionable, { sort, groupByMerchant: true, skipped }),
-    [actionable, sort, skipped],
+    () => buildReviewQueue(actionable, {
+      sort, groupByMerchant: true, skipped,
+      separate: t => amazonMatches.has(t.transactionId),
+    }),
+    [actionable, sort, skipped, amazonMatches],
   );
   const stats = useMemo(() => reviewStats(actionable), [actionable]);
   // Over every transaction, keyed or not: this answers "how fresh is the
@@ -97,16 +115,20 @@ export function ReviewTab({ sort, onSortChange, askSub }) {
   const item = queue[0] || null;
   const txn = item?.txn || null;
   const remember = !!item && rememberFor === item.key;
+  const order = txn ? amazonMatches.get(txn.transactionId)?.order || null : null;
 
   const suggestions = useMemo(() => {
     if (!txn) return [];
     const matching = (categoryRules || []).filter(r => ruleMatches(r, txn));
-    return suggestCategories(txn, history, { rules: matching, limit: 3 });
-  }, [txn, history, categoryRules]);
+    const base = suggestCategories(txn, history, { rules: matching, limit: 3 });
+    return order ? withItemSuggestions(suggestFromItems(order, itemIndex), base) : base;
+  }, [txn, history, categoryRules, order, itemIndex]);
 
+  // No "remember this merchant" offer on an order card: a rule on "amazon
+  // mktpl" would file every future Amazon charge under whatever this one was.
   const ruleText = useMemo(
-    () => (txn ? ruleDescriptionFor(txn.description || txn.fullDescription || '') : ''),
-    [txn],
+    () => (txn && !order ? ruleDescriptionFor(txn.description || txn.fullDescription || '') : ''),
+    [txn, order],
   );
   const ruleReach = useMemo(
     () => (ruleText ? getMatchCount(ruleText) : 0),
@@ -375,6 +397,13 @@ export function ReviewTab({ sort, onSortChange, askSub }) {
 
           {txn.fullDescription && txn.fullDescription !== txn.description && (
             <div className={styles.fullDesc}>{txn.fullDescription}</div>
+          )}
+
+          {order && itemSummary(order) && (
+            <div className={styles.groupNote}>
+              <span className="material-symbols-outlined">package_2</span>
+              {itemSummary(order)}
+            </div>
           )}
 
           {/* Only offered when swiping right would actually file something —

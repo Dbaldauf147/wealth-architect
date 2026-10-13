@@ -111,6 +111,47 @@ the bank sends without filling the queue with noise.
 The icon PNGs in `public/` are generated: edit `public/app-icon*.svg`, then run
 `node scripts/make-icons.mjs`.
 
+## Amazon order emails
+
+Every Amazon charge reads `AMAZON MKTPL*2K4AB`, whether it was cat food or a
+phone charger, so the merchant history the review deck leans on can only ever
+say "Amazon is usually Shopping". The order email says what was bought. These
+are read out of Gmail, joined to the card row they became, and the item names
+suggest the category.
+
+**Nothing here creates or changes a transaction** — an order only adds a
+suggestion on the Review tab, and its card shows what the order contained.
+
+| Piece | What it does |
+| --- | --- |
+| `scripts/amazon-gmail.gs` | Google Apps Script in your Gmail. Hourly, posts new Amazon order/shipment/refund emails |
+| `api/amazon-email.js` | Parses each email and folds it into Firestore `amazonOrders/{order #}` |
+| `src/lib/parseAmazonEmail.js` | Order number, totals and item names out of Amazon's prose. Pure; tested |
+| `src/lib/amazonOrders.js` | Joins orders to charges and ranks categories from item words. Pure; tested |
+
+Only the order number, totals, dates and item names are stored — never the
+email body, which carries a name and shipping address.
+
+Matching is on the **amount**, like purchase alerts. Amazon charges per
+shipment, so a shipment email's own total is used when it quotes one; otherwise
+the order total, or two or three charges in the following three weeks that add
+up to it. Two equally good answers means no match. Item suggestions are learnt
+from Amazon rows you have already categorized, which is why the backfill
+matters: last year's filed charges are the history.
+
+### Setting it up
+
+1. **Vercel env:** the route accepts `AMAZON_EMAIL_SECRET`, or falls back to
+   `SPEND_ALERT_SECRET` if that is already set. Unset, it returns 503.
+2. **Firestore rules:** `firebase deploy --only firestore:rules` — the
+   `amazonOrders` block. Unpublished, the read is denied and the deck quietly
+   shows its ordinary suggestions.
+3. **In Gmail:** new project at [script.google.com](https://script.google.com),
+   paste `scripts/amazon-gmail.gs`, then Project Settings → Script properties →
+   `INGEST_SECRET` = the secret from step 1. Run `dryRun` (authorize when
+   asked) and check the log, then `backfill` (re-run if it says it paused),
+   then `installTrigger` once.
+
 ## Development
 
 ```sh

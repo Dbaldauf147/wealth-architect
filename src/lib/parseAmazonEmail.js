@@ -1,0 +1,246 @@
+/* Reading an Amazon order email.
+ *
+ * The card statement says "AMAZON MKTPL*2K4AB" for a phone charger and for a
+ * month of groceries alike, so the merchant tells you nothing about what a
+ * charge was for. The email Amazon sent about it does. This pulls the three
+ * facts worth keeping out of one:
+ *
+ *     the order number   112-1234567-1234567   — the key every email shares
+ *     the amount         Grand Total: $45.67   — what the card will be charged
+ *     the items          "Anker USB-C Cable"   — what the money bought
+ *
+ * Amazon's wording drifts every year or so and differs between the order,
+ * shipment and refund emails, so like parseAlert this reads by shape rather
+ * than by template, and anything it can't find comes back null rather than
+ * guessed. Only those facts leave this module — the body also carries a
+ * shipping address and a name, and none of that is stored.
+ *
+ * Pure: no network, no storage. Runs in the Vercel function that receives the
+ * email, and in tests.
+ */
+
+const ORDER_ID = /\b([0-9D]\d{2}-\d{7}-\d{7})\b/;
+
+// A dollar figure. Amazon writes "$12.99" in older mail and "12.99 USD" in
+// newer; either way two decimals, which keeps quantities and ids out.
+const MONEY = /(?:\$\s?|USD\s?)?(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})(?:\s?USD)?/;
+const MONEY_LINE = /^(?:\$\s?|USD\s?)?(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})(?:\s?USD)?$/i;
+
+// Totals, most specific first. "Total before tax" is not what gets charged,
+// and "Subtotal" never matches \btotal\b, which is what keeps it out.
+const TOTAL_LABELS = {
+  refund: [/\brefund total\b/i, /\btotal refund(?: amount)?\b/i, /\brefund (?:amount|subtotal)\b/i, /\byour refund of\b/i, /\brefund of\b/i],
+  // Only a figure that is the shipment's own. A shipment email quoting the
+  // order total says nothing about what this box was charged.
+  shipment: [/\bshipment total\b/i, /\btotal for this shipment\b/i],
+  order: [/\bgrand total\b/i, /\border total\b/i, /\btotal for this order\b/i, /\btotal charged\b/i],
+};
+const GENERIC_TOTAL = /\btotal\b(?!\s+before)(?!\s+savings)/i;
+
+// Lines that are the email's furniture rather than something that was bought.
+const NOT_AN_ITEM = /^(?:order|orders|ship|shipped|shipping|deliver|delivered|delivery|arriving|arrives|estimated|total|grand total|subtotal|items?\(s\)|tax|estimated tax|quantity|qty|sold by|condition|view|track|return|refund|payment|hi|hello|thanks|thank you|your|manage|buy again|questions|price|amount|gift)\b/i;
+
+// The kinds of email worth reading. Cancellations, delivery photos and
+// "rate your purchase" notes carry no charge and get ignored.
+function kindOf(subject, from) {
+  const s = subject || '';
+  const f = (from || '').toLowerCase();
+  if (/cancel/i.test(s)) return null;
+  if (/refund/i.test(s) || (/return@/.test(f) && /refund/i.test(s))) return 'refund';
+  if (/^\s*(?:shipped|delivered|out for delivery)\b|has shipped|have shipped|is on the way|shipment/i.test(s)) return 'shipment';
+  if (/^\s*ordered\b|your amazon(?:\.com)? order|order confirmation|your order of|thanks for your order|your order #/i.test(s)) return 'order';
+  if (/shipment-tracking@/.test(f)) return 'shipment';
+  if (/auto-confirm@|digital-no-reply@/.test(f)) return 'order';
+  return null;
+}
+
+function toNumber(s) {
+  const n = Number(String(s).replace(/,/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** The first figure within a short reach after a label — same line or the next. */
+function amountAfterLabel(text, label) {
+  const re = new RegExp(label.source, `${label.flags.replace('g', '')}g`);
+  let m;
+  while ((m = re.exec(text))) {
+    const after = text.slice(m.index + m[0].length, m.index + m[0].length + 60);
+    const money = MONEY.exec(after);
+    // A figure separated from the label by more words is some other line's.
+    if (money && /^[\s:*\-–—]*(?:\(?[a-z ]{0,20}\)?[\s:]*)?$/i.test(after.slice(0, money.index))) {
+      const n = toNumber(money[1]);
+      if (n != null && n > 0) return n;
+    }
+  }
+  return null;
+}
+
+function findTotal(text, kind) {
+  for (const label of TOTAL_LABELS[kind] || []) {
+    const n = amountAfterLabel(text, label);
+    if (n != null) return n;
+  }
+  // A shipment email with no shipment total carries no charge of its own —
+  // falling back to a bare "Total" there would usually read the order's.
+  if (kind === 'shipment') return null;
+  return amountAfterLabel(text, GENERIC_TOTAL);
+}
+
+function stripLinks(s) {
+  return String(s || '')
+    .replace(/<https?:[^>]*>/gi, ' ')
+    .replace(/\(https?:[^)]*\)/gi, ' ')
+    .replace(/\[https?:[^\]]*\]/gi, ' ')
+    .replace(/https?:\/\/\S+/gi, ' ');
+}
+
+export function cleanItemName(s) {
+  return stripLinks(s)
+    .replace(/^[\s*•·\-–—>]+/, '')
+    .replace(/\s*(?:\.{3}|…)\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
+}
+
+function plausibleItem(name) {
+  if (!name || name.length < 3) return false;
+  if (MONEY_LINE.test(name)) return false;
+  if (NOT_AN_ITEM.test(name)) return false;
+  if (ORDER_ID.test(name)) return false;
+  if (!/[a-z]{2}/i.test(name)) return false;
+  return true;
+}
+
+/** The item quoted in the subject: Ordered: "Anker USB C Cable..." and 2 more items */
+function subjectItem(subject) {
+  const m = /["“]([^"”]{3,})["”]/.exec(subject || '');
+  return m ? cleanItemName(m[1]) : null;
+}
+
+/** Items in the body: the line above each "Quantity: 1" or "Sold by:". */
+function bodyItems(body) {
+  const lines = stripLinks(body).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const out = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!/^(?:quantity|qty)\s*:?\s*\d+|^sold by\b/i.test(lines[i])) continue;
+    // The name sits directly above, unless a price line got there first.
+    let j = i - 1;
+    while (j >= 0 && j >= i - 3 && (MONEY_LINE.test(lines[j]) || /^(?:quantity|qty|sold by|condition)\b/i.test(lines[j]))) j -= 1;
+    if (j < 0) continue;
+    const name = cleanItemName(lines[j]);
+    if (!plausibleItem(name)) continue;
+    let price = null;
+    for (let k = i - 1; k <= Math.min(lines.length - 1, i + 3); k++) {
+      if (k === j) continue;
+      const m = MONEY_LINE.exec(lines[k]);
+      if (m) { price = toNumber(m[1]); break; }
+    }
+    out.push({ name, price });
+  }
+  return out;
+}
+
+const keyOf = (name) => cleanItemName(name).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * Union two item lists, treating a name that is a prefix of another as the
+ * same item — the subject's "Anker USB C Cable" is the body's "Anker USB C
+ * Cable, 6ft, 2-Pack" cut short.
+ */
+export function mergeItems(a, b, max = 25) {
+  const out = [];
+  for (const item of [...(a || []), ...(b || [])]) {
+    if (!item || !item.name) continue;
+    const k = keyOf(item.name);
+    if (!k) continue;
+    const same = out.findIndex(o => {
+      const ok = keyOf(o.name);
+      return ok === k || ok.startsWith(k) || k.startsWith(ok);
+    });
+    if (same === -1) {
+      out.push({ name: item.name, price: item.price ?? null });
+      continue;
+    }
+    const prev = out[same];
+    out[same] = {
+      name: keyOf(item.name).length > keyOf(prev.name).length ? item.name : prev.name,
+      price: prev.price ?? item.price ?? null,
+    };
+  }
+  return out.slice(0, max);
+}
+
+function isoDay(date) {
+  const d = date ? new Date(date) : null;
+  if (!d || Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * @param {{subject?:string, from?:string, body?:string, date?:string}} email
+ * @returns {{ok:true, kind:'order'|'shipment'|'refund', orderId:string, total:number|null, items:Array<{name:string, price:number|null}>, date:string|null}
+ *          | {ok:false, reason:string}}
+ */
+export function parseAmazonEmail(email) {
+  const subject = String(email?.subject || '');
+  const from = String(email?.from || '');
+  const body = String(email?.body || '');
+
+  if (from && !/amazon\./i.test(from)) return { ok: false, reason: 'not from Amazon' };
+
+  const kind = kindOf(subject, from);
+  if (!kind) return { ok: false, reason: 'not an order, shipment or refund email' };
+
+  const id = ORDER_ID.exec(subject) || ORDER_ID.exec(body);
+  if (!id) return { ok: false, reason: 'no order number' };
+
+  const fromSubject = subjectItem(subject);
+  const items = mergeItems(bodyItems(body), fromSubject ? [{ name: fromSubject, price: null }] : []);
+
+  return {
+    ok: true,
+    kind,
+    orderId: id[1],
+    total: findTotal(body, kind),
+    items,
+    date: isoDay(email?.date),
+  };
+}
+
+/**
+ * Fold one parsed email into the stored order.
+ *
+ * Every email about an order lands on the same document, in whatever order
+ * Gmail hands them over, and the same email may arrive twice. So each fact is
+ * kept where a repeat overwrites rather than adds: the order total is a single
+ * field, and each shipment or refund is keyed by the email it came from.
+ *
+ * @param {object|null} existing  the stored order, or null for a new one
+ * @param {object} parsed         a successful parseAmazonEmail result
+ * @param {string} emailKey       a stable id for the email (Gmail's message id)
+ */
+export function mergeAmazonOrder(existing, parsed, emailKey) {
+  const prev = existing || {};
+  const next = {
+    orderId: parsed.orderId,
+    orderDate: prev.orderDate || null,
+    total: prev.total ?? null,
+    items: mergeItems(prev.items, parsed.items),
+    shipments: { ...(prev.shipments || {}) },
+    refunds: { ...(prev.refunds || {}) },
+  };
+
+  // The earliest email is the closest to when the order was placed, and the
+  // card is never charged before it — which is the anchor matching wants.
+  if (parsed.date && (!next.orderDate || parsed.date < next.orderDate)) next.orderDate = parsed.date;
+
+  if (parsed.kind === 'order' && parsed.total != null) next.total = parsed.total;
+  if (parsed.kind === 'shipment' && parsed.total != null) {
+    next.shipments[emailKey] = { total: parsed.total, date: parsed.date };
+  }
+  if (parsed.kind === 'refund' && parsed.total != null) {
+    next.refunds[emailKey] = { total: parsed.total, date: parsed.date };
+  }
+  return next;
+}

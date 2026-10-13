@@ -31,11 +31,16 @@ function timeOf(t) {
    `groupByMerchant` collapses charges that share a merchant into a single card
    carrying its siblings, so one tap can clear all of them. The card kept is the
    largest of the group — it is the one whose description is most likely to be
-   recognisable, and its amount is what the group is worth. */
+   recognisable, and its amount is what the group is worth.
+
+   `separate(t)` opts a row out of its group. An Amazon charge joined to its
+   order is its own decision — the cat food and the phone charger share a
+   merchant and nothing else — so it gets a card of its own. */
 export function buildReviewQueue(transactions, options) {
   const sort = options?.sort || 'impact';
   const groupByMerchant = options?.groupByMerchant !== false;
   const skipped = options?.skipped instanceof Set ? options.skipped : new Set();
+  const separate = typeof options?.separate === 'function' ? options.separate : null;
 
   let pending = (transactions || []).filter(needsReview);
   if (skipped.size) {
@@ -50,7 +55,9 @@ export function buildReviewQueue(transactions, options) {
       // Group on the looser key so a store number or city doesn't split a
       // merchant into two cards — the whole point of grouping is to make one
       // decision serve every charge a person would call "the same place".
-      const key = looseMerchantKey(desc) || merchantKey(desc) || (t.transactionId || Math.random().toString(36));
+      const key = separate?.(t)
+        ? `\u0000${t.transactionId || Math.random().toString(36)}`
+        : looseMerchantKey(desc) || merchantKey(desc) || (t.transactionId || Math.random().toString(36));
       const g = groups.get(key);
       if (g) g.push(t);
       else groups.set(key, [t]);

@@ -51,6 +51,14 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false;
     }
+    // Amazon orders read out of Gmail by api/amazon-email (Admin SDK, so these
+    // rules don't apply to it). The browser only reads them, to join each order
+    // to its card charge and suggest a category from what it bought. Order
+    // number, totals and item names only — the route stores no address.
+    match /amazonOrders/{doc} {
+      allow read: if true;
+      allow write: if false;
+    }
     match /{document=**} {
       allow read, write: if false;
     }
