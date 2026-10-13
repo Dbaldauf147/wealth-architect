@@ -44,6 +44,12 @@ describe('buildReviewQueue', () => {
     expect(buildReviewQueue(TXNS, { groupByMerchant: false })).toHaveLength(4);
   });
 
+  it('gives a row the caller separates a card of its own', () => {
+    const q = buildReviewQueue(TXNS, { separate: t => t.transactionId === 'n2' });
+    const coffee = q.filter(i => i.txn.description.includes('BLUE BOTTLE'));
+    expect(coffee.map(i => i.groupSize)).toEqual([1, 1]);
+  });
+
   it('drops whatever was skipped this session', () => {
     const q = buildReviewQueue(TXNS, { skipped: new Set(['n3']) });
     expect(q.map(i => i.txn.description)).not.toContain('BIG PLUMBER LLC');
