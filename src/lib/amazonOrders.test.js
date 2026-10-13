@@ -131,6 +131,6 @@ describe('item suggestions', () => {
   });
 
   it('summarises the items for a card', () => {
-    expect(itemSummary(order('n', '', 1, ['A thing', 'B thing', 'C thing']))).toBe('A thing, B thing +1 more');
+    expect(itemSummary(order('n', '', 1, ['A thing', 'B thing', 'C thing']))).toBe('A thing · B thing +1 more');
   });
 });

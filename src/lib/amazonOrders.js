@@ -264,11 +264,11 @@ export function withItemSuggestions(itemSuggestions, baseSuggestions, limit = 3)
   return out.slice(0, limit);
 }
 
-/** "Anker USB-C Cable, Dish Soap +2 more" — for a card, not a receipt. */
+/** "Anker USB-C Cable · Dish Soap +2 more" — for a card, not a receipt. */
 export function itemSummary(order, max = 2) {
   const names = (order?.items || []).map(i => i.name).filter(Boolean);
   if (!names.length) return '';
   const short = names.slice(0, max).map(n => (n.length > 48 ? `${n.slice(0, 47)}…` : n));
   const rest = names.length - short.length;
-  return rest > 0 ? `${short.join(', ')} +${rest} more` : short.join(', ');
+  return rest > 0 ? `${short.join(' · ')} +${rest} more` : short.join(' · ');
 }

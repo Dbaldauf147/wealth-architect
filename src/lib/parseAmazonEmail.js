@@ -195,8 +195,11 @@ export function parseAmazonEmail(email) {
   const id = ORDER_ID.exec(subject) || ORDER_ID.exec(body);
   if (!id) return { ok: false, reason: 'no order number' };
 
-  const fromSubject = subjectItem(subject);
-  const items = mergeItems(bodyItems(body), fromSubject ? [{ name: fromSubject, price: null }] : []);
+  // The subject quotes the first item cut short, sometimes reworded. When the
+  // body lists the items properly it is only ever a worse copy of one of them.
+  const listed = bodyItems(body);
+  const fromSubject = listed.length ? null : subjectItem(subject);
+  const items = mergeItems(listed, fromSubject ? [{ name: fromSubject, price: null }] : []);
 
   return {
     ok: true,
