@@ -47,6 +47,19 @@ const clean = (value, max) => String(value == null ? '' : value).slice(0, max);
 // Firestore map key.
 const emailKey = (id) => `m${clean(id, 64).replace(/[^A-Za-z0-9]/g, '')}`;
 
+/* The email's text as the parser saw it, links removed — returned by a dry
+ * run only, for an email it read no items from, so a layout Amazon has
+ * changed can be seen and fixed. Never stored. */
+function textSample(body) {
+  return String(body || '')
+    .replace(/<https?:[^>]*>|\(https?:[^)]*\)|https?:\/\/\S+/gi, ' ')
+    .split(/\r?\n/)
+    .map(l => l.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .slice(0, 150)
+    .map(l => l.slice(0, 160));
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -68,6 +81,7 @@ export default async function handler(req, res) {
 
   const ignored = [];
   const parsedByOrder = new Map(); // orderId -> [{ parsed, key }]
+  const samples = [];
   for (const e of emails) {
     const id = clean(e?.id, 64);
     const parsed = parseAmazonEmail({
@@ -77,6 +91,9 @@ export default async function handler(req, res) {
       body: clean(e?.body, MAX_BODY),
     });
     if (!parsed.ok) { ignored.push({ id, reason: parsed.reason }); continue; }
+    if (dry && !parsed.items.length) {
+      samples.push({ id, subject: clean(e?.subject, 500), lines: textSample(clean(e?.body, MAX_BODY)) });
+    }
     const list = parsedByOrder.get(parsed.orderId) || [];
     list.push({ parsed, key: emailKey(id || `${parsed.kind}${parsed.date}${parsed.total}`) });
     parsedByOrder.set(parsed.orderId, list);
@@ -88,6 +105,7 @@ export default async function handler(req, res) {
       dry: true,
       parsed: [...parsedByOrder.values()].flat().map(p => p.parsed),
       ignored,
+      noItemsRead: samples,
     });
   }
 
