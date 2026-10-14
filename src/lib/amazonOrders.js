@@ -29,8 +29,10 @@ import { dayNumber } from './alertMatch.js';
 export function isAmazonCharge(t) {
   const s = `${t?.description || ''} ${t?.fullDescription || ''}`.toLowerCase();
   if (!/\bamazon\b|\bamzn\b/.test(s)) return false;
-  // Same parent, no order emails: groceries and cloud bills.
-  return !/whole\s?foods|amazon web services|\baws\b/.test(s);
+  // Same parent, no order emails: groceries and cloud bills. And buying the
+  // stock — "Buy 1.25 shares … AMZN" names Amazon without being a purchase
+  // from it.
+  return !/whole\s?foods|amazon web services|\baws\b|\bshares?\b/.test(s);
 }
 
 const cents = (x) => Math.round(Math.abs(Number(x)) * 100);
