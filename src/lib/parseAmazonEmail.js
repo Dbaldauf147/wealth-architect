@@ -112,10 +112,27 @@ function plausibleItem(name) {
   return true;
 }
 
-/** The item quoted in the subject: Ordered: "Anker USB C Cable..." and 2 more items */
-function subjectItem(subject) {
-  const m = /["“]([^"”]{3,})["”]/.exec(subject || '');
-  return m ? cleanItemName(m[1]) : null;
+/**
+ * What the subject says was bought, in either of Amazon's two styles:
+ *
+ *   Ordered: "Anker USB C Cable..." and 2 more items   — the first item, quoted
+ *   Delivered 2 items: Supplements, Tea                — Amazon's own labels
+ *
+ * The second is the 2026 layout, whose body carries no product names at all —
+ * they are only in the pictures — so the labels are all there is. They suit
+ * the job anyway: "Tea" is worded the same on every order, so it is learnt
+ * from fast.
+ */
+function subjectItems(subject) {
+  const quoted = /["“]([^"”]{3,})["”]/.exec(subject || '');
+  if (quoted) return [cleanItemName(quoted[1])];
+  const labelled = /^\s*(?:ordered|shipped|delivered|out for delivery|arriving[^:]*)\s+\d+\s+items?\s*:\s*(.+)$/i.exec(subject || '');
+  if (!labelled) return [];
+  return labelled[1]
+    .replace(/\s*(?:,\s*)?(?:and\s+(?:\d+\s+)?more(?:\s+items?)?|\.{3}|…)\s*$/i, '')
+    .split(/\s*,\s*/)
+    .map(cleanItemName)
+    .filter(plausibleItem);
 }
 
 /** Items in the body: the line above each "Quantity: 1" or "Sold by:". */
@@ -198,8 +215,8 @@ export function parseAmazonEmail(email) {
   // The subject quotes the first item cut short, sometimes reworded. When the
   // body lists the items properly it is only ever a worse copy of one of them.
   const listed = bodyItems(body);
-  const fromSubject = listed.length ? null : subjectItem(subject);
-  const items = mergeItems(listed, fromSubject ? [{ name: fromSubject, price: null }] : []);
+  const fromSubject = listed.length ? [] : subjectItems(subject);
+  const items = mergeItems(listed, fromSubject.map(name => ({ name, price: null })));
 
   return {
     ok: true,
