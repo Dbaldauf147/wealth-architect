@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAmazonEmail, mergeAmazonOrder, mergeItems } from './parseAmazonEmail.js';
+import { parseAmazonEmail, parseAmazonEmailOrders, mergeAmazonOrder, mergeItems } from './parseAmazonEmail.js';
 
 // The newer "Ordered:" confirmation, as Gmail's getPlainBody() flattens it.
 const ORDERED = {
@@ -171,6 +171,85 @@ describe('the 2026 layout', () => {
       body: `${FRAME}Order #\n111-6431635-7233857\nTrack package\nTotal\n41.36 USD`,
     });
     expect(r.total).toBeNull();
+  });
+});
+
+// One checkout Amazon split into orders: one confirmation, each order's
+// number followed by its own total. From the user's real mail.
+describe('an email about several orders', () => {
+  const SPLIT = {
+    from: 'auto-confirm@amazon.com',
+    subject: 'Ordered 6 items: Supplements, Oral Care, and more',
+    date: '2026-09-15T12:00:00Z',
+    body: [
+      'Your Orders', 'Dan, thanks for your order!', 'Arriving overnight 4 AM – 8 AM',
+      'Order #', '111-0629804-9192246', 'View or edit order', 'Grand Total:', '68.97 USD',
+      'Arriving Thursday',
+      'Order #', '111-3428588-6928261', 'View or edit order', 'Grand Total:', '20.1 USD',
+      '©2026 Amazon.com, Inc.', 'Privacy Notice',
+    ].join('\n'),
+  };
+
+  it('gives each order its own total', () => {
+    const r = parseAmazonEmailOrders(SPLIT);
+    expect(r.ok).toBe(true);
+    expect(r.orders.map(o => [o.orderId, o.total])).toEqual([
+      ['111-0629804-9192246', 68.97],
+      ['111-3428588-6928261', 20.1],
+    ]);
+  });
+
+  it('does not hand the subject labels to orders it cannot tell apart', () => {
+    expect(parseAmazonEmailOrders(SPLIT).orders.every(o => o.items.length === 0)).toBe(true);
+  });
+
+  it('treats a number repeated across two stretches as one order', () => {
+    const r = parseAmazonEmailOrders({
+      from: 'auto-confirm@amazon.com',
+      subject: 'Ordered: 3 Grocery and Pantry items',
+      body: [
+        'Order #', '111-6167754-2913830', 'View or edit order', 'Arriving Thursday',
+        'Order #', '111-6167754-2913830', 'View or edit order', 'Grand Total:', '18.53 USD',
+        'Arriving September 10',
+        'Order #', '111-9558218-9502657', 'View or edit order', 'Grand Total:', '18.21 USD',
+      ].join('\n'),
+    });
+    expect(r.orders.map(o => [o.orderId, o.total])).toEqual([
+      ['111-6167754-2913830', 18.53],
+      ['111-9558218-9502657', 18.21],
+    ]);
+  });
+
+  it('still reads a refund whose total comes before the order number', () => {
+    const r = parseAmazonEmailOrders({
+      from: 'return@amazon.com',
+      subject: 'Advance refund issued for MURLONG Sponge Holder Smiley....',
+      body: 'Your refund was issued.\nRefund subtotal $10.88\nTotal refund* $10.88\nItem(s) in your return request\n[MURLONG Sponge Holder Smiley Face, Sink...]\nQuantity: 1 Order # 111-1421529-2588252 Reason for return: Changed Mind',
+    });
+    expect(r.orders).toEqual([expect.objectContaining({
+      kind: 'refund', orderId: '111-1421529-2588252', total: 10.88,
+      items: [{ name: 'MURLONG Sponge Holder Smiley Face, Sink', price: null }],
+    })]);
+  });
+});
+
+describe('amounts', () => {
+  const total = (body) => parseAmazonEmail({ from: 'auto-confirm@amazon.com', subject: 'Ordered 1 item: Tea', body: `Order #\n111-1111111-1111111\n${body}` }).total;
+  it('reads a total that dropped its trailing zero', () => {
+    expect(total('Grand Total:\n20.1 USD')).toBe(20.1);
+    expect(total('Grand Total:\n1,230.5 USD')).toBe(1230.5);
+  });
+  it('does not take a one-decimal figure without USD for money', () => {
+    expect(total('Grand Total:\n1.5 lb')).toBeNull();
+  });
+});
+
+describe('subject labels before the word "items"', () => {
+  const items = (subject) => parseAmazonEmail({ from: 'shipment-tracking@amazon.com', subject, body: 'Order #\n111-1111111-1111111' }).items.map(i => i.name);
+  it('reads them', () => {
+    expect(items('Shipped: 1 Pantry item')).toEqual(['Pantry']);
+    expect(items('Shipped: 9 Kitchen, Nutrition & Wellness, and other items')).toEqual(['Kitchen', 'Nutrition & Wellness']);
+    expect(items('Ordered: 3 Grocery and Pantry items')).toEqual(['Grocery and Pantry']);
   });
 });
 
