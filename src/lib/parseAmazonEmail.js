@@ -23,8 +23,10 @@ const ORDER_ID = /\b([0-9D]\d{2}-\d{7}-\d{7})\b/;
 
 // A dollar figure. Amazon writes "$12.99" in older mail and "12.99 USD" in
 // newer; either way two decimals, which keeps quantities and ids out.
-const MONEY = /(?:\$\s?|USD\s?)?(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})(?:\s?USD)?/;
-const MONEY_LINE = /^(?:\$\s?|USD\s?)?(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})(?:\s?USD)?$/i;
+// The 2026 layout also drops a trailing zero — "20.1 USD" for $20.10 — so one
+// decimal counts too, but only with "USD" after it, which keeps "1.5 lb" out.
+const MONEY = /(?:\$\s?|USD\s?)?((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{2}|\.\d(?=\s?USD)))(?:\s?USD)?/;
+const MONEY_LINE = /^(?:\$\s?|USD\s?)?((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{2}|\.\d(?=\s?USD)))(?:\s?USD)?$/i;
 
 // Totals, most specific first. "Total before tax" is not what gets charged,
 // and "Subtotal" never matches \btotal\b, which is what keeps it out.
@@ -97,6 +99,8 @@ function stripLinks(s) {
 export function cleanItemName(s) {
   return stripLinks(s)
     .replace(/^[\s*•·\-–—>]+/, '')
+    // A refund email brackets the name: "[MURLONG Sponge Holder...]"
+    .replace(/^\[([^\]]*)\]$/, '$1')
     .replace(/\s*(?:\.{3}|…)\s*$/, '')
     .replace(/\s+/g, ' ')
     .trim()
@@ -123,16 +127,42 @@ function plausibleItem(name) {
  * the job anyway: "Tea" is worded the same on every order, so it is learnt
  * from fast.
  */
+const SUBJECT_VERB = String.raw`^\s*(?:ordered|shipped|delivered|out for delivery|arriving[^:]*)`;
+// "Delivered 2 items: Supplements, Tea"
+const LABELS_AFTER = new RegExp(`${SUBJECT_VERB}\\s+\\d+\\s+items?\\s*:\\s*(.+)$`, 'i');
+// "Shipped: 1 Pantry item", "Ordered: 9 Kitchen, Nutrition & Wellness, and other items"
+const LABELS_BETWEEN = new RegExp(`${SUBJECT_VERB}\\s*:?\\s+\\d+\\s+(.+?)\\s+items?\\s*$`, 'i');
+
 function subjectItems(subject) {
   const quoted = /["“]([^"”]{3,})["”]/.exec(subject || '');
   if (quoted) return [cleanItemName(quoted[1])];
-  const labelled = /^\s*(?:ordered|shipped|delivered|out for delivery|arriving[^:]*)\s+\d+\s+items?\s*:\s*(.+)$/i.exec(subject || '');
+  const labelled = LABELS_AFTER.exec(subject || '') || LABELS_BETWEEN.exec(subject || '');
   if (!labelled) return [];
   return labelled[1]
-    .replace(/\s*(?:,\s*)?(?:and\s+(?:\d+\s+)?more(?:\s+items?)?|\.{3}|…)\s*$/i, '')
+    .replace(/\s*(?:,\s*)?(?:and\s+(?:\d+\s+)?more(?:\s+items?)?|and\s+other|\.{3}|…)\s*$/i, '')
     .split(/\s*,\s*/)
     .map(cleanItemName)
     .filter(plausibleItem);
+}
+
+/**
+ * The email cut into one stretch per order it mentions.
+ *
+ * One checkout that Amazon splits into several orders gets one confirmation
+ * listing each in turn — "Order # A … Grand Total: 68.97 … Order # B … Grand
+ * Total: 20.10" — so each order's total is the one after its own number, not
+ * the first in the email. A number repeated straight after itself (the line,
+ * then its link) is the same stretch.
+ */
+function orderBlocks(body) {
+  const re = new RegExp(ORDER_ID.source, 'g');
+  const hits = [];
+  let m;
+  while ((m = re.exec(body))) {
+    if (hits.length && hits[hits.length - 1].id === m[1]) continue;
+    hits.push({ id: m[1], at: m.index });
+  }
+  return hits.map((h, i) => ({ id: h.id, text: body.slice(h.at, i + 1 < hits.length ? hits[i + 1].at : body.length) }));
 }
 
 /** Items in the body: the line above each "Quantity: 1" or "Sold by:". */
@@ -195,11 +225,14 @@ function isoDay(date) {
 }
 
 /**
+ * Every order an email is about — usually one, several when a single checkout
+ * was split into orders.
+ *
  * @param {{subject?:string, from?:string, body?:string, date?:string}} email
- * @returns {{ok:true, kind:'order'|'shipment'|'refund', orderId:string, total:number|null, items:Array<{name:string, price:number|null}>, date:string|null}
+ * @returns {{ok:true, orders:Array<{ok:true, kind:'order'|'shipment'|'refund', orderId:string, total:number|null, items:Array<{name:string, price:number|null}>, date:string|null}>}
  *          | {ok:false, reason:string}}
  */
-export function parseAmazonEmail(email) {
+export function parseAmazonEmailOrders(email) {
   const subject = String(email?.subject || '');
   const from = String(email?.from || '');
   const body = String(email?.body || '');
@@ -209,23 +242,44 @@ export function parseAmazonEmail(email) {
   const kind = kindOf(subject, from);
   if (!kind) return { ok: false, reason: 'not an order, shipment or refund email' };
 
-  const id = ORDER_ID.exec(subject) || ORDER_ID.exec(body);
-  if (!id) return { ok: false, reason: 'no order number' };
+  const date = isoDay(email?.date);
+  const blocks = orderBlocks(body);
+  const ids = [...new Set(blocks.map(b => b.id))];
 
-  // The subject quotes the first item cut short, sometimes reworded. When the
-  // body lists the items properly it is only ever a worse copy of one of them.
-  const listed = bodyItems(body);
-  const fromSubject = listed.length ? [] : subjectItems(subject);
-  const items = mergeItems(listed, fromSubject.map(name => ({ name, price: null })));
+  if (ids.length <= 1) {
+    const id = ORDER_ID.exec(subject) || ORDER_ID.exec(body);
+    if (!id) return { ok: false, reason: 'no order number' };
+    // The whole body: a refund quotes its total before the order number.
+    // The subject quotes the first item cut short, sometimes reworded. When the
+    // body lists the items properly it is only ever a worse copy of one of them.
+    const listed = bodyItems(body);
+    const fromSubject = listed.length ? [] : subjectItems(subject);
+    const items = mergeItems(listed, fromSubject.map(name => ({ name, price: null })));
+    return { ok: true, orders: [{ ok: true, kind, orderId: id[1], total: findTotal(body, kind), items, date }] };
+  }
 
+  // Several orders. The subject's labels span all of them and can't be shared
+  // out, so each order keeps only what its own stretch lists; its shipment
+  // emails, one per order, bring the labels.
   return {
     ok: true,
-    kind,
-    orderId: id[1],
-    total: findTotal(body, kind),
-    items,
-    date: isoDay(email?.date),
+    orders: ids.map(id => {
+      const own = blocks.filter(b => b.id === id);
+      let total = null;
+      let items = [];
+      for (const b of own) {
+        if (total == null) total = findTotal(b.text, kind);
+        items = mergeItems(items, bodyItems(b.text));
+      }
+      return { ok: true, kind, orderId: id, total, items, date };
+    }),
   };
+}
+
+/** The first order an email is about — see parseAmazonEmailOrders for all of them. */
+export function parseAmazonEmail(email) {
+  const r = parseAmazonEmailOrders(email);
+  return r.ok ? r.orders[0] : r;
 }
 
 /**

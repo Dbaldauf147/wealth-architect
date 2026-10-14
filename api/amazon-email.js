@@ -23,7 +23,7 @@
 
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { parseAmazonEmail, mergeAmazonOrder } from '../src/lib/parseAmazonEmail.js';
+import { parseAmazonEmailOrders, mergeAmazonOrder } from '../src/lib/parseAmazonEmail.js';
 
 const COLLECTION = 'amazonOrders';
 const MAX_EMAILS = 100;
@@ -109,24 +109,27 @@ export default async function handler(req, res) {
   const samples = [];
   for (const e of emails) {
     const id = clean(e?.id, 64);
-    const parsed = parseAmazonEmail({
+    // One email can be about several orders — a checkout Amazon split up.
+    const result = parseAmazonEmailOrders({
       subject: clean(e?.subject, 500),
       from: clean(e?.from, 200),
       date: clean(e?.date, 60),
       body: clean(e?.body, MAX_BODY),
     });
-    if (!parsed.ok) { ignored.push({ id, reason: parsed.reason }); continue; }
-    if (dry && (sampleAll || !parsed.items.length)) {
+    if (!result.ok) { ignored.push({ id, reason: result.reason }); continue; }
+    if (dry && (sampleAll || result.orders.every(o => !o.items.length))) {
       samples.push({
         id,
         subject: clean(e?.subject, 500),
-        read: { kind: parsed.kind, total: parsed.total, items: parsed.items.length },
+        read: result.orders.map(o => ({ orderId: o.orderId, kind: o.kind, total: o.total, items: o.items.length })),
         lines: textSample(clean(e?.body, MAX_BODY)),
       });
     }
-    const list = parsedByOrder.get(parsed.orderId) || [];
-    list.push({ parsed, key: emailKey(id || `${parsed.kind}${parsed.date}${parsed.total}`) });
-    parsedByOrder.set(parsed.orderId, list);
+    for (const parsed of result.orders) {
+      const list = parsedByOrder.get(parsed.orderId) || [];
+      list.push({ parsed, key: emailKey(id || `${parsed.kind}${parsed.date}${parsed.total}`) });
+      parsedByOrder.set(parsed.orderId, list);
+    }
   }
 
   if (dry) {
