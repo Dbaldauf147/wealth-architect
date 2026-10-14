@@ -128,6 +128,52 @@ describe('parseAmazonEmail', () => {
   });
 });
 
+// The 2026 layout, as it actually arrived: no product names anywhere in the
+// text, only Amazon's labels in the subject.
+describe('the 2026 layout', () => {
+  const FRAME = 'Your Orders\nYour Account\nBuy Again\nOrdered\nShipped\nOut for delivery\nDelivered\n';
+
+  it('takes the items from the subject labels', () => {
+    const r = parseAmazonEmail({
+      from: 'Amazon.com <auto-confirm@amazon.com>',
+      subject: 'Ordered 1 item: Costumes',
+      date: '2026-10-13T12:00:00Z',
+      body: `${FRAME}Dan, thanks for your order!\nArriving Wednesday\nOrder #\n111-6431635-7233857\nView or edit order\nGrand Total:\n41.36 USD\nPrivacy Notice`,
+    });
+    expect(r).toMatchObject({ ok: true, kind: 'order', orderId: '111-6431635-7233857', total: 41.36 });
+    expect(r.items).toEqual([{ name: 'Costumes', price: null }]);
+  });
+
+  it('splits several labels, on shipments and deliveries too', () => {
+    const r = parseAmazonEmail({
+      from: 'Amazon.com <shipment-tracking@amazon.com>',
+      subject: 'Delivered 2 items: Supplements, Tea',
+      date: '2026-10-10T12:00:00Z',
+      body: `${FRAME}Dan, your package was delivered!\nOrder #\n111-7076903-1478666\nTrack package`,
+    });
+    expect(r).toMatchObject({ ok: true, kind: 'shipment', orderId: '111-7076903-1478666', total: null });
+    expect(r.items.map(i => i.name)).toEqual(['Supplements', 'Tea']);
+  });
+
+  it('drops a trailing "and more"', () => {
+    const r = parseAmazonEmail({
+      from: 'auto-confirm@amazon.com',
+      subject: 'Ordered 6 items: Tea, Batteries and 4 more items',
+      body: 'Order #\n111-1111111-1111111\nGrand Total:\n9.00 USD',
+    });
+    expect(r.items.map(i => i.name)).toEqual(['Tea', 'Batteries']);
+  });
+
+  it('does not read a shipment email\'s bare "Total" as its own charge', () => {
+    const r = parseAmazonEmail({
+      from: 'shipment-tracking@amazon.com',
+      subject: 'Shipped 1 item: Costumes',
+      body: `${FRAME}Order #\n111-6431635-7233857\nTrack package\nTotal\n41.36 USD`,
+    });
+    expect(r.total).toBeNull();
+  });
+});
+
 describe('mergeItems', () => {
   it('treats a truncated name as the same item and keeps the longer one', () => {
     expect(mergeItems([{ name: 'Anker USB C Cable', price: null }], [{ name: 'Anker USB C Cable, 6ft, 2-Pack', price: 12.99 }]))
