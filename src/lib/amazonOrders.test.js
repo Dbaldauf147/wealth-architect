@@ -18,6 +18,7 @@ describe('isAmazonCharge', () => {
     expect(isAmazonCharge({ description: 'WHOLEFDS BRK 10234', fullDescription: 'Whole Foods Market (Amazon)' })).toBe(false);
     expect(isAmazonCharge({ description: 'AMAZON WEB SERVICES' })).toBe(false);
     expect(isAmazonCharge({ description: 'DUNKIN #123' })).toBe(false);
+    expect(isAmazonCharge({ description: 'Buy 1.254119 shares', fullDescription: 'Buy 1.254119 shares of AMZN (Amazon)' })).toBe(false);
   });
 });
 
