@@ -129,6 +129,38 @@ function dryRun() {
   console.log(JSON.stringify(post_(emails, true), null, 2));
 }
 
+/**
+ * Show the emails behind a few orders that were saved with no amount, so the
+ * layout hiding the total can be fixed on the server. Saves nothing. Searches
+ * all Amazon mail for each order number, not just the senders above, in case
+ * the confirmation came from somewhere else.
+ */
+function dryRunMissing() {
+  const res = UrlFetchApp.fetch(ENDPOINT + '?missing=1', {
+    method: 'get',
+    headers: { 'x-ingest-secret': secret_() },
+    muteHttpExceptions: true,
+  });
+  if (res.getResponseCode() !== 200) throw new Error('amazon-email returned ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
+  const missing = JSON.parse(res.getContentText());
+  console.log(missing.count + ' orders have no amount. Looking at: ' + missing.orderIds.join(', '));
+  for (const orderId of missing.orderIds.slice(0, 3)) {
+    const emails = [];
+    for (const thread of GmailApp.search('from:amazon.com "' + orderId + '"', 0, 5)) {
+      for (const msg of thread.getMessages()) emails.push(toPayload_(msg));
+    }
+    if (!emails.length) { console.log(orderId + ': no emails found'); continue; }
+    const r = UrlFetchApp.fetch(ENDPOINT + '?dry=1&sample=1', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'x-ingest-secret': secret_() },
+      payload: JSON.stringify({ emails: emails.slice(0, 6) }),
+      muteHttpExceptions: true,
+    });
+    console.log(orderId + ' (' + emails.length + ' emails):\n' + r.getContentText());
+  }
+}
+
 function installTrigger() {
   for (const t of ScriptApp.getProjectTriggers()) {
     if (t.getHandlerFunction() === 'sync') ScriptApp.deleteTrigger(t);
