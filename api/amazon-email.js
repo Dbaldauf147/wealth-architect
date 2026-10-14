@@ -60,8 +60,23 @@ function textSample(body) {
     .map(l => l.slice(0, 160));
 }
 
+/* Orders saved with no amount at all — nothing to match a charge against.
+ * The script's dryRunMissing() asks for a few, finds their emails in Gmail,
+ * and dry-runs them with samples on, so the layout that hid the total can be
+ * seen. */
+async function missingTotals(res) {
+  const db = getFirestoreDb();
+  if (!db) return res.status(500).json({ error: 'Missing FIREBASE_SERVICE_ACCOUNT_JSON' });
+  const snap = await db.collection(COLLECTION).orderBy('orderDate', 'desc').limit(600).get();
+  const missing = snap.docs
+    .map(d => d.data())
+    .filter(o => !(Number(o.total) > 0) && !Object.keys(o.shipments || {}).length);
+  return res.status(200).json({ ok: true, count: missing.length, orderIds: missing.slice(0, 5).map(o => o.orderId) });
+}
+
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
+  const isMissingQuery = req.method === 'GET' && req.query?.missing === '1';
+  if (req.method !== 'POST' && !isMissingQuery) {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -74,10 +89,20 @@ export default async function handler(req, res) {
   }
   if (req.headers['x-ingest-secret'] !== secret) return res.status(401).json({ error: 'Unauthorized' });
 
+  if (isMissingQuery) {
+    try { return await missingTotals(res); }
+    catch (err) {
+      console.error('amazon-email missing failed:', err);
+      return res.status(500).json({ error: 'Could not read the orders' });
+    }
+  }
+
   const body = req.body && typeof req.body === 'object' ? req.body : {};
   const emails = Array.isArray(body.emails) ? body.emails.slice(0, MAX_EMAILS) : [];
   if (!emails.length) return res.status(400).json({ error: 'emails[] is required' });
   const dry = req.query?.dry === '1' || body.dry === true;
+  // Every email's text, not only those with no items — for dryRunMissing.
+  const sampleAll = dry && (req.query?.sample === '1' || body.sample === true);
 
   const ignored = [];
   const parsedByOrder = new Map(); // orderId -> [{ parsed, key }]
@@ -91,8 +116,13 @@ export default async function handler(req, res) {
       body: clean(e?.body, MAX_BODY),
     });
     if (!parsed.ok) { ignored.push({ id, reason: parsed.reason }); continue; }
-    if (dry && !parsed.items.length) {
-      samples.push({ id, subject: clean(e?.subject, 500), lines: textSample(clean(e?.body, MAX_BODY)) });
+    if (dry && (sampleAll || !parsed.items.length)) {
+      samples.push({
+        id,
+        subject: clean(e?.subject, 500),
+        read: { kind: parsed.kind, total: parsed.total, items: parsed.items.length },
+        lines: textSample(clean(e?.body, MAX_BODY)),
+      });
     }
     const list = parsedByOrder.get(parsed.orderId) || [];
     list.push({ parsed, key: emailKey(id || `${parsed.kind}${parsed.date}${parsed.total}`) });
@@ -105,7 +135,7 @@ export default async function handler(req, res) {
       dry: true,
       parsed: [...parsedByOrder.values()].flat().map(p => p.parsed),
       ignored,
-      noItemsRead: samples,
+      [sampleAll ? 'samples' : 'noItemsRead']: samples,
     });
   }
 
