@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { merchantKey, nameScore, suggestPlace, isEatingOutCharge, isoDay, autoLinkCandidates } from './placeMatch.js';
+import { merchantKey, nameScore, suggestPlace, isEatingOutCharge, isoDay, autoLinkCandidates, eatingOutRows } from './placeMatch.js';
 
 describe('merchantKey', () => {
   it('strips processor prefixes, store numbers and tails', () => {
@@ -86,5 +86,36 @@ describe('autoLinkCandidates', () => {
 
   it('does nothing without rules', () => {
     expect(autoLinkCandidates(txns, {}, {}, keyOf)).toEqual([]);
+  });
+});
+
+describe('eatingOutRows', () => {
+  const places = [{ id: 'p1', name: 'Radegast Hall' }, { id: 'p2', name: 'Copper Mug Coffee' }];
+  const keyOf = t => t.id;
+  const now = new Date('2026-10-20T12:00:00');
+  const txns = [
+    { id: 'a', date: '10/10/2026', description: 'Tst* Radegast Hall and Bi', category: 'Restaurants', amount: -40 },
+    { id: 'b', date: '10/12/2026', description: 'Sq *copper Mug Coffee', category: 'Coffee', amount: -6 },
+    { id: 'c', date: '10/13/2026', description: 'Sq *copper Mug Coffee', category: 'Groceries', amount: -6 },
+    { id: 'd', date: '05/01/2026', description: 'Tst* Radegast Hall and Bi', category: 'Restaurants', amount: -30 },
+    { id: 'e', date: '10/14/2026', description: 'Tst* Radegast Hall and Bi', category: 'Restaurants', amount: 40 },
+  ];
+
+  it('lists eating-out charges in the window, newest first, with suggestions', () => {
+    const rows = eatingOutRows(txns, { months: 3, places, keyOf, now });
+    expect(rows.map(r => r.key)).toEqual(['b', 'a']);
+    expect(rows.every(r => r.suggestion)).toBe(true);
+  });
+
+  it('gives a matched charge its link and no suggestion; an unlinked one reads as unmatched', () => {
+    const rows = eatingOutRows(txns, { months: 3, places, keyOf, now, placeLinks: { a: { placeId: 'p1' }, b: { skipAuto: true } } });
+    const byKey = Object.fromEntries(rows.map(r => [r.key, r]));
+    expect(byKey.a.link).toEqual({ placeId: 'p1' });
+    expect(byKey.a.suggestion).toBe(null);
+    expect(byKey.b).toMatchObject({ link: null, skipAuto: true });
+  });
+
+  it('suggests nothing before the places have loaded', () => {
+    expect(eatingOutRows(txns, { months: null, keyOf, now }).every(r => r.suggestion === null)).toBe(true);
   });
 });

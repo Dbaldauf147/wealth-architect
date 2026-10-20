@@ -102,6 +102,35 @@ export function isoDay(dateStr) {
 }
 
 /**
+ * The Eating Out page's rows: charges since `months` back (all time when null),
+ * eating-out categories only unless `allCategories`, newest first, each with its
+ * link (null when unmatched or deliberately unlinked) and, when unmatched, the
+ * place suggested for it. Shared with the sidebar badge so the two agree.
+ * @returns [{ t, key, date, link, skipAuto, suggestion }]
+ */
+export function eatingOutRows(transactions, { months = null, allCategories = false, placeLinks = {}, placeRules = {}, places = null, keyOf, now = new Date() } = {}) {
+  const since = months ? new Date(now.getFullYear(), now.getMonth() - months, now.getDate()) : null;
+  const out = [];
+  for (const t of transactions || []) {
+    if (Number(t.amount) >= 0) continue;
+    if (!allCategories && !isEatingOutCharge(t)) continue;
+    const date = isoDay(t.date);
+    if (!date) continue;
+    if (since && new Date(`${date}T00:00:00`) < since) continue;
+    const key = keyOf(t);
+    // A charge you unlinked keeps a { skipAuto } marker so a remembered
+    // merchant doesn't match it straight back; here it reads as unmatched.
+    const raw = placeLinks?.[key] || null;
+    const link = raw?.skipAuto ? null : raw;
+    out.push({
+      t, key, date, link, skipAuto: !!raw?.skipAuto,
+      suggestion: link || !places?.length ? null : suggestPlace(t.description, places, placeRules || {}),
+    });
+  }
+  return out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+}
+
+/**
  * Charges a remembered merchant should match without being asked: every charge
  * (any category, any date) whose merchant has a rule and that isn't already
  * matched, ignored, or deliberately unlinked (`skipAuto`). `keyOf` gives a
