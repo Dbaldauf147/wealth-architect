@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { txnKey } from '../lib/statementWindows';
-import { merchantKey, suggestPlace, isEatingOutCharge, isoDay } from '../lib/placeMatch';
+import { merchantKey, eatingOutRows } from '../lib/placeMatch';
 import styles from './EatingOutPage.module.css';
 
 /* Eating out, matched to the places in Prep Day.
@@ -62,28 +62,10 @@ export function EatingOutPage() {
   const placeById = useMemo(() => new Map((places || []).map(p => [p.id, p])), [places]);
   const placeByName = useMemo(() => new Map((places || []).map(p => [p.name.toLowerCase(), p])), [places]);
 
-  const rows = useMemo(() => {
-    const months = RANGES.find(r => r.id === range)?.months;
-    const since = months ? new Date(new Date().getFullYear(), new Date().getMonth() - months, new Date().getDate()) : null;
-    const out = [];
-    for (const t of transactions || []) {
-      if (Number(t.amount) >= 0) continue;
-      if (!allCategories && !isEatingOutCharge(t)) continue;
-      const date = isoDay(t.date);
-      if (!date) continue;
-      if (since && new Date(`${date}T00:00:00`) < since) continue;
-      const key = txnKey(t);
-      // A charge you unlinked keeps a { skipAuto } marker so a remembered
-      // merchant doesn't match it straight back; here it reads as unmatched.
-      const raw = placeLinks?.[key] || null;
-      const link = raw?.skipAuto ? null : raw;
-      out.push({
-        t, key, date, link, skipAuto: !!raw?.skipAuto,
-        suggestion: link || !places?.length ? null : suggestPlace(t.description, places, placeRules || {}),
-      });
-    }
-    return out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-  }, [transactions, range, allCategories, placeLinks, placeRules, places]);
+  const rows = useMemo(() => eatingOutRows(transactions, {
+    months: RANGES.find(r => r.id === range)?.months,
+    allCategories, placeLinks, placeRules, places, keyOf: txnKey,
+  }), [transactions, range, allCategories, placeLinks, placeRules, places]);
 
   const shown = rows.filter(r => (view === 'todo' ? !r.link : view === 'done' ? r.link && !r.link.ignored : true));
   const todo = rows.filter(r => !r.link);

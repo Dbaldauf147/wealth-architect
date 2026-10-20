@@ -59,6 +59,7 @@ function UpdatePill() {
 }
 import { useData, useDataActions } from './contexts/DataContext';
 import { usePlaceAutoLink } from './hooks/usePlaceAutoLink';
+import { useNavBadges } from './hooks/useNavBadges';
 
 // Pages are loaded on demand so the initial bundle doesn't include every
 // page upfront. React.lazy expects a default export, so we adapt the named
@@ -172,6 +173,20 @@ const BOTTOM_NAV = [
   { id: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
+const BADGE_TITLES = {
+  transactions: 'Uncategorized transactions over $20 in the last 30 days',
+  eatingout: 'Restaurant charges with a suggested Prep Day place',
+};
+
+function NavBadge({ count, title, compact = false }) {
+  if (!count) return null;
+  return (
+    <span className={compact ? styles.bottomNavBadge : styles.navBadge} title={title} aria-label={`${count} — ${title}`}>
+      {count > 99 ? '99+' : count}
+    </span>
+  );
+}
+
 function getHashView() {
   const hash = window.location.hash.replace('#', '');
   return hash || 'overview';
@@ -258,6 +273,7 @@ export function App() {
   // Charges from merchants you've matched to a Prep Day place match themselves
   // on every load, whichever page is open — see the hook.
   usePlaceAutoLink();
+  const badges = useNavBadges();
   const { refresh, setPrivacyMode } = useDataActions();
   const busy = loading || syncing;
 
@@ -343,6 +359,7 @@ export function App() {
             >
               <span className="material-symbols-outlined">{item.icon}</span>
               {item.label}
+              <NavBadge count={badges[item.id]} title={BADGE_TITLES[item.id]} />
             </div>
           ))}
         </nav>
@@ -475,6 +492,7 @@ export function App() {
           >
             <span className="material-symbols-outlined">{item.icon}</span>
             {item.label}
+            <NavBadge count={badges[item.id]} title={BADGE_TITLES[item.id]} compact />
           </div>
         ))}
       </nav>

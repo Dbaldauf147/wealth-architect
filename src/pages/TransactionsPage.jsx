@@ -7,6 +7,7 @@ import {
 import { findRentCollisions, txnKey } from '../lib/rentDuplicates';
 import { detectCardKey } from '../lib/cardRewards';
 import { statementLookup, statementLabel, ordinal, txnKey as statementKey } from '../lib/statementWindows';
+import { uncatOver20RecentCutoff, isUncatOver20Recent, countUncatOver20Recent } from '../lib/uncategorized';
 import CardChoiceModal from '../components/CardChoiceModal';
 import styles from './TransactionsPage.module.css';
 
@@ -598,20 +599,6 @@ function toIsoDate(dateStr) {
   return `${y}-${m}-${day}`;
 }
 
-/* Predicate: an uncategorized transaction over $20 within the last 30 days.
-   Shared by the header count badge and its click-to-filter behavior so both
-   always agree on what "counts". */
-function uncatOver20RecentCutoff() {
-  const c = new Date();
-  c.setDate(c.getDate() - 30);
-  return c.getTime();
-}
-function isUncatOver20Recent(t, cutoffMs) {
-  if ((t.category || 'Uncategorized') !== 'Uncategorized') return false;
-  if (Math.abs(t.amount) <= 20) return false;
-  const d = new Date(t.date);
-  return !isNaN(d) && d.getTime() >= cutoffMs;
-}
 
 /* Set the day a card's statement closes, which decides the Statement column
    for every charge on it. "Use the estimate" clears the override. */
@@ -2554,10 +2541,7 @@ export function TransactionsPage() {
   }
 
   /* Count of uncategorized transactions over $20 in the past 30 days */
-  const uncategorizedRecentCount = useMemo(() => {
-    const cutoff = uncatOver20RecentCutoff();
-    return (transactions || []).filter(t => isUncatOver20Recent(t, cutoff)).length;
-  }, [transactions]);
+  const uncategorizedRecentCount = useMemo(() => countUncatOver20Recent(transactions), [transactions]);
 
   /* Loading state */
   if (loading) {

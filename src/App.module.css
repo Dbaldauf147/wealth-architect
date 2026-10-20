@@ -92,6 +92,20 @@
   opacity: 1;
 }
 
+.navBadge {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  color: #fff;
+  background: var(--color-error);
+  border-radius: 10px;
+}
+
 .navDivider {
   height: 1px;
   background: rgba(198, 198, 205, 0.15);
@@ -454,10 +468,28 @@
   color: var(--color-text-tertiary);
   cursor: pointer;
   transition: color var(--transition-fast);
+  position: relative;
 }
 
 .bottomNavItem .material-symbols-outlined {
   font-size: 22px;
+}
+
+.bottomNavBadge {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  margin-left: 6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  color: #fff;
+  background: var(--color-error);
+  border-radius: 8px;
 }
 
 .bottomNavItemActive {
