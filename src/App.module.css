@@ -149,6 +149,22 @@
   background: rgba(0, 88, 190, 0.1);
 }
 
+.syncStatus {
+  margin-top: 6px;
+  font-size: 11px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+
+.syncStatusError {
+  padding: 6px 8px;
+  text-align: left;
+  line-height: 1.35;
+  color: var(--color-error);
+  background: rgba(186, 26, 26, 0.08);
+  border-radius: var(--radius-lg);
+}
+
 .sidebarProfile {
   display: flex;
   align-items: center;

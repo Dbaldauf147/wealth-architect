@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, lazy, Suspense, Component } from 'react';
+import { useState, useEffect, useCallback, useRef, lazy, Suspense, Component } from 'react';
 import styles from './App.module.css';
 import { loadEmailPrefs, sendWeeklyEmail } from './lib/weeklyEmailClient';
 
@@ -177,6 +177,44 @@ function getHashView() {
   return hash || 'overview';
 }
 
+// The sheet is read on mount, and a laptop tab stays mounted for weeks: left
+// open, it showed whatever the sheet held the day it was loaded. So the desktop
+// re-reads it when the tab comes back into view (as the phone app does on
+// resume) and on a slow clock while it's in view.
+const RESUME_SYNC_MS = 2 * 60 * 1000;
+const OPEN_SYNC_MS = 15 * 60 * 1000;
+
+function ago(date) {
+  const mins = Math.round((Date.now() - new Date(date).getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  return new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/* Under the sync button: when the numbers on screen were read, and — loudly —
+   when the last read failed, because a failed read leaves the previous copy on
+   screen, which otherwise looks exactly like current data. */
+function SyncStatus({ lastSync, syncError, busy }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick(n => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  if (busy) return null;
+  if (syncError) {
+    return (
+      <div className={`${styles.syncStatus} ${styles.syncStatusError}`} role="alert">
+        Couldn't reach the sheet ({String(syncError)}).
+        {lastSync ? ` Showing data from ${new Date(lastSync).toLocaleString()}.` : ''}
+      </div>
+    );
+  }
+  if (!lastSync) return null;
+  return <div className={styles.syncStatus}>Synced {ago(lastSync)}</div>;
+}
+
 /* Sends last week's summary email now — the one the cron sends on the day set
    in Settings — to the recipient set there. Asks first, since it goes out
    for real, then reports how it went on the button itself. */
@@ -216,12 +254,33 @@ export function App() {
   const [view, setView] = useState(getHashView);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [headerTab, setHeaderTab] = useState('portfolio');
-  const { loading, syncing, lastSync, privacyMode } = useData();
+  const { loading, syncing, lastSync, syncError, privacyMode } = useData();
   // Charges from merchants you've matched to a Prep Day place match themselves
   // on every load, whichever page is open — see the hook.
   usePlaceAutoLink();
   const { refresh, setPrivacyMode } = useDataActions();
   const busy = loading || syncing;
+
+  const resumeRef = useRef({ refresh, busy, lastSync });
+  useEffect(() => { resumeRef.current = { refresh, busy, lastSync }; }, [refresh, busy, lastSync]);
+  useEffect(() => {
+    const maybeSync = (minAge) => {
+      if (document.visibilityState !== 'visible') return;
+      const { refresh: run, busy: running, lastSync: last } = resumeRef.current;
+      if (running) return;
+      if (last && Date.now() - new Date(last).getTime() < minAge) return;
+      run();
+    };
+    const onVisible = () => maybeSync(RESUME_SYNC_MS);
+    const id = setInterval(() => maybeSync(OPEN_SYNC_MS), 60_000);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, []);
 
   useEffect(() => {
     const onHash = () => setView(getHashView());
@@ -297,6 +356,7 @@ export function App() {
             <span className="material-symbols-outlined" style={{ fontSize: 15 }}>{busy ? 'hourglass_empty' : 'sync'}</span>
             {busy ? 'Syncing...' : 'Force Sync Sheets'}
           </button>
+          <SyncStatus lastSync={lastSync} syncError={syncError} busy={busy} />
         </div>
 
         <div className={styles.sidebarProfile}>
