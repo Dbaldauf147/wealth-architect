@@ -8,6 +8,7 @@ import { findRentCollisions, txnKey } from '../lib/rentDuplicates';
 import { detectCardKey } from '../lib/cardRewards';
 import { statementLookup, statementLabel, ordinal, txnKey as statementKey } from '../lib/statementWindows';
 import { uncatOver20RecentCutoff, isUncatOver20Recent, countUncatOver20Recent } from '../lib/uncategorized';
+import { matchAmazonOrders, describeAmazonMatch, amazonOrderUrl, itemSummary } from '../lib/amazonOrders';
 import CardChoiceModal from '../components/CardChoiceModal';
 import styles from './TransactionsPage.module.css';
 
@@ -657,6 +658,26 @@ function StatementDayModal({ account, accountName, card, setDay, onSave, onClose
   );
 }
 
+/* The Amazon order an Amazon row was joined to, read out of Gmail by
+   api/amazon-email and matched on the exact amount (lib/amazonOrders.js) —
+   the same join the phone's Review deck uses. Every Amazon charge reads
+   "AMAZON MKTPL*…", so this line is what says which one it was. */
+function AmazonOrderLine({ match }) {
+  const { order } = match;
+  const items = itemSummary(order);
+  const url = amazonOrderUrl(order);
+  const label = `${match.via === 'refund' ? 'Refund' : 'Order'} ${order.orderId}`;
+  return (
+    <div className={styles.amazonOrderLine} title={describeAmazonMatch(match)} data-testid="amazon-order-line">
+      <span className="material-symbols-outlined">package_2</span>
+      {url
+        ? <a href={url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}>{label}</a>
+        : <span>{label}</span>}
+      {items && <span className={styles.amazonOrderItems}>· {items}</span>}
+    </div>
+  );
+}
+
 /* A double-click on a row opens the "right card?" popup — unless it landed on
    something the row already uses clicks for (inputs, the category and
    subcategory badges, rule chips, the date picker). Those all show a pointer
@@ -672,7 +693,7 @@ function isRowChrome(el) {
 // category edit — which only changes the edited transaction object — re-renders
 // just that one row instead of the whole visible page.
 const TransactionRow = memo(function TransactionRow({
-  t, i, selectedIds, visibleColumns, categoryRules, subcategoryRules, transactionNotes, accountNicknames, editingId, editingSubId, newCategoryText, manageCategoriesMode, renamingCategory, renameText, showHiddenCategories, subSearchText, categoryOptions, hiddenCategoryList, transactions, dropdownRef, subDropdownRef, findMatchingRules, toggleSelect, setEditingRule, setEditingId, setNewCategoryText, setManageCategoriesMode, setRenamingCategory, setRenameText, setShowHiddenCategories, handleCategorySelect, removeCategoryRule, flashSaved, updateTransactionCategory, renameCategory, removeCategory, unhideCategory, setEditingSubId, setSubSearchText, handleSubcategorySelect, removeSubcategoryRule, addSubcategoryRule, updateTransactionDate, updateTransactionNote, setAccountNickname, toggleHideTransaction, splitTag, tagForSplit, untagSplit, onExplainCard, statement, onEditStatement,
+  t, i, selectedIds, visibleColumns, categoryRules, subcategoryRules, transactionNotes, accountNicknames, editingId, editingSubId, newCategoryText, manageCategoriesMode, renamingCategory, renameText, showHiddenCategories, subSearchText, categoryOptions, hiddenCategoryList, transactions, dropdownRef, subDropdownRef, findMatchingRules, toggleSelect, setEditingRule, setEditingId, setNewCategoryText, setManageCategoriesMode, setRenamingCategory, setRenameText, setShowHiddenCategories, handleCategorySelect, removeCategoryRule, flashSaved, updateTransactionCategory, renameCategory, removeCategory, unhideCategory, setEditingSubId, setSubSearchText, handleSubcategorySelect, removeSubcategoryRule, addSubcategoryRule, updateTransactionDate, updateTransactionNote, setAccountNickname, toggleHideTransaction, splitTag, tagForSplit, untagSplit, onExplainCard, statement, onEditStatement, amazonMatch,
 }) {
   const icon = getCategoryIcon(t.category);
   const color = catColor(t.category || 'Uncategorized');
@@ -735,6 +756,7 @@ const TransactionRow = memo(function TransactionRow({
                 ? t.fullDescription.slice(0, 60)
                 : t.category}
             </div>
+            {amazonMatch && <AmazonOrderLine match={amazonMatch} />}
             <div
               style={{ display: 'flex', gap: 3, marginTop: 2, cursor: 'pointer', alignItems: 'center' }}
               onDoubleClick={e => {
@@ -1144,6 +1166,14 @@ const TransactionRow = memo(function TransactionRow({
         <span className={t.amount >= 0 ? styles.amountCredit : styles.amountDebit}>
           {t.amount >= 0 ? '+' : ''}{fmt(t.amount)}
         </span>
+        {amazonMatch && (
+          <span
+            className={`material-symbols-outlined ${styles.amazonMatchFlag}`}
+            title={describeAmazonMatch(amazonMatch)}
+            aria-label={describeAmazonMatch(amazonMatch)}
+            data-testid="amazon-match-flag"
+          >mark_email_read</span>
+        )}
       </td>}
       {visibleColumns.has('date') && <td className={styles.dateCell}>
         {(() => {
@@ -1459,7 +1489,7 @@ function RentCollisionNotice({ collisions, onMove, onDismiss }) {
 }
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, splitTags, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View, rentDupeDismissed, cardPromos, promoTags, cardMap, statementCloseDays } = useData();
+  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, splitTags, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View, rentDupeDismissed, cardPromos, promoTags, cardMap, statementCloseDays, amazonOrders } = useData();
   const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, tagForSplit, untagSplit, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns, setActiveTxnView, setShowAccounts, setPareto8020View, dismissRentCollision, setPromoTagForTransactions, setStatementCloseDay } = useDataActions();
   // Run over every transaction, not the filtered view — a rent clash is a fact
   // about the ledger and shouldn't disappear because the search box is narrow.
@@ -1841,6 +1871,12 @@ export function TransactionsPage() {
     return out;
   }, [statements, transactions]);
   const [editingStatementAcct, setEditingStatementAcct] = useState(null);
+  // Amazon rows joined to their order emails, keyed by transaction id. Each
+  // value is the Map's own object, so a row's prop only changes when its join does.
+  const amazonMatches = useMemo(
+    () => matchAmazonOrders(amazonOrders, transactions),
+    [amazonOrders, transactions],
+  );
   const statementText = useCallback((t) => {
     const l = statementLabels.get(statementKey(t));
     return l ? `${l.main} ${l.sub}` : '';
@@ -3817,6 +3853,7 @@ export function TransactionsPage() {
                     untagSplit={untagSplit}
                     onExplainCard={setCardChoiceTxn}
                     statement={statementLabels.get(statementKey(t))}
+                    amazonMatch={amazonMatches.get(t.transactionId)}
                     onEditStatement={setEditingStatementAcct}
                     editingId={isCatRow ? editingId : null}
                     editingSubId={isSubRow ? editingSubId : null}

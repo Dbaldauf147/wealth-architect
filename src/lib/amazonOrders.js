@@ -274,3 +274,30 @@ export function itemSummary(order, max = 2) {
   const rest = names.length - short.length;
   return rest > 0 ? `${short.join(' · ')} +${rest} more` : short.join(' · ');
 }
+
+const usd = (x) => `$${Math.abs(Number(x)).toFixed(2)}`;
+
+/**
+ * Why a row is joined to its order, in words — for the flag on the desktop
+ * Transactions table. Every join is on the exact amount, so this says which
+ * figure in the email it was.
+ */
+export function describeAmazonMatch(match) {
+  const order = match?.order;
+  if (!order) return '';
+  const id = order.orderId ? `Amazon order ${order.orderId}` : 'an Amazon order';
+  switch (match.via) {
+    case 'shipment': return `Exact amount matched to a shipment email for ${id} (from Gmail)`;
+    case 'refund': return `Exact amount matched to a refund email for ${id} (from Gmail)`;
+    case 'split': return `One of several charges that add up exactly to the ${usd(order.total)} total of ${id} (from Gmail)`;
+    default: return `Exact amount matched to the order total of ${id} (from Gmail)`;
+  }
+}
+
+/** Amazon's order page, for an id in its usual 3-7-7 form. */
+export function amazonOrderUrl(order) {
+  const id = String(order?.orderId || '');
+  return /^[A-Z0-9]{3}-\d{7}-\d{7}$/.test(id)
+    ? `https://www.amazon.com/gp/your-account/order-details?orderID=${id}`
+    : '';
+}

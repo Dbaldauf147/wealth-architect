@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isAmazonCharge, matchAmazonOrders, buildItemIndex, suggestFromItems, withItemSuggestions, itemSummary,
+  describeAmazonMatch, amazonOrderUrl,
 } from './amazonOrders.js';
 
 const txn = (id, date, amount, description = 'AMAZON MKTPL*AB12CD', extra = {}) => ({
@@ -133,5 +134,26 @@ describe('item suggestions', () => {
 
   it('summarises the items for a card', () => {
     expect(itemSummary(order('n', '', 1, ['A thing', 'B thing', 'C thing']))).toBe('A thing · B thing +1 more');
+  });
+});
+
+describe('describeAmazonMatch', () => {
+  const order = { orderId: '113-1234567-7654321', total: 42.5 };
+  it('names the figure the amount matched', () => {
+    expect(describeAmazonMatch({ order, via: 'order' })).toBe('Exact amount matched to the order total of Amazon order 113-1234567-7654321 (from Gmail)');
+    expect(describeAmazonMatch({ order, via: 'shipment' })).toMatch(/shipment email/);
+    expect(describeAmazonMatch({ order, via: 'refund' })).toMatch(/refund email/);
+    expect(describeAmazonMatch({ order, via: 'split' })).toMatch(/add up exactly to the \$42\.50 total/);
+  });
+  it('says nothing without an order', () => {
+    expect(describeAmazonMatch(undefined)).toBe('');
+  });
+});
+
+describe('amazonOrderUrl', () => {
+  it('links a well-formed order id and nothing else', () => {
+    expect(amazonOrderUrl({ orderId: '113-1234567-7654321' })).toBe('https://www.amazon.com/gp/your-account/order-details?orderID=113-1234567-7654321');
+    expect(amazonOrderUrl({ orderId: 'D01-1234567-7654321' })).toMatch(/orderID=D01/);
+    expect(amazonOrderUrl({ orderId: '"><script>' })).toBe('');
   });
 });
