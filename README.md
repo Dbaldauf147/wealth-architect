@@ -152,6 +152,12 @@ matters: last year's filed charges are the history.
    asked) and check the log, then `backfill` (re-run if it says it paused).
    Any run installs the hourly `sync` trigger if it's missing.
 
+Whole Foods delivery orders are read too. Their card charge is the order
+total less the driver tip, which posts on its own as "Amazon Tips*…"; both
+rows are joined to the order. The Gmail search lives in `api/amazon-email.js`
+(the script fetches it), and the script's `diagnose()` dry-runs whatever
+`DIAGNOSE_QUERY` there names, printing each email's text for debugging.
+
 If the Transactions page shows **"Amazon email import has stopped"** (Amazon
 charges are posting with no order saved since), open the project and run
 `sync` once. It catches up from where it left off and reinstalls the trigger;

@@ -187,3 +187,37 @@ describe('amazonImportStalled', () => {
     expect(amazonImportStalled([], txns, new Map(), today)).toBeNull();
   });
 });
+
+describe('Whole Foods orders', () => {
+  const wf = (total, extra = {}) => order('113-4444444-5555555', '2026-10-18', total, ['Groceries'], { grocery: true, ...extra });
+  const charge = (id, date, amount) => txn(id, date, amount, 'Amazon.com*i45kj1lw3');
+  const tip = (id, date, amount = -5) => txn(id, date, amount, 'Amazon Tips*591uv77q2');
+
+  it('joins the charge at the total less the tip, and the tip charge with it', () => {
+    const o = wf(98.65);
+    const m = matchAmazonOrders([o], [charge('c', '2026-10-20', -93.65), tip('t', '2026-10-19'), tip('old', '2026-10-01')]);
+    expect(m.get('c')).toMatchObject({ order: o, via: 'grocery', tip: 5 });
+    expect(m.get('t')).toMatchObject({ order: o, via: 'tip', tip: 5 });
+    expect(m.has('old')).toBe(false);
+  });
+  it('uses the tip the email states', () => {
+    const o = wf(100, { tip: 7 });
+    const m = matchAmazonOrders([o], [charge('c', '2026-10-19', -93), charge('x', '2026-10-19', -95), tip('t', '2026-10-19', -7)]);
+    expect(m.get('c')?.via).toBe('grocery');
+    expect(m.has('x')).toBe(false);
+    expect(m.get('t')?.via).toBe('tip');
+  });
+  it('falls back to the whole total when there was no tip', () => {
+    const m = matchAmazonOrders([wf(60)], [charge('c', '2026-10-19', -60)]);
+    expect(m.get('c')).toMatchObject({ via: 'grocery', tip: 0 });
+  });
+  it('does not take the tip charge itself as the order', () => {
+    const m = matchAmazonOrders([wf(10)], [tip('t1', '2026-10-19'), tip('t2', '2026-10-19')]);
+    expect(m.size).toBe(0);
+  });
+  it('describes both rows', () => {
+    const o = wf(98.65);
+    expect(describeAmazonMatch({ order: o, via: 'grocery', tip: 5 })).toMatch(/less the \$5\.00 tip/);
+    expect(describeAmazonMatch({ order: o, via: 'tip', tip: 5 })).toMatch(/\$5\.00 delivery tip/);
+  });
+});

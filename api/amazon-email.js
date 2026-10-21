@@ -26,6 +26,17 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { parseAmazonEmailOrders, mergeAmazonOrder } from '../src/lib/parseAmazonEmail.js';
 
 const COLLECTION = 'amazonOrders';
+
+// What the Apps Script searches Gmail for. Served from here (GET ?config=1)
+// so a sender Amazon adds is picked up by a deploy, not a re-paste; the
+// script keeps its own copy as a fallback. Whole Foods delivery mail comes
+// from more than one Amazon address, so it is found by name.
+const GMAIL_QUERY = '{from:(auto-confirm@amazon.com OR shipment-tracking@amazon.com OR order-update@amazon.com '
+  + 'OR return@amazon.com OR digital-no-reply@amazon.com OR payments-messages@amazon.com) '
+  + '(from:(amazon.com OR wholefoodsmarket.com) "whole foods")}';
+// What the script's diagnose() dry-runs, with the text of every email shown.
+// Change it here to look at a different kind of mail.
+const DIAGNOSE_QUERY = 'from:(amazon.com OR wholefoodsmarket.com) "whole foods" newer_than:45d';
 const MAX_EMAILS = 100;
 const MAX_BODY = 40000;
 
@@ -76,7 +87,8 @@ async function missingTotals(res) {
 
 export default async function handler(req, res) {
   const isMissingQuery = req.method === 'GET' && req.query?.missing === '1';
-  if (req.method !== 'POST' && !isMissingQuery) {
+  const isConfigQuery = req.method === 'GET' && req.query?.config === '1';
+  if (req.method !== 'POST' && !isMissingQuery && !isConfigQuery) {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -88,6 +100,8 @@ export default async function handler(req, res) {
     });
   }
   if (req.headers['x-ingest-secret'] !== secret) return res.status(401).json({ error: 'Unauthorized' });
+
+  if (isConfigQuery) return res.status(200).json({ ok: true, query: GMAIL_QUERY, diagnose: DIAGNOSE_QUERY });
 
   if (isMissingQuery) {
     try { return await missingTotals(res); }
@@ -116,12 +130,20 @@ export default async function handler(req, res) {
       date: clean(e?.date, 60),
       body: clean(e?.body, MAX_BODY),
     });
-    if (!result.ok) { ignored.push({ id, reason: result.reason }); continue; }
+    if (!result.ok) {
+      ignored.push({ id, reason: result.reason });
+      // What it couldn't read is what a diagnosis most needs to see.
+      if (sampleAll) {
+        samples.push({ id, from: clean(e?.from, 200), subject: clean(e?.subject, 500), ignored: result.reason, lines: textSample(clean(e?.body, MAX_BODY)) });
+      }
+      continue;
+    }
     if (dry && (sampleAll || result.orders.every(o => !o.items.length))) {
       samples.push({
         id,
+        from: clean(e?.from, 200),
         subject: clean(e?.subject, 500),
-        read: result.orders.map(o => ({ orderId: o.orderId, kind: o.kind, total: o.total, items: o.items.length })),
+        read: result.orders.map(o => ({ orderId: o.orderId, kind: o.kind, total: o.total, items: o.items.length, grocery: !!o.grocery, tip: o.tip ?? null })),
         lines: textSample(clean(e?.body, MAX_BODY)),
       });
     }

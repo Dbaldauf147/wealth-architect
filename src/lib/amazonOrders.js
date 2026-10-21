@@ -41,6 +41,8 @@ const cents = (x) => Math.round(Math.abs(Number(x)) * 100);
 // pre-order can be weeks after the order. Refunds post within days.
 const WINDOWS = {
   order: { early: 2, late: 21 },
+  // Whole Foods delivers within a day or two and charges on delivery.
+  grocery: { early: 1, late: 7 },
   shipment: { early: 2, late: 10 },
   refund: { early: 2, late: 14 },
 };
@@ -60,7 +62,7 @@ function targetsFor(order) {
     out.push({ order, c: cents(s.total), day: dayNumber(s.date) ?? orderDay, out: true, via: 'shipment' });
   }
   if (!shipments.length && Number(order.total) > 0) {
-    out.push({ order, c: cents(order.total), day: orderDay, out: true, via: 'order' });
+    out.push({ order, c: cents(order.total), day: orderDay, out: true, via: order.grocery ? 'grocery' : 'order' });
   }
   for (const r of Object.values(order.refunds || {})) {
     if (Number(r?.total) > 0) {
@@ -103,9 +105,34 @@ export function matchAmazonOrders(orders, transactions) {
   if (!pool.length) return matches;
 
   const claimed = new Set();
-  const claim = (entry, order, via) => {
+  const claim = (entry, order, via, extra) => {
     claimed.add(entry.t.transactionId);
-    matches.set(entry.t.transactionId, { order, via });
+    matches.set(entry.t.transactionId, { order, via, ...extra });
+  };
+
+  // A Whole Foods order is charged its total less the driver tip, and the tip
+  // posts on its own a day or so apart as "Amazon Tips*…". The email's tip is
+  // the one to take off; failing that, the tip charges near the order say
+  // what it was ($5 most times, now and then more), and none at all is tried
+  // too, for an order with the tip left in.
+  const tipPool = pool.filter(e => e.out && /amazon\s*tips/i.test(`${e.t.description || ''} ${e.t.fullDescription || ''}`));
+  const TIP_REACH = 3;
+  const groceryCandidates = (target) => {
+    const tipCents = Number(target.order.tip) > 0
+      ? [cents(target.order.tip)]
+      : [...new Set(tipPool.filter(e => inWindow(e, target)).map(e => e.c)), 0];
+    return tipCents.flatMap(tipC => (byCents.get(target.c - tipC) || [])
+      .filter(e => e.out && !claimed.has(e.t.transactionId) && inWindow(e, target) && !tipPool.includes(e))
+      .map(e => ({ e, tipC })));
+  };
+  const claimTip = (main, order, tipC) => {
+    const near = tipPool
+      .filter(e => e.c === tipC && !claimed.has(e.t.transactionId) && Math.abs(e.day - main.day) <= TIP_REACH)
+      .sort((a, b) => Math.abs(a.day - main.day) - Math.abs(b.day - main.day));
+    const [best, second] = near;
+    if (best && (!second || Math.abs(second.day - main.day) > Math.abs(best.day - main.day))) {
+      claim(best, order, 'tip', { tip: tipC / 100 });
+    }
   };
 
   const targets = orders.flatMap(targetsFor).sort((a, b) => a.day - b.day);
@@ -114,6 +141,16 @@ export function matchAmazonOrders(orders, transactions) {
   // sum of small charges can't take a row that was a clean single match.
   const unmatched = [];
   for (const target of targets) {
+    if (target.via === 'grocery') {
+      const found = groceryCandidates(target)
+        .sort((a, b) => Math.abs(a.e.day - target.day) - Math.abs(b.e.day - target.day));
+      const [best, second] = found;
+      if (best && (!second || Math.abs(second.e.day - target.day) - Math.abs(best.e.day - target.day) >= AMBIGUOUS_DAYS)) {
+        claim(best.e, target.order, 'grocery', { tip: best.tipC / 100 });
+        if (best.tipC) claimTip(best.e, target.order, best.tipC);
+      }
+      continue;
+    }
     const candidates = (byCents.get(target.c) || [])
       .filter(e => e.out === target.out && !claimed.has(e.t.transactionId) && inWindow(e, target))
       .sort((a, b) => Math.abs(a.day - target.day) - Math.abs(b.day - target.day));
@@ -290,6 +327,10 @@ export function describeAmazonMatch(match) {
     case 'shipment': return `Exact amount matched to a shipment email for ${id} (from Gmail)`;
     case 'refund': return `Exact amount matched to a refund email for ${id} (from Gmail)`;
     case 'split': return `One of several charges that add up exactly to the ${usd(order.total)} total of ${id} (from Gmail)`;
+    case 'grocery': return match.tip
+      ? `Exact amount matched to the ${usd(order.total)} total of Whole Foods ${id}, less the ${usd(match.tip)} tip that posts separately (from Gmail)`
+      : `Exact amount matched to the total of Whole Foods ${id} (from Gmail)`;
+    case 'tip': return `The ${usd(match.tip)} delivery tip on Whole Foods ${id} (from Gmail)`;
     default: return `Exact amount matched to the order total of ${id} (from Gmail)`;
   }
 }

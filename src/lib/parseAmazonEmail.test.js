@@ -273,3 +273,55 @@ describe('mergeAmazonOrder', () => {
     expect(doc.shipments).toEqual({ m2: { total: 16.24, date: '2026-09-05' } });
   });
 });
+
+describe('Whole Foods delivery', () => {
+  const confirm = {
+    from: 'Amazon.com <no-reply@amazon.com>',
+    subject: 'Your Whole Foods Market order',
+    date: '2026-10-18T15:00:00.000Z',
+    body: `Thanks for shopping Whole Foods Market on Amazon
+Order # 113-4444444-5555555
+Items subtotal: $90.00
+Driver tip: $5.00
+Order total: $98.10`,
+  };
+  const delivered = {
+    from: 'Amazon.com <no-reply@amazon.com>',
+    subject: 'Your order has been delivered',
+    date: '2026-10-19T20:00:00.000Z',
+    body: `Your Whole Foods Market order was delivered
+Order # 113-4444444-5555555
+Tip
+5.00 USD
+Order total
+98.65 USD`,
+  };
+
+  it('reads a confirmation as a grocery order, with its tip', () => {
+    expect(parseAmazonEmail(confirm)).toMatchObject({
+      kind: 'order', orderId: '113-4444444-5555555', total: 98.1, grocery: true, tip: 5,
+    });
+  });
+  it('reads the delivered email as the order too, and lets its later total win', () => {
+    const d = parseAmazonEmail(delivered);
+    expect(d).toMatchObject({ kind: 'order', total: 98.65, tip: 5, grocery: true });
+    // Either order of arrival ends on the final total.
+    for (const [a, b] of [[confirm, delivered], [delivered, confirm]]) {
+      let doc = mergeAmazonOrder(null, parseAmazonEmail(a), 'm1');
+      doc = mergeAmazonOrder(doc, parseAmazonEmail(b), 'm2');
+      expect(doc).toMatchObject({ total: 98.65, grocery: true, tip: 5, orderDate: '2026-10-18' });
+    }
+  });
+  it('accepts a wholefoodsmarket.com sender', () => {
+    expect(parseAmazonEmail({ ...confirm, from: 'Whole Foods Market <orders@wholefoodsmarket.com>' }).ok).toBe(true);
+  });
+  it('is not fooled by a Whole Foods ad at the foot of an ordinary email', () => {
+    const r = parseAmazonEmail({ ...ORDERED, body: `${ORDERED.body}\n${'x'.repeat(1600)}\nShop Whole Foods Market on Amazon` });
+    expect(r.grocery).toBeUndefined();
+  });
+  it('leaves ordinary orders without grocery fields', () => {
+    const doc = mergeAmazonOrder(null, parseAmazonEmail(ORDERED), 'm1');
+    expect(doc).not.toHaveProperty('grocery');
+    expect(doc).not.toHaveProperty('tip');
+  });
+});
