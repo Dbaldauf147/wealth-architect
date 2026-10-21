@@ -146,4 +146,17 @@ describe('planUpcomingCash', () => {
     expect(plan.events[1].detail).toMatch(/same amount the last 3 times/);
     expect(plan.events[3].detail).toMatch(/ranged/);
   });
+
+  it('names the commission in the month-end paycheck without adding it', () => {
+    const withComm = planUpcomingCash({
+      cashOnHand: 664, cardPayments, paychecks, bills, today,
+      commissionPayouts: [{ payMonth: '2026-10', earnedMonth: '2026-09', amount: 2430 }, { payMonth: '2026-11', earnedMonth: '2026-10', amount: 999 }],
+    });
+    const monthEnd = withComm.events.find(e => e.kind === 'paycheck' && e.date.getDate() === 30);
+    expect(monthEnd.amount).toBe(3050);
+    expect(monthEnd.commission).toMatchObject({ amount: 2430 });
+    expect(monthEnd.detail).toMatch(/Includes \$2,430 commission for September, before tax/);
+    // The mid-month paycheck carries none.
+    expect(withComm.events.find(e => e.kind === 'paycheck' && e.date.getDate() === 15).commission).toBe(null);
+  });
 });
