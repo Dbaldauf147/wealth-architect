@@ -662,18 +662,135 @@ function StatementDayModal({ account, accountName, card, setDay, onSave, onClose
    api/amazon-email and matched on the exact amount (lib/amazonOrders.js) —
    the same join the phone's Review deck uses. Every Amazon charge reads
    "AMAZON MKTPL*…", so this line is what says which one it was. */
-function AmazonOrderLine({ match }) {
+function AmazonOrderLine({ match, onOpen }) {
   const { order } = match;
   const items = itemSummary(order);
-  const url = amazonOrderUrl(order);
   const label = `${match.via === 'refund' ? 'Refund' : 'Order'} ${order.orderId}`;
   return (
-    <div className={styles.amazonOrderLine} title={describeAmazonMatch(match)} data-testid="amazon-order-line">
+    <div
+      className={styles.amazonOrderLine}
+      title="Show what the Amazon emails said"
+      data-testid="amazon-order-line"
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+    >
       <span className="material-symbols-outlined">package_2</span>
-      {url
-        ? <a href={url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}>{label}</a>
-        : <span>{label}</span>}
+      <span className={styles.amazonOrderId}>{label}</span>
       {items && <span className={styles.amazonOrderItems}>· {items}</span>}
+    </div>
+  );
+}
+
+/* What the Amazon emails said about the order a charge was joined to. Only
+   what api/amazon-email keeps is here: order number, totals, shipment and
+   refund amounts, item names. The email itself is never stored, since the
+   collection is readable without signing in. */
+function AmazonOrderModal({ txn, match, charges, onClose }) {
+  // The second click of a double-click lands on the backdrop that the first
+  // one just opened; don't let it close the popup straight away.
+  const settled = useRef(false);
+  useEffect(() => {
+    const t = setTimeout(() => { settled.current = true; }, 400);
+    return () => clearTimeout(t);
+  }, []);
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const { order } = match;
+  const url = amazonOrderUrl(order);
+  const cents = x => Math.round(Math.abs(Number(x)) * 100);
+  const own = cents(txn.amount);
+  // The figure the charge was matched on, so it can be picked out below.
+  const hit = (via, amount) => match.via === via && cents(amount) === own;
+  const byDate = (a, b) => String(a.date || '').localeCompare(String(b.date || ''));
+  const shipments = Object.values(order.shipments || {}).filter(s => Number(s?.total) > 0).sort(byDate);
+  const refunds = Object.values(order.refunds || {}).filter(r => Number(r?.total) > 0).sort(byDate);
+  const items = order.items || [];
+  const figures = [
+    ...(Number(order.total) > 0 ? [{ key: 'total', label: 'Order total', amount: order.total, date: order.orderDate, on: hit('order', order.total) || match.via === 'split' }] : []),
+    ...shipments.map((s, i) => ({ key: `s${i}`, label: 'Shipment', amount: s.total, date: s.date, on: hit('shipment', s.total) })),
+    ...refunds.map((r, i) => ({ key: `r${i}`, label: 'Refund', amount: r.total, date: r.date, on: hit('refund', r.total) })),
+  ];
+  const sectionHead = { fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', margin: '16px 0 6px' };
+  const line = { display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, padding: '5px 0' };
+  return (
+    <div
+      onMouseDown={e => { if (e.target === e.currentTarget && settled.current) onClose(); }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+    >
+      <div role="dialog" aria-modal="true" aria-labelledby="amazon-order-title" data-testid="amazon-order-modal"
+        style={{ background: 'var(--color-surface)', borderRadius: 'var(--radius-xl)', boxShadow: 'var(--shadow-lg)', width: 'min(460px, 100%)', maxHeight: 'calc(100vh - 32px)', overflowY: 'auto', padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="material-symbols-outlined" style={{ color: '#b45309', fontSize: 20 }}>package_2</span>
+          <div id="amazon-order-title" style={{ fontFamily: 'var(--font-headline)', fontSize: 16, fontWeight: 700 }}>
+            Amazon order {order.orderId}
+          </div>
+        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', marginTop: 2 }}>
+          {order.orderDate ? `Ordered ${formatDate(order.orderDate)} · ` : ''}from your Gmail
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 14, padding: '10px 12px', borderRadius: 10, background: 'rgba(180, 83, 9, 0.07)', fontSize: 13, lineHeight: 1.45 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#b45309', marginTop: 1 }}>mark_email_read</span>
+          <span>
+            <strong>{fmt(txn.amount)}</strong> on {formatDate(txn.date)}: {describeAmazonMatch(match).replace(/ \(from Gmail\)$/, '')}.
+          </span>
+        </div>
+
+        <div style={sectionHead}>Items</div>
+        {items.length ? items.map((it, i) => (
+          <div key={i} style={line}>
+            <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{it.name}</span>
+            {Number(it.price) > 0 && <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(it.price)}</span>}
+          </div>
+        )) : (
+          <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>The emails didn't name the items.</div>
+        )}
+
+        {figures.length > 0 && <>
+          <div style={sectionHead}>Amounts in the emails</div>
+          {figures.map(f => (
+            <div key={f.key} style={{ ...line, fontWeight: f.on ? 700 : 400 }} data-matched={f.on ? 'true' : undefined}>
+              <span>{f.label}{f.date ? <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 400 }}> · {formatDate(f.date)}</span> : null}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums', color: f.on ? '#b45309' : undefined }}>
+                {f.label === 'Refund' ? '+' : ''}{fmt(f.amount)}{f.on ? ' ✓' : ''}
+              </span>
+            </div>
+          ))}
+        </>}
+
+        {charges.length > 0 && <>
+          <div style={sectionHead}>Card charges joined to this order</div>
+          {charges.map(c => (
+            <div key={c.transactionId} style={{ ...line, fontWeight: c.transactionId === txn.transactionId ? 700 : 400 }}>
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {formatDate(c.date)} · {c.description}
+              </span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{c.amount >= 0 ? '+' : ''}{fmt(c.amount)}</span>
+            </div>
+          ))}
+        </>}
+
+        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 14, lineHeight: 1.5 }}>
+          Only the order number, amounts and item names are saved from Amazon's emails. The emails themselves stay in Gmail.
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+          {url && (
+            <a href={url} target="_blank" rel="noopener noreferrer"
+              style={{ marginRight: 'auto', alignSelf: 'center', color: 'var(--color-secondary)', fontWeight: 600, fontSize: 13, textDecoration: 'none' }}>
+              View on Amazon ↗
+            </a>
+          )}
+          <button type="button" onClick={onClose}
+            style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid rgba(198, 198, 205, 0.7)', background: 'var(--color-surface)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+            Close
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -693,7 +810,7 @@ function isRowChrome(el) {
 // category edit — which only changes the edited transaction object — re-renders
 // just that one row instead of the whole visible page.
 const TransactionRow = memo(function TransactionRow({
-  t, i, selectedIds, visibleColumns, categoryRules, subcategoryRules, transactionNotes, accountNicknames, editingId, editingSubId, newCategoryText, manageCategoriesMode, renamingCategory, renameText, showHiddenCategories, subSearchText, categoryOptions, hiddenCategoryList, transactions, dropdownRef, subDropdownRef, findMatchingRules, toggleSelect, setEditingRule, setEditingId, setNewCategoryText, setManageCategoriesMode, setRenamingCategory, setRenameText, setShowHiddenCategories, handleCategorySelect, removeCategoryRule, flashSaved, updateTransactionCategory, renameCategory, removeCategory, unhideCategory, setEditingSubId, setSubSearchText, handleSubcategorySelect, removeSubcategoryRule, addSubcategoryRule, updateTransactionDate, updateTransactionNote, setAccountNickname, toggleHideTransaction, splitTag, tagForSplit, untagSplit, onExplainCard, statement, onEditStatement, amazonMatch,
+  t, i, selectedIds, visibleColumns, categoryRules, subcategoryRules, transactionNotes, accountNicknames, editingId, editingSubId, newCategoryText, manageCategoriesMode, renamingCategory, renameText, showHiddenCategories, subSearchText, categoryOptions, hiddenCategoryList, transactions, dropdownRef, subDropdownRef, findMatchingRules, toggleSelect, setEditingRule, setEditingId, setNewCategoryText, setManageCategoriesMode, setRenamingCategory, setRenameText, setShowHiddenCategories, handleCategorySelect, removeCategoryRule, flashSaved, updateTransactionCategory, renameCategory, removeCategory, unhideCategory, setEditingSubId, setSubSearchText, handleSubcategorySelect, removeSubcategoryRule, addSubcategoryRule, updateTransactionDate, updateTransactionNote, setAccountNickname, toggleHideTransaction, splitTag, tagForSplit, untagSplit, onExplainCard, statement, onEditStatement, amazonMatch, onOpenAmazonOrder,
 }) {
   const icon = getCategoryIcon(t.category);
   const color = catColor(t.category || 'Uncategorized');
@@ -750,13 +867,16 @@ const TransactionRow = memo(function TransactionRow({
             <span className="material-symbols-outlined">{icon}</span>
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div className={styles.merchantName}>{t.description}</div>
+            <div
+              className={styles.merchantName}
+              {...(amazonMatch ? { style: { cursor: 'pointer' }, title: 'Show the Amazon order', onClick: () => onOpenAmazonOrder(t) } : {})}
+            >{t.description}</div>
             <div className={styles.merchantSub}>
               {t.fullDescription && t.fullDescription !== t.description
                 ? t.fullDescription.slice(0, 60)
                 : t.category}
             </div>
-            {amazonMatch && <AmazonOrderLine match={amazonMatch} />}
+            {amazonMatch && <AmazonOrderLine match={amazonMatch} onOpen={() => onOpenAmazonOrder(t)} />}
             <div
               style={{ display: 'flex', gap: 3, marginTop: 2, cursor: 'pointer', alignItems: 'center' }}
               onDoubleClick={e => {
@@ -1172,6 +1292,8 @@ const TransactionRow = memo(function TransactionRow({
             title={describeAmazonMatch(amazonMatch)}
             aria-label={describeAmazonMatch(amazonMatch)}
             data-testid="amazon-match-flag"
+            role="button"
+            onClick={() => onOpenAmazonOrder(t)}
           >mark_email_read</span>
         )}
       </td>}
@@ -1898,6 +2020,15 @@ export function TransactionsPage() {
     () => matchAmazonOrders(amazonOrders, transactions),
     [amazonOrders, transactions],
   );
+  const [amazonOrderTxn, setAmazonOrderTxn] = useState(null);
+  // Every card row joined to the open order: a split shipment is two or three.
+  const amazonOrderCharges = useMemo(() => {
+    const order = amazonOrderTxn && amazonMatches.get(amazonOrderTxn.transactionId)?.order;
+    if (!order) return [];
+    return transactions
+      .filter(t => amazonMatches.get(t.transactionId)?.order === order)
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+  }, [amazonOrderTxn, amazonMatches, transactions]);
   const amazonStall = useMemo(
     () => amazonImportStalled(amazonOrders, transactions, amazonMatches),
     [amazonOrders, transactions, amazonMatches],
@@ -3881,6 +4012,7 @@ export function TransactionsPage() {
                     onExplainCard={setCardChoiceTxn}
                     statement={statementLabels.get(statementKey(t))}
                     amazonMatch={amazonMatches.get(t.transactionId)}
+                    onOpenAmazonOrder={setAmazonOrderTxn}
                     onEditStatement={setEditingStatementAcct}
                     editingId={isCatRow ? editingId : null}
                     editingSubId={isSubRow ? editingSubId : null}
@@ -4044,6 +4176,14 @@ export function TransactionsPage() {
       })()}
 
       {/* Edit Rules Dialog */}
+      {amazonOrderTxn && amazonMatches.get(amazonOrderTxn.transactionId) && (
+        <AmazonOrderModal
+          txn={amazonOrderTxn}
+          match={amazonMatches.get(amazonOrderTxn.transactionId)}
+          charges={amazonOrderCharges}
+          onClose={() => setAmazonOrderTxn(null)}
+        />
+      )}
       {editingStatementAcct && (
         <StatementDayModal
           account={editingStatementAcct}
