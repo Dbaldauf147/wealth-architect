@@ -411,6 +411,45 @@
   color: var(--color-text-tertiary);
 }
 
+/* Amazon order joined from Gmail (see AmazonOrderLine) */
+.amazonOrderLine {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: #b45309;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.amazonOrderLine .material-symbols-outlined {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.amazonOrderLine a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+.amazonOrderLine a:hover {
+  text-decoration: underline;
+}
+.amazonOrderItems {
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.amazonMatchFlag {
+  font-size: 15px;
+  margin-left: 5px;
+  vertical-align: -3px;
+  color: #b45309;
+  cursor: help;
+}
+
 /* Category Badge */
 .categoryBadge {
   display: inline-flex;
