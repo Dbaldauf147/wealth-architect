@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isAmazonCharge, matchAmazonOrders, buildItemIndex, suggestFromItems, withItemSuggestions, itemSummary,
-  describeAmazonMatch, amazonOrderUrl,
+  describeAmazonMatch, amazonOrderUrl, amazonImportStalled,
 } from './amazonOrders.js';
 
 const txn = (id, date, amount, description = 'AMAZON MKTPL*AB12CD', extra = {}) => ({
@@ -155,5 +155,35 @@ describe('amazonOrderUrl', () => {
     expect(amazonOrderUrl({ orderId: '113-1234567-7654321' })).toBe('https://www.amazon.com/gp/your-account/order-details?orderID=113-1234567-7654321');
     expect(amazonOrderUrl({ orderId: 'D01-1234567-7654321' })).toMatch(/orderID=D01/);
     expect(amazonOrderUrl({ orderId: '"><script>' })).toBe('');
+  });
+});
+
+describe('amazonImportStalled', () => {
+  const orders = [{ orderId: 'a', updatedAt: '2026-10-14T13:49:04.763Z' }];
+  const today = new Date('2026-10-21T12:00:00Z');
+  const charge = (date, description, id = date + description) => ({ date, description, amount: -20, transactionId: id });
+
+  it('flags Amazon charges that arrived well after the last import', () => {
+    const txns = [charge('10/18/2026', 'Amazon Mktpl*w99'), charge('10/20/2026', 'Amazon.com*i45')];
+    expect(amazonImportStalled(orders, txns, new Map(), today)).toEqual({
+      lastImport: '2026-10-14T13:49:04.763Z', missed: 2, newestCharge: '10/20/2026',
+    });
+  });
+  it('ignores charges that never have an email, and ones already matched', () => {
+    const txns = [
+      charge('10/18/2026', 'Amazon Tips*591'),
+      charge('10/19/2026', 'Amazon Grocery Subscri'),
+      charge('10/20/2026', 'Amazon Prime*ab'),
+      charge('10/20/2026', 'Amazon Mktpl*x', 'joined'),
+    ];
+    expect(amazonImportStalled(orders, txns, new Map([['joined', {}]]), today)).toBeNull();
+  });
+  it('gives a fresh charge a couple of days to be joined', () => {
+    expect(amazonImportStalled(orders, [charge('10/16/2026', 'Amazon Mktpl*q')], new Map(), today)).toBeNull();
+  });
+  it('stays quiet when the import ran recently or never ran', () => {
+    const txns = [charge('10/20/2026', 'Amazon Mktpl*w99')];
+    expect(amazonImportStalled([{ updatedAt: '2026-10-20T10:00:00Z' }], txns, new Map(), today)).toBeNull();
+    expect(amazonImportStalled([], txns, new Map(), today)).toBeNull();
   });
 });
