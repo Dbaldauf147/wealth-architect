@@ -62,7 +62,11 @@ function targetsFor(order) {
     out.push({ order, c: cents(s.total), day: dayNumber(s.date) ?? orderDay, out: true, via: 'shipment' });
   }
   if (!shipments.length && Number(order.total) > 0) {
-    out.push({ order, c: cents(order.total), day: orderDay, out: true, via: order.grocery ? 'grocery' : 'order' });
+    // A grocery order is charged when it is delivered, and the email that
+    // gave its final total is the delivery one. The order itself may have
+    // been placed a week ahead for a booked slot.
+    const day = order.grocery ? dayNumber(order.totalDate) ?? orderDay : orderDay;
+    out.push({ order, c: cents(order.total), day, out: true, via: order.grocery ? 'grocery' : 'order' });
   }
   for (const r of Object.values(order.refunds || {})) {
     if (Number(r?.total) > 0) {
@@ -113,14 +117,16 @@ export function matchAmazonOrders(orders, transactions) {
   // A Whole Foods order is charged its total less the driver tip, and the tip
   // posts on its own a day or so apart as "Amazon Tips*…". The email's tip is
   // the one to take off; failing that, the tip charges near the order say
-  // what it was ($5 most times, now and then more), and none at all is tried
-  // too, for an order with the tip left in.
+  // what it was, and the usual $5 is tried regardless, since the tip often
+  // posts days after the groceries or not before the sheet is read. None at
+  // all is tried too, for an order with the tip left in.
   const tipPool = pool.filter(e => e.out && /amazon\s*tips/i.test(`${e.t.description || ''} ${e.t.fullDescription || ''}`));
   const TIP_REACH = 3;
+  const USUAL_TIP = 500;
   const groceryCandidates = (target) => {
     const tipCents = Number(target.order.tip) > 0
       ? [cents(target.order.tip)]
-      : [...new Set(tipPool.filter(e => inWindow(e, target)).map(e => e.c)), 0];
+      : [...new Set([...tipPool.filter(e => inWindow(e, target)).map(e => e.c), USUAL_TIP, 0])];
     return tipCents.flatMap(tipC => (byCents.get(target.c - tipC) || [])
       .filter(e => e.out && !claimed.has(e.t.transactionId) && inWindow(e, target) && !tipPool.includes(e))
       .map(e => ({ e, tipC })));

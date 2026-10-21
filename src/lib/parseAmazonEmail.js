@@ -43,6 +43,7 @@ const GENERIC_TOTAL = /\btotal\b(?!\s+before)(?!\s+savings)/i;
 // less the driver tip, and the tip posts on its own as "Amazon Tips*…", so the
 // tip is worth reading out. "Tip" alone only counts at the start of a line.
 const GROCERY = /whole\s*foods/i;
+const GROCERY_ITEM = 'Whole Foods groceries';
 const TIP_LABELS = [/\b(?:driver|delivery|courier|shopper)\s+tip\b/i, /^\s*tip\b/im];
 
 // Lines that are the email's furniture rather than something that was bought.
@@ -260,6 +261,9 @@ export function parseAmazonEmailOrders(email) {
     for (const label of TIP_LABELS) if (tip == null) tip = amountAfterLabel(body, label);
     return { grocery: true, tip };
   };
+  // Whole Foods mail names no items at all. One stand-in gives the popup
+  // something to say and the Review deck a word to learn the category from.
+  const groceryItems = (items) => (grocery && !items.length ? [{ name: GROCERY_ITEM, price: null }] : items);
 
   const date = isoDay(email?.date);
   const blocks = orderBlocks(body);
@@ -273,7 +277,7 @@ export function parseAmazonEmailOrders(email) {
     // body lists the items properly it is only ever a worse copy of one of them.
     const listed = bodyItems(body);
     const fromSubject = listed.length ? [] : subjectItems(subject);
-    const items = mergeItems(listed, fromSubject.map(name => ({ name, price: null })));
+    const items = groceryItems(mergeItems(listed, fromSubject.map(name => ({ name, price: null }))));
     return { ok: true, orders: [{ ok: true, kind, orderId: id[1], total: findTotal(body, kind), items, date, ...groceryFacts() }] };
   }
 
@@ -290,7 +294,7 @@ export function parseAmazonEmailOrders(email) {
         if (total == null) total = findTotal(b.text, kind);
         items = mergeItems(items, bodyItems(b.text));
       }
-      return { ok: true, kind, orderId: id, total, items, date, ...groceryFacts() };
+      return { ok: true, kind, orderId: id, total, items: groceryItems(items), date, ...groceryFacts() };
     }),
   };
 }
