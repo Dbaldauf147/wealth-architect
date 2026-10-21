@@ -711,7 +711,8 @@ function AmazonOrderModal({ txn, match, charges, onClose }) {
   const refunds = Object.values(order.refunds || {}).filter(r => Number(r?.total) > 0).sort(byDate);
   const items = order.items || [];
   const figures = [
-    ...(Number(order.total) > 0 ? [{ key: 'total', label: 'Order total', amount: order.total, date: order.orderDate, on: hit('order', order.total) || match.via === 'split' }] : []),
+    ...(Number(order.total) > 0 ? [{ key: 'total', label: 'Order total', amount: order.total, date: order.orderDate, on: hit('order', order.total) || match.via === 'split' || match.via === 'grocery' }] : []),
+    ...(Number(match.tip ?? order.tip) > 0 ? [{ key: 'tip', label: 'Tip (charged separately)', amount: match.tip ?? order.tip, on: match.via === 'tip' }] : []),
     ...shipments.map((s, i) => ({ key: `s${i}`, label: 'Shipment', amount: s.total, date: s.date, on: hit('shipment', s.total) })),
     ...refunds.map((r, i) => ({ key: `r${i}`, label: 'Refund', amount: r.total, date: r.date, on: hit('refund', r.total) })),
   ];

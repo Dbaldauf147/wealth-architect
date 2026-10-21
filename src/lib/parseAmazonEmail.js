@@ -39,6 +39,12 @@ const TOTAL_LABELS = {
 };
 const GENERIC_TOTAL = /\btotal\b(?!\s+before)(?!\s+savings)/i;
 
+// Whole Foods delivery, ordered through Amazon. The card is charged the order
+// less the driver tip, and the tip posts on its own as "Amazon Tips*…", so the
+// tip is worth reading out. "Tip" alone only counts at the start of a line.
+const GROCERY = /whole\s*foods/i;
+const TIP_LABELS = [/\b(?:driver|delivery|courier|shopper)\s+tip\b/i, /^\s*tip\b/im];
+
 // Lines that are the email's furniture rather than something that was bought.
 const NOT_AN_ITEM = /^(?:order|orders|ship|shipped|shipping|deliver|delivered|delivery|arriving|arrives|estimated|total|grand total|subtotal|items?\(s\)|tax|estimated tax|quantity|qty|sold by|condition|view|track|return|refund|payment|hi|hello|thanks|thank you|your|manage|buy again|questions|price|amount|gift)\b/i;
 
@@ -237,10 +243,23 @@ export function parseAmazonEmailOrders(email) {
   const from = String(email?.from || '');
   const body = String(email?.body || '');
 
-  if (from && !/amazon\./i.test(from)) return { ok: false, reason: 'not from Amazon' };
+  if (from && !/amazon\.|wholefoods/i.test(from)) return { ok: false, reason: 'not from Amazon' };
 
-  const kind = kindOf(subject, from);
+  // A Whole Foods email about an order is read as the order whatever its
+  // subject says: the one sent after delivery carries the final total, which
+  // is what the card is charged once weighed items and substitutions settle.
+  // Only the subject or the top of the email: Amazon's ordinary mail can
+  // advertise Whole Foods in its footer.
+  const grocery = GROCERY.test(subject) || GROCERY.test(body.slice(0, 1500));
+  let kind = kindOf(subject, from);
+  if (grocery && kind !== 'refund' && !/cancel/i.test(subject)) kind = 'order';
   if (!kind) return { ok: false, reason: 'not an order, shipment or refund email' };
+  const groceryFacts = () => {
+    if (!grocery) return {};
+    let tip = null;
+    for (const label of TIP_LABELS) if (tip == null) tip = amountAfterLabel(body, label);
+    return { grocery: true, tip };
+  };
 
   const date = isoDay(email?.date);
   const blocks = orderBlocks(body);
@@ -255,7 +274,7 @@ export function parseAmazonEmailOrders(email) {
     const listed = bodyItems(body);
     const fromSubject = listed.length ? [] : subjectItems(subject);
     const items = mergeItems(listed, fromSubject.map(name => ({ name, price: null })));
-    return { ok: true, orders: [{ ok: true, kind, orderId: id[1], total: findTotal(body, kind), items, date }] };
+    return { ok: true, orders: [{ ok: true, kind, orderId: id[1], total: findTotal(body, kind), items, date, ...groceryFacts() }] };
   }
 
   // Several orders. The subject's labels span all of them and can't be shared
@@ -271,7 +290,7 @@ export function parseAmazonEmailOrders(email) {
         if (total == null) total = findTotal(b.text, kind);
         items = mergeItems(items, bodyItems(b.text));
       }
-      return { ok: true, kind, orderId: id, total, items, date };
+      return { ok: true, kind, orderId: id, total, items, date, ...groceryFacts() };
     }),
   };
 }
@@ -309,7 +328,17 @@ export function mergeAmazonOrder(existing, parsed, emailKey) {
   // card is never charged before it — which is the anchor matching wants.
   if (parsed.date && (!next.orderDate || parsed.date < next.orderDate)) next.orderDate = parsed.date;
 
-  if (parsed.kind === 'order' && parsed.total != null) next.total = parsed.total;
+  // A grocery order's emails quote an estimate first and the final charge
+  // after delivery, so the latest one wins; any other order's total is fixed.
+  if (prev.grocery || parsed.grocery) {
+    next.grocery = true;
+    next.totalDate = prev.totalDate ?? null;
+    next.tip = parsed.tip ?? prev.tip ?? null;
+    if (parsed.kind === 'order' && parsed.total != null && (!next.totalDate || !parsed.date || parsed.date >= next.totalDate)) {
+      next.total = parsed.total;
+      next.totalDate = parsed.date || next.totalDate;
+    }
+  } else if (parsed.kind === 'order' && parsed.total != null) next.total = parsed.total;
   if (parsed.kind === 'shipment' && parsed.total != null) {
     next.shipments[emailKey] = { total: parsed.total, date: parsed.date };
   }

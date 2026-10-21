@@ -22,10 +22,33 @@
 
 const ENDPOINT = 'https://wealth-architect-delta.vercel.app/api/amazon-email';
 
-// Amazon's transactional senders. Marketing comes from other addresses and is
-// left alone; the server ignores anything that isn't an order regardless.
-const QUERY = 'from:(auto-confirm@amazon.com OR shipment-tracking@amazon.com OR order-update@amazon.com '
-  + 'OR return@amazon.com OR digital-no-reply@amazon.com OR payments-messages@amazon.com)';
+// Amazon's transactional senders, plus Whole Foods delivery mail by name.
+// The server's copy (GET ?config=1) wins, so a new sender is a deploy rather
+// than a re-paste; this one is only used if that can't be reached. The
+// server ignores anything that isn't an order regardless.
+const QUERY = '{from:(auto-confirm@amazon.com OR shipment-tracking@amazon.com OR order-update@amazon.com '
+  + 'OR return@amazon.com OR digital-no-reply@amazon.com OR payments-messages@amazon.com) '
+  + '(from:(amazon.com OR wholefoodsmarket.com) "whole foods")}';
+const DIAGNOSE_QUERY = 'from:(amazon.com OR wholefoodsmarket.com) "whole foods" newer_than:45d';
+
+let config_ = null;
+function serverConfig_() {
+  if (config_) return config_;
+  config_ = { query: QUERY, diagnose: DIAGNOSE_QUERY };
+  try {
+    const res = UrlFetchApp.fetch(ENDPOINT + '?config=1', {
+      method: 'get', headers: { 'x-ingest-secret': secret_() }, muteHttpExceptions: true,
+    });
+    if (res.getResponseCode() === 200) {
+      const c = JSON.parse(res.getContentText());
+      if (c.query) config_.query = c.query;
+      if (c.diagnose) config_.diagnose = c.diagnose;
+    }
+  } catch (e) {
+    console.log('Using the built-in search: ' + e);
+  }
+  return config_;
+}
 
 const BATCH = 25;
 
@@ -92,7 +115,7 @@ function sync() {
   const last = Number(props.getProperty('LAST_SYNC_MS')) || (Date.now() - 3 * 86400000);
   const since = last - 3600000;
   const startedAt = Date.now();
-  const messages = collect_(QUERY + ' after:' + Math.floor(since / 1000), since, 300);
+  const messages = collect_(serverConfig_().query + ' after:' + Math.floor(since / 1000), since, 300);
   const r = send_(messages);
   // Only moved forward once everything posted, so a failed run is retried.
   props.setProperty('LAST_SYNC_MS', String(startedAt));
@@ -117,7 +140,7 @@ function backfill() {
       return;
     }
     const end = Math.min(cursor + 30 * DAY, startedAt);
-    const q = QUERY + ' after:' + Math.floor(cursor / 1000) + ' before:' + Math.floor(end / 1000);
+    const q = serverConfig_().query + ' after:' + Math.floor(cursor / 1000) + ' before:' + Math.floor(end / 1000);
     const messages = collect_(q, cursor, 500).filter(m => m.getDate().getTime() < end);
     send_(messages);
     total += messages.length;
@@ -131,7 +154,7 @@ function backfill() {
 /** Check the parsing against your real mail. Saves nothing. */
 function dryRun() {
   ensureTrigger_();
-  const threads = GmailApp.search(QUERY, 0, 5);
+  const threads = GmailApp.search(serverConfig_().query, 0, 5);
   const emails = threads.map(t => toPayload_(t.getMessages()[t.getMessages().length - 1]));
   console.log(JSON.stringify(post_(emails, true), null, 2));
 }
@@ -178,6 +201,36 @@ function ensureTrigger_() {
 }
 
 /** Kept for the old setup steps; any run does this now. */
+/**
+ * Show what the server makes of the mail it is asking about (right now:
+ * Whole Foods delivery) — sender, subject, what it read, and each email's
+ * text. Saves nothing. Copy the log into the chat when asked.
+ */
+function diagnose() {
+  ensureTrigger_();
+  const q = serverConfig_().diagnose;
+  const emails = [];
+  for (const thread of GmailApp.search(q, 0, 4)) {
+    for (const msg of thread.getMessages()) if (emails.length < 6) emails.push(toPayload_(msg));
+  }
+  console.log('Searched: ' + q + ' — ' + emails.length + ' emails');
+  if (!emails.length) return;
+  const res = UrlFetchApp.fetch(ENDPOINT + '?dry=1&sample=1', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { 'x-ingest-secret': secret_() },
+    payload: JSON.stringify({ emails }),
+    muteHttpExceptions: true,
+  });
+  if (res.getResponseCode() !== 200) throw new Error('amazon-email returned ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
+  for (const s of JSON.parse(res.getContentText()).samples || []) {
+    console.log([
+      '=== ' + s.from + ' | ' + s.subject,
+      s.ignored ? 'IGNORED: ' + s.ignored : 'READ: ' + JSON.stringify(s.read),
+    ].concat(s.lines.slice(0, 70)).join('\n'));
+  }
+}
+
 function installTrigger() {
   ensureTrigger_();
   console.log('sync() runs every hour.');
