@@ -428,13 +428,14 @@
   font-size: 14px;
   flex-shrink: 0;
 }
-.amazonOrderLine a {
-  color: inherit;
+.amazonOrderLine {
+  cursor: pointer;
+}
+.amazonOrderId {
   font-weight: 600;
-  text-decoration: none;
   flex-shrink: 0;
 }
-.amazonOrderLine a:hover {
+.amazonOrderLine:hover .amazonOrderId {
   text-decoration: underline;
 }
 .amazonOrderItems {
@@ -447,7 +448,7 @@
   margin-left: 5px;
   vertical-align: -3px;
   color: #b45309;
-  cursor: help;
+  cursor: pointer;
 }
 
 /* Category Badge */
