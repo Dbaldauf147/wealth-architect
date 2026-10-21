@@ -13,7 +13,11 @@
  *   2. Run dryRun() and read the log — it shows what the server read out of
  *      your five newest Amazon emails, without saving anything.
  *   3. Run backfill() once to load the last ~18 months.
- *   4. Run installTrigger() once; sync() then runs every hour on its own.
+ *   4. Run sync() once; from then on it runs every hour on its own.
+ *
+ * Every run (sync, backfill, dryRun) makes sure the hourly trigger exists, so
+ * re-pasting this file or skipping a step can't leave sync switched off. If
+ * the Transactions page says the import has stopped, run sync() once.
  */
 
 const ENDPOINT = 'https://wealth-architect-delta.vercel.app/api/amazon-email';
@@ -83,6 +87,7 @@ function send_(messages) {
 
 /** Hourly: anything new since the last successful run, with an hour of overlap. */
 function sync() {
+  ensureTrigger_();
   const props = PropertiesService.getScriptProperties();
   const last = Number(props.getProperty('LAST_SYNC_MS')) || (Date.now() - 3 * 86400000);
   const since = last - 3600000;
@@ -100,6 +105,7 @@ function sync() {
  * off at six minutes — if the log says to, just run it again.
  */
 function backfill() {
+  ensureTrigger_();
   const props = PropertiesService.getScriptProperties();
   const DAY = 86400000;
   const startedAt = Date.now();
@@ -124,6 +130,7 @@ function backfill() {
 
 /** Check the parsing against your real mail. Saves nothing. */
 function dryRun() {
+  ensureTrigger_();
   const threads = GmailApp.search(QUERY, 0, 5);
   const emails = threads.map(t => toPayload_(t.getMessages()[t.getMessages().length - 1]));
   console.log(JSON.stringify(post_(emails, true), null, 2));
@@ -161,10 +168,17 @@ function dryRunMissing() {
   }
 }
 
-function installTrigger() {
-  for (const t of ScriptApp.getProjectTriggers()) {
-    if (t.getHandlerFunction() === 'sync') ScriptApp.deleteTrigger(t);
-  }
+/** The hourly sync trigger, created if it is missing. Cheap enough to run every time. */
+function ensureTrigger_() {
+  const existing = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'sync');
+  if (existing.length === 1) return;
+  for (const t of existing) ScriptApp.deleteTrigger(t);
   ScriptApp.newTrigger('sync').timeBased().everyHours(1).create();
-  console.log('sync() will now run every hour.');
+  console.log('Hourly sync trigger installed.');
+}
+
+/** Kept for the old setup steps; any run does this now. */
+function installTrigger() {
+  ensureTrigger_();
+  console.log('sync() runs every hour.');
 }

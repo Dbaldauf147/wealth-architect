@@ -149,8 +149,13 @@ matters: last year's filed charges are the history.
 3. **In Gmail:** new project at [script.google.com](https://script.google.com),
    paste `scripts/amazon-gmail.gs`, then Project Settings → Script properties →
    `INGEST_SECRET` = the secret from step 1. Run `dryRun` (authorize when
-   asked) and check the log, then `backfill` (re-run if it says it paused),
-   then `installTrigger` once.
+   asked) and check the log, then `backfill` (re-run if it says it paused).
+   Any run installs the hourly `sync` trigger if it's missing.
+
+If the Transactions page shows **"Amazon email import has stopped"** (Amazon
+charges are posting with no order saved since), open the project and run
+`sync` once. It catches up from where it left off and reinstalls the trigger;
+if it fails, the project's Executions page has the error.
 
 ## Development
 

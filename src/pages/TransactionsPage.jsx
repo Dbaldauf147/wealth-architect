@@ -8,7 +8,7 @@ import { findRentCollisions, txnKey } from '../lib/rentDuplicates';
 import { detectCardKey } from '../lib/cardRewards';
 import { statementLookup, statementLabel, ordinal, txnKey as statementKey } from '../lib/statementWindows';
 import { uncatOver20RecentCutoff, isUncatOver20Recent, countUncatOver20Recent } from '../lib/uncategorized';
-import { matchAmazonOrders, describeAmazonMatch, amazonOrderUrl, itemSummary } from '../lib/amazonOrders';
+import { matchAmazonOrders, describeAmazonMatch, amazonOrderUrl, itemSummary, amazonImportStalled } from '../lib/amazonOrders';
 import CardChoiceModal from '../components/CardChoiceModal';
 import styles from './TransactionsPage.module.css';
 
@@ -1392,6 +1392,27 @@ function RentBar({ month, collision, scale, money, showYear }) {
  * that drifted across a month boundary wants moving, and two tenants — or a
  * tenant clearing arrears — is genuinely two payments and must be left alone.
  */
+/* The Gmail import runs as the user's own Apps Script, which Vercel can't see
+   or restart. When its hourly trigger is missing or failing, new Amazon
+   charges just stop getting orders, so say so here, where that shows. */
+function AmazonImportNotice({ stall }) {
+  const last = new Date(stall.lastImport).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return (
+    <div className={styles.amazonImportNotice} role="status" data-testid="amazon-import-notice">
+      <span className="material-symbols-outlined" style={{ fontSize: 17 }}>mail_lock</span>
+      <div>
+        <strong>Amazon email import has stopped.</strong>{' '}
+        No orders have come in from Gmail since {last}, but {stall.missed} Amazon
+        charge{stall.missed === 1 ? ' has' : 's have'} posted since. Open the
+        "Amazon to Wealth Architect" project at{' '}
+        <a href="https://script.google.com/home" target="_blank" rel="noopener noreferrer">script.google.com</a>{' '}
+        and run <code>sync</code> once: it catches up and reinstalls its hourly trigger.
+        If it errors, the project's Executions page says why.
+      </div>
+    </div>
+  );
+}
+
 function RentCollisionNotice({ collisions, onMove, onDismiss }) {
   if (!collisions.length) return null;
 
@@ -1876,6 +1897,10 @@ export function TransactionsPage() {
   const amazonMatches = useMemo(
     () => matchAmazonOrders(amazonOrders, transactions),
     [amazonOrders, transactions],
+  );
+  const amazonStall = useMemo(
+    () => amazonImportStalled(amazonOrders, transactions, amazonMatches),
+    [amazonOrders, transactions, amazonMatches],
   );
   const statementText = useCallback((t) => {
     const l = statementLabels.get(statementKey(t));
@@ -2688,6 +2713,8 @@ export function TransactionsPage() {
           </button>
         </div>
       </div>
+
+      {amazonStall && <AmazonImportNotice stall={amazonStall} />}
 
       <RentCollisionNotice
         collisions={rentCollisions}

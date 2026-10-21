@@ -301,3 +301,40 @@ export function amazonOrderUrl(order) {
     ? `https://www.amazon.com/gp/your-account/order-details?orderID=${id}`
     : '';
 }
+
+// Amazon charges that never come with an order email: grocery tips, the
+// grocery subscription, Prime itself. They say nothing about the import.
+const NO_EMAIL = /amazon\s*tips|subscri|\bprime\b/i;
+
+// A charge posts a day or two after its email arrives, so a charge this close
+// to the last import may simply not have been joined yet.
+const IMPORT_GRACE_DAYS = 2;
+
+/**
+ * Has the Gmail import stopped? The script posts only when there is mail, so
+ * silence alone proves nothing. But Amazon charges landing on the card well
+ * after the last order was saved means mail arrived and was not sent on.
+ *
+ * @returns {null | {lastImport:string, missed:number, newestCharge:string}}
+ *          null when the import looks healthy or has never run.
+ */
+export function amazonImportStalled(orders, transactions, matches, today = new Date()) {
+  let lastImport = '';
+  for (const o of orders || []) if (o?.updatedAt && o.updatedAt > lastImport) lastImport = o.updatedAt;
+  const lastDay = dayNumber(lastImport);
+  if (lastDay == null) return null;
+  if (dayNumber(today.toISOString()) - lastDay <= IMPORT_GRACE_DAYS) return null;
+
+  let missed = 0;
+  let newestDay = -Infinity;
+  let newestCharge = '';
+  for (const t of transactions || []) {
+    if (!(Number(t?.amount) < 0) || !isAmazonCharge(t) || matches?.has(t.transactionId)) continue;
+    if (NO_EMAIL.test(`${t.description || ''} ${t.fullDescription || ''}`)) continue;
+    const day = dayNumber(t.date);
+    if (day == null || day - lastDay <= IMPORT_GRACE_DAYS) continue;
+    missed += 1;
+    if (day > newestDay) { newestDay = day; newestCharge = t.date; }
+  }
+  return missed ? { lastImport, missed, newestCharge } : null;
+}
