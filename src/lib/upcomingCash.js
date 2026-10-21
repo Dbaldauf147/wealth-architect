@@ -250,7 +250,7 @@ function projectBills(bills, today, until) {
  * @returns { start, until, events: [{ date, kind, label, detail, amount, paidFrom, shortBy, balance }],
  *            nextPaycheck, nextCardPayment, totals: { in, out, end }, firstShort }
  */
-export function planUpcomingCash({ cashOnHand, cardPayments = [], paychecks = [], bills = [], today = new Date(), horizonDays = 35 }) {
+export function planUpcomingCash({ cashOnHand, cardPayments = [], paychecks = [], bills = [], commissionPayouts = [], today = new Date(), horizonDays = 35 }) {
   const t0 = startOfDay(today);
   // Calendar days, not 24h steps: a DST change would land 35×24h at 11pm the day before.
   let until = new Date(t0.getFullYear(), t0.getMonth(), t0.getDate() + horizonDays);
@@ -258,11 +258,17 @@ export function planUpcomingCash({ cashOnHand, cardPayments = [], paychecks = []
 
   const events = [];
   for (const p of projectPaychecks(paychecks, today, until)) {
+    // The month-end paycheck carries last month's commission (Prospect
+    // Tracker). Named, not added: the projected amount already averages it in.
+    const ym = `${p.date.getFullYear()}-${String(p.date.getMonth() + 1).padStart(2, '0')}`;
+    const commission = p.slot.lastDay ? commissionPayouts.find(c => c.payMonth === ym) || null : null;
     events.push({
       date: p.date, kind: 'paycheck', amount: p.amount,
       label: `${p.payer} paycheck`,
-      detail: paycheckDetail(p.slot),
+      detail: paycheckDetail(p.slot)
+        + (commission ? `. Includes ${fmt(commission.amount)} commission for ${monthName(commission.earnedMonth)}, before tax` : ''),
       steady: p.slot.steady.same,
+      commission,
     });
   }
   for (const c of cardPayments) {
@@ -339,6 +345,11 @@ export function paycheckDetail(slot) {
     text += `. Left out as a one-off: ${slot.outliers.map(o => `${fmt(o.amount)} on ${short(o.date)}`).join(', ')}`;
   }
   return text;
+}
+
+function monthName(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long' });
 }
 
 function fmtCents(n) {

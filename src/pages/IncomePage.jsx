@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../contexts/DataContext';
 import { computeIncome, monthKeysEnding, monthKeyFor } from '../lib/income';
+import { CommissionsIncomeCard } from '../components/CommissionsIncomeCard';
 import styles from './IncomePage.module.css';
 
 /* Just the income: where it comes from, how regularly, how it's trending.
@@ -243,6 +244,8 @@ export function IncomePage() {
           </table>
         </div>
       </section>
+
+      <CommissionsIncomeCard transactions={transactions} />
 
       <section className={styles.card}>
         <div className={styles.cardHead}>
