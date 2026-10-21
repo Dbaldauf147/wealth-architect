@@ -325,3 +325,36 @@ Order total
     expect(doc).not.toHaveProperty('tip');
   });
 });
+
+describe('Whole Foods mail as it really arrives', () => {
+  const head = (lines) => `Whole Foods Market
+Hi Dan, ${lines}
+Order Details: 111-6962290-1031468
+Delivery Window: Monday, October 19, 2026, 10:00 AM - 11:00 AM (Doorstep Delivery)Delivery Location: SPRINGFIELD, ILGrand total: $98.65
+Take care, Whole Foods Market`;
+  const from = '"Amazon.com" <order-update@amazon.com>';
+  const received = {
+    from,
+    subject: 'Your Whole Foods Market order has been received',
+    date: '2026-10-16T14:00:00.000Z',
+    body: `Whole Foods Market
+Hi Dan, Thank you for shopping with us.
+Order Details: 111-6962290-1031468
+Delivery Window: Monday, October 19, 2026, 10:00 AM - 11:00 AM (Doorstep Delivery)Delivery Location: SPRINGFIELD, ILPayment Authorization: $107.70This may include`,
+  };
+  const out = { from, subject: 'Your Whole Foods Market order is out for delivery.', date: '2026-10-19T13:30:00.000Z', body: head('Your Whole Foods Market order is out for delivery.') };
+  const delivered = { from, subject: 'Your Whole Foods Market order has been delivered, now rate your experience', date: '2026-10-19T15:05:00.000Z', body: head('Your order has been delivered!') };
+
+  it('reads the grand total off the run-together line, and not the authorization', () => {
+    expect(parseAmazonEmail(delivered)).toMatchObject({ kind: 'order', orderId: '111-6962290-1031468', total: 98.65, grocery: true });
+    expect(parseAmazonEmail(received).total).toBeNull();
+  });
+  it('folds the three into one order dated by the delivery', () => {
+    let doc = null;
+    for (const [e, k] of [[delivered, 'm3'], [received, 'm1'], [out, 'm2']]) doc = mergeAmazonOrder(doc, parseAmazonEmail(e), k);
+    expect(doc).toMatchObject({
+      orderDate: '2026-10-16', total: 98.65, totalDate: '2026-10-19', grocery: true,
+      items: [{ name: 'Whole Foods groceries', price: null }],
+    });
+  });
+});

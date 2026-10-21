@@ -221,3 +221,23 @@ describe('Whole Foods orders', () => {
     expect(describeAmazonMatch({ order: o, via: 'tip', tip: 5 })).toMatch(/\$5\.00 delivery tip/);
   });
 });
+
+describe('a Whole Foods slot booked well ahead', () => {
+  it('is matched from the delivery, not from when it was ordered', () => {
+    const o = order('111-6962290-1031468', '2026-10-05', 98.65, ['Whole Foods groceries'], { grocery: true, totalDate: '2026-10-19' });
+    const m = matchAmazonOrders([o], [
+      txn('c', '10/20/2026', -93.65, 'Amazon.com*i45kj1lw3'),
+      txn('t', '10/19/2026', -5, 'Amazon Tips*591uv77q2'),
+    ]);
+    expect(m.get('c')).toMatchObject({ via: 'grocery', tip: 5 });
+    expect(m.get('t')?.via).toBe('tip');
+  });
+});
+
+describe('a Whole Foods charge whose tip has not posted yet', () => {
+  it('is matched at the usual $5 off', () => {
+    const o = order('111-6962290-1031468', '2026-10-17', 98.65, ['Whole Foods groceries'], { grocery: true, totalDate: '2026-10-19' });
+    const m = matchAmazonOrders([o], [txn('c', '10/20/2026', -93.65, 'Amazon.com*i45kj1lw3')]);
+    expect(m.get('c')).toMatchObject({ via: 'grocery', tip: 5 });
+  });
+});
