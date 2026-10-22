@@ -3,6 +3,7 @@ import { doc, onSnapshot, setDoc, updateDoc, collection, query, orderBy, limit }
 import { fetchTransactions, fetchBalances, fetchBalanceHistory, computeAnalytics } from '../utils/sheets';
 import { db } from '../firebase';
 import { pendingApplications } from '../lib/alertMatch';
+import { matchAmazonOrders, applyAmazonCategories } from '../lib/amazonOrders';
 import {
   normalizeDesc,
   txnFallbackKey,
@@ -1180,14 +1181,27 @@ export function DataProvider({ children }) {
     return applySubcategoryRulesToTransactions(withRules, subcategoryRules);
   }, [rawTransactions, categoryRules, subcategoryRules]);
 
+  // Amazon rows filed by their order emails: Whole Foods deliveries under
+  // Groceries, everything else from Amazon under Shopping. The join is over
+  // the few hundred Amazon rows only, and keyed on the rules pass and the
+  // orders, so an override edit doesn't redo it.
+  const amazonMatches = useMemo(
+    () => matchAmazonOrders(amazonOrders, ruledTransactions),
+    [amazonOrders, ruledTransactions],
+  );
+  const orderedTransactions = useMemo(
+    () => applyAmazonCategories(ruledTransactions, amazonMatches, categoryOverrides, subcategoryOverrides),
+    [ruledTransactions, amazonMatches, categoryOverrides, subcategoryOverrides],
+  );
+
   // Layer the per-transaction overrides on top. This is the cheap pass (O(n)
   // map lookups), and it's the only thing that re-runs when the user edits a
   // single category/subcategory/date. Keeping it split from the rule pass is
   // what makes recategorization feel instant. Late-arriving Firestore
   // hydration still re-applies everything automatically via the deps.
   const allTransactions = useMemo(
-    () => applyOverrides(ruledTransactions, categoryOverrides, subcategoryOverrides, dateOverrides),
-    [ruledTransactions, categoryOverrides, subcategoryOverrides, dateOverrides],
+    () => applyOverrides(orderedTransactions, categoryOverrides, subcategoryOverrides, dateOverrides),
+    [orderedTransactions, categoryOverrides, subcategoryOverrides, dateOverrides],
   );
 
   const visibleTransactions = useMemo(

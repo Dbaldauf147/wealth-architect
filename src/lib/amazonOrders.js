@@ -24,6 +24,7 @@
  */
 
 import { dayNumber } from './alertMatch.js';
+import { txnFallbackKey } from './categorize.js';
 
 /** Is this row an Amazon charge or refund? */
 export function isAmazonCharge(t) {
@@ -384,4 +385,52 @@ export function amazonImportStalled(orders, transactions, matches, today = new D
     if (day > newestDay) { newestDay = day; newestCharge = t.date; }
   }
   return missed ? { lastImport, missed, newestCharge } : null;
+}
+
+// The user's own names for these, as already used across their history.
+export const WHOLE_FOODS_CATEGORY = { category: 'Groceries', subcategory: 'Wholefoods' };
+export const AMAZON_CATEGORY = { category: 'Shopping', subcategory: 'Amazon' };
+
+// Marketplace charges are never groceries; "Amazon.com*" can be either, so
+// without an order it is left to the rules. Every Amazon tip is a Whole Foods
+// delivery tip.
+const MARKETPLACE = /amazon\s*mktpl|amzn\s*mktp/i;
+const TIP = /amazon\s*tips/i;
+
+/** Where an Amazon row belongs, from its order if it has one: null when nothing says. */
+export function amazonCategoryFor(t, match) {
+  if (match?.order) return match.order.grocery ? WHOLE_FOODS_CATEGORY : AMAZON_CATEGORY;
+  if (!isAmazonCharge(t)) return null;
+  const desc = `${t.description || ''} ${t.fullDescription || ''}`;
+  if (TIP.test(desc)) return WHOLE_FOODS_CATEGORY;
+  if (MARKETPLACE.test(desc)) return AMAZON_CATEGORY;
+  return null;
+}
+
+/**
+ * File Amazon rows by what their order emails say. Runs after the
+ * description rules, which can only see "Amazon.com*…" and so can't tell
+ * groceries from anything else, and before the per-row overrides, which
+ * still win: a category the user picked by hand stays. Where they set only
+ * the category and it agrees, the subcategory is filled in.
+ *
+ * @param {Array} txns          transactions with rules applied
+ * @param {Map}   matches       from matchAmazonOrders
+ * @param {object} catOverrides  the user's per-row categories (id or fallback key)
+ * @param {object} subOverrides  the user's per-row subcategories
+ */
+export function applyAmazonCategories(txns, matches, catOverrides, subOverrides) {
+  const cat = catOverrides || {};
+  const sub = subOverrides || {};
+  return (txns || []).map(t => {
+    const want = amazonCategoryFor(t, matches?.get(t.transactionId));
+    if (!want) return t;
+    const fb = txnFallbackKey(t);
+    const pinnedCat = (t.transactionId && cat[t.transactionId]) || cat[fb];
+    const pinnedSub = (t.transactionId && sub[t.transactionId]) || sub[fb];
+    const next = { ...t, autoCategory: 'amazon' };
+    if (!pinnedCat) next.category = want.category;
+    if (!pinnedSub && (pinnedCat || want.category) === want.category) next.subcategory = want.subcategory;
+    return next;
+  });
 }
