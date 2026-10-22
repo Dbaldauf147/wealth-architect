@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   isAmazonCharge, matchAmazonOrders, buildItemIndex, suggestFromItems, withItemSuggestions, itemSummary,
-  describeAmazonMatch, amazonOrderUrl, amazonImportStalled,
+  describeAmazonMatch, amazonOrderUrl, amazonImportStalled, applyAmazonCategories,
 } from './amazonOrders.js';
+import { applyOverrides } from './categorize.js';
 
 const txn = (id, date, amount, description = 'AMAZON MKTPL*AB12CD', extra = {}) => ({
   transactionId: id, date, amount, description, ...extra,
@@ -239,5 +240,45 @@ describe('a Whole Foods charge whose tip has not posted yet', () => {
     const o = order('111-6962290-1031468', '2026-10-17', 98.65, ['Whole Foods groceries'], { grocery: true, totalDate: '2026-10-19' });
     const m = matchAmazonOrders([o], [txn('c', '10/20/2026', -93.65, 'Amazon.com*i45kj1lw3')]);
     expect(m.get('c')).toMatchObject({ via: 'grocery', tip: 5 });
+  });
+});
+
+describe('applyAmazonCategories', () => {
+  const wf = order('111-1', '2026-10-17', 98.65, ['Whole Foods groceries'], { grocery: true });
+  const shop = order('112-1', '2026-10-01', 30.45, ['Dish Soap']);
+  const rows = [
+    txn('wf', '10/20/2026', -93.65, 'Amazon.com*i45', { category: 'Misc' }),
+    txn('shop', '10/02/2026', -30.45, 'Amazon.com*aa1', { category: 'Misc' }),
+    txn('tip', '10/19/2026', -5, 'Amazon Tips*591'),
+    txn('mkt', '03/01/2024', -12, 'AMZN Mktp US*2K4', { category: 'Misc' }),
+    txn('dotcom', '03/01/2024', -40, 'Amazon.com*zz9', { category: 'Misc' }),
+    txn('coffee', '10/20/2026', -5, 'STARBUCKS', { category: 'Coffee' }),
+  ];
+  const matches = new Map([['wf', { order: wf, via: 'grocery', tip: 5 }], ['shop', { order: shop, via: 'order' }]]);
+  const by = (list) => Object.fromEntries(list.map(t => [t.transactionId, `${t.category || ''} / ${t.subcategory || ''}`]));
+
+  it('files Whole Foods as groceries and the rest of Amazon as shopping', () => {
+    expect(by(applyAmazonCategories(rows, matches, {}, {}))).toEqual({
+      wf: 'Groceries / Wholefoods',
+      shop: 'Shopping / Amazon',
+      tip: 'Groceries / Wholefoods',
+      mkt: 'Shopping / Amazon',
+      dotcom: 'Misc / ',
+      coffee: 'Coffee / ',
+    });
+  });
+  // As the app runs it: this pass, then the user's overrides on top.
+  const both = (list, cat, sub) => applyOverrides(applyAmazonCategories(list, matches, cat, sub), cat, sub, {});
+
+  it('leaves a category picked by hand, filling the subcategory only where it agrees', () => {
+    const out = by(both(rows, { wf: 'Groceries', shop: 'Gifts & Donations' }, { tip: 'Delivery' }));
+    expect(out.wf).toBe('Groceries / Wholefoods');
+    expect(out.shop).toBe('Gifts & Donations / ');
+    expect(out.tip).toBe('Groceries / Delivery');
+  });
+  it('honours an override stored under the fallback key', () => {
+    const t = rows[0];
+    const out = both([t], { [`${t.date}|${t.description}|${t.amount}`]: 'Gifts & Donations' }, {});
+    expect(`${out[0].category} / ${out[0].subcategory || ''}`).toBe('Gifts & Donations / ');
   });
 });
