@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAmazonEmail, parseAmazonEmailOrders, mergeAmazonOrder, mergeItems } from './parseAmazonEmail.js';
+import { parseAmazonEmail, parseAmazonEmailOrders, mergeAmazonOrder, mergeItems, isGroceryOrder } from './parseAmazonEmail.js';
 
 // The newer "Ordered:" confirmation, as Gmail's getPlainBody() flattens it.
 const ORDERED = {
@@ -289,7 +289,8 @@ Order total: $98.10`,
     from: 'Amazon.com <no-reply@amazon.com>',
     subject: 'Your order has been delivered',
     date: '2026-10-19T20:00:00.000Z',
-    body: `Your Whole Foods Market order was delivered
+    body: `Whole Foods Market
+Your order was delivered
 Order # 113-4444444-5555555
 Tip
 5.00 USD
@@ -356,5 +357,42 @@ Delivery Window: Monday, October 19, 2026, 10:00 AM - 11:00 AM (Doorstep Deliver
       orderDate: '2026-10-16', total: 98.65, totalDate: '2026-10-19', grocery: true,
       items: [{ name: 'Whole Foods groceries', price: null }],
     });
+  });
+});
+
+describe('ordinary Amazon mail that names Whole Foods', () => {
+  const recorder = {
+    from: 'Amazon.com <auto-confirm@amazon.com>',
+    subject: 'Ordered: "Plaud Note AI Voice Recorder..."',
+    date: '2026-03-23T14:00:00.000Z',
+    body: `Amazon.com
+Shop Whole Foods Market on Amazon
+Order # 113-7527954-1374610
+Plaud Note AI Voice Recorder, Voice Recorder w/Case
+Quantity: 1
+173.11 USD
+Grand Total:
+173.11 USD`,
+  };
+  const seeds = {
+    ...recorder,
+    subject: 'Ordered: "365 by Whole Foods Market, Super Seed Blend..."',
+    body: 'Order # 111-0694284-3036221\nGrand Total: $12.99',
+  };
+
+  it('is not read as a grocery order', () => {
+    expect(parseAmazonEmail(recorder)).toMatchObject({ total: 173.11 });
+    expect(parseAmazonEmail(recorder).grocery).toBeUndefined();
+    expect(parseAmazonEmail(seeds).grocery).toBeUndefined();
+  });
+  it('clears the flag the older test left on a stored order', () => {
+    const stored = { orderId: '113-7527954-1374610', grocery: true, items: [{ name: 'Plaud Note AI Voice Recorder', price: 173.11 }], total: 173.11 };
+    expect(isGroceryOrder(stored)).toBe(false);
+    expect(mergeAmazonOrder(stored, parseAmazonEmail(recorder), 'm1').grocery).toBeUndefined();
+  });
+  it('keeps a real Whole Foods order', () => {
+    expect(isGroceryOrder({ grocery: true, items: [{ name: 'Whole Foods groceries' }] })).toBe(true);
+    expect(isGroceryOrder({ grocery: true, items: [] })).toBe(true);
+    expect(isGroceryOrder({ items: [{ name: 'Whole Foods groceries' }] })).toBe(false);
   });
 });

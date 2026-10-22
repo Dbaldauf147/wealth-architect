@@ -42,7 +42,12 @@ const GENERIC_TOTAL = /\btotal\b(?!\s+before)(?!\s+savings)/i;
 // Whole Foods delivery, ordered through Amazon. The card is charged the order
 // less the driver tip, and the tip posts on its own as "Amazon Tips*…", so the
 // tip is worth reading out. "Tip" alone only counts at the start of a line.
-const GROCERY = /whole\s*foods/i;
+// Only Whole Foods' own order mail: its subject says "Whole Foods Market
+// order" and its text opens with the store's name. Ordinary Amazon mail can
+// name Whole Foods near the top too (a banner, a "365 by Whole Foods" item),
+// and reading that as a grocery order filed a voice recorder under Groceries.
+const GROCERY_SUBJECT = /whole\s*foods\s*market\s+order/i;
+const GROCERY_HEAD = /^\s*whole\s*foods\s*market\s*$/i;
 const GROCERY_ITEM = 'Whole Foods groceries';
 const TIP_LABELS = [/\b(?:driver|delivery|courier|shopper)\s+tip\b/i, /^\s*tip\b/im];
 
@@ -249,9 +254,8 @@ export function parseAmazonEmailOrders(email) {
   // A Whole Foods email about an order is read as the order whatever its
   // subject says: the one sent after delivery carries the final total, which
   // is what the card is charged once weighed items and substitutions settle.
-  // Only the subject or the top of the email: Amazon's ordinary mail can
-  // advertise Whole Foods in its footer.
-  const grocery = GROCERY.test(subject) || GROCERY.test(body.slice(0, 1500));
+  const firstLine = (stripLinks(body).split(/\r?\n/).find(l => l.trim()) || '');
+  const grocery = GROCERY_SUBJECT.test(subject) || GROCERY_HEAD.test(firstLine);
   let kind = kindOf(subject, from);
   if (grocery && kind !== 'refund' && !/cancel/i.test(subject)) kind = 'order';
   if (!kind) return { ok: false, reason: 'not an order, shipment or refund email' };
@@ -299,6 +303,15 @@ export function parseAmazonEmailOrders(email) {
   };
 }
 
+/**
+ * Is this a Whole Foods delivery? Whole Foods mail never names a product, so
+ * an order that lists real items is an ordinary Amazon order whatever its
+ * flag says: orders saved before the detection was tightened carry the flag.
+ */
+export function isGroceryOrder(order) {
+  return !!order?.grocery && (order.items || []).every(i => i?.name === GROCERY_ITEM);
+}
+
 /** The first order an email is about — see parseAmazonEmailOrders for all of them. */
 export function parseAmazonEmail(email) {
   const r = parseAmazonEmailOrders(email);
@@ -334,7 +347,9 @@ export function mergeAmazonOrder(existing, parsed, emailKey) {
 
   // A grocery order's emails quote an estimate first and the final charge
   // after delivery, so the latest one wins; any other order's total is fixed.
-  if (prev.grocery || parsed.grocery) {
+  // A stored order flagged grocery that lists real products was flagged by
+  // the older, looser test; the next email about it puts that right.
+  if (parsed.grocery || (prev.grocery && isGroceryOrder({ grocery: true, items: next.items }))) {
     next.grocery = true;
     next.totalDate = prev.totalDate ?? null;
     next.tip = parsed.tip ?? prev.tip ?? null;
