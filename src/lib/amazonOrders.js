@@ -25,6 +25,7 @@
 
 import { dayNumber } from './alertMatch.js';
 import { txnFallbackKey } from './categorize.js';
+import { isGroceryOrder } from './parseAmazonEmail.js';
 
 /** Is this row an Amazon charge or refund? */
 export function isAmazonCharge(t) {
@@ -66,8 +67,9 @@ function targetsFor(order) {
     // A grocery order is charged when it is delivered, and the email that
     // gave its final total is the delivery one. The order itself may have
     // been placed a week ahead for a booked slot.
-    const day = order.grocery ? dayNumber(order.totalDate) ?? orderDay : orderDay;
-    out.push({ order, c: cents(order.total), day, out: true, via: order.grocery ? 'grocery' : 'order' });
+    const grocery = isGroceryOrder(order);
+    const day = grocery ? dayNumber(order.totalDate) ?? orderDay : orderDay;
+    out.push({ order, c: cents(order.total), day, out: true, via: grocery ? 'grocery' : 'order' });
   }
   for (const r of Object.values(order.refunds || {})) {
     if (Number(r?.total) > 0) {
@@ -399,7 +401,7 @@ const TIP = /amazon\s*tips/i;
 
 /** Where an Amazon row belongs, from its order if it has one: null when nothing says. */
 export function amazonCategoryFor(t, match) {
-  if (match?.order) return match.order.grocery ? WHOLE_FOODS_CATEGORY : AMAZON_CATEGORY;
+  if (match?.order) return isGroceryOrder(match.order) ? WHOLE_FOODS_CATEGORY : AMAZON_CATEGORY;
   if (!isAmazonCharge(t)) return null;
   const desc = `${t.description || ''} ${t.fullDescription || ''}`;
   if (TIP.test(desc)) return WHOLE_FOODS_CATEGORY;

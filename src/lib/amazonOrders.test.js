@@ -190,7 +190,7 @@ describe('amazonImportStalled', () => {
 });
 
 describe('Whole Foods orders', () => {
-  const wf = (total, extra = {}) => order('113-4444444-5555555', '2026-10-18', total, ['Groceries'], { grocery: true, ...extra });
+  const wf = (total, extra = {}) => order('113-4444444-5555555', '2026-10-18', total, ['Whole Foods groceries'], { grocery: true, ...extra });
   const charge = (id, date, amount) => txn(id, date, amount, 'Amazon.com*i45kj1lw3');
   const tip = (id, date, amount = -5) => txn(id, date, amount, 'Amazon Tips*591uv77q2');
 
@@ -280,5 +280,15 @@ describe('applyAmazonCategories', () => {
     const t = rows[0];
     const out = both([t], { [`${t.date}|${t.description}|${t.amount}`]: 'Gifts & Donations' }, {});
     expect(`${out[0].category} / ${out[0].subcategory || ''}`).toBe('Gifts & Donations / ');
+  });
+});
+
+describe('an order flagged grocery by the older, looser test', () => {
+  it('is matched and filed as the ordinary order it is', () => {
+    const o = order('113-7527954-1374610', '2026-03-23', 173.11, ['Plaud Note AI Voice Recorder'], { grocery: true, totalDate: '2026-03-23' });
+    const rows = [txn('r', '3/24/2026', -173.11, 'Amazon Mktpl*b51sk0tl1', { category: 'Misc' })];
+    const m = matchAmazonOrders([o], rows);
+    expect(m.get('r')?.via).toBe('order');
+    expect(applyAmazonCategories(rows, m, {}, {})[0]).toMatchObject({ category: 'Shopping', subcategory: 'Amazon' });
   });
 });
