@@ -154,3 +154,36 @@ describe('Card Promotions section', () => {
     expect(rowText(html, 'Priority Pass Select')).toContain('Fully used');
   });
 });
+
+describe('month-to-date movers', () => {
+  const trends = {
+    monthLabel: 'October 2026',
+    mtdRange: { start: new Date(2026, 9, 1).toISOString(), end: new Date(2026, 9, 26, 23, 59, 59).toISOString() },
+    priorMtdRange: { start: new Date(2026, 8, 1).toISOString(), end: new Date(2026, 8, 26, 23, 59, 59).toISOString() },
+    mtdTotal: 4294.28, priorMtdTotal: 2989.74, mtdDelta: 1304.54, mtdPct: 43.6,
+    topMovers: [
+      { name: 'Travel', current: 1288.15, prior: 102, delta: 1186.15, pct: 1163 },
+      { name: 'Restaurants', current: 517.85, prior: 1145.51, delta: -627.66, pct: -55 },
+      { name: 'Gifts & Donations', current: 407, prior: 0, delta: 407, pct: null },
+    ],
+  };
+  const html = render('monthlyTrends', { monthlyTrends: trends });
+  const plain = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+  it('says in words which windows are compared and which way the total moved', () => {
+    expect(plain).toContain('$1,304.54 more (+43.6%) than by this point in September');
+    expect(plain).toContain('Oct 1–26 $4,294.28');
+    expect(plain).toContain('Sep 1–26 $2,989.74');
+  });
+
+  it('shows each mover as a signed change with last month → this month', () => {
+    expect(plain).toContain('Travel +$1,186.15 $102.00 → $1,288.15');
+    expect(plain).toContain('Restaurants −$627.66 $1,145.51 → $517.85');
+    expect(plain).toContain('Gifts &amp; Donations +$407.00 new this month');
+  });
+
+  it('scales bars to the largest change and puts decreases on the left', () => {
+    expect(html).toMatch(/background:#b91c1c;height:12px;width:100%/);
+    expect(html).toMatch(/background:#16a34a;height:12px;width:53%;border-radius:3px;margin-left:auto;/);
+  });
+});
