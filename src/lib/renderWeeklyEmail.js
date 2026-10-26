@@ -562,24 +562,70 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
 
   parts.monthlyTrends = (monthlyTrends && (monthlyTrends.mtdTotal > 0 || monthlyTrends.priorMtdTotal > 0)) ? (() => {
     const mt = monthlyTrends;
-    const headlineColor = mt.mtdDelta >= 0 ? '#b91c1c' : '#16a34a';
+    const UP = '#b91c1c';
+    const DOWN = '#16a34a';
+    const up = mt.mtdDelta >= 0;
+    const headlineColor = up ? UP : DOWN;
+
+    // "Oct 1–26" / "Sep 1–26": the two windows being compared, spelled out so
+    // the reader knows this is like-for-like and not a full month vs. a partial one.
+    const span = r => {
+      const s = r && emailDate(r.start);
+      const e = r && emailDate(r.end);
+      if (!s || !e) return '';
+      return `${s.toLocaleDateString('en-US', { month: 'short' })} ${s.getDate()}–${e.getDate()}`;
+    };
+    const curSpan = span(mt.mtdRange) || 'This month';
+    const priorSpan = span(mt.priorMtdRange) || 'Last month';
+    const priorMonthName = mt.priorMtdRange && emailDate(mt.priorMtdRange.start)
+      ? emailDate(mt.priorMtdRange.start).toLocaleDateString('en-US', { month: 'long' })
+      : 'last month';
+
     const headlineDelta = mt.mtdPct == null
       ? `${money(mt.mtdTotal)} so far this month (no prior data)`
-      : `${mt.mtdDelta >= 0 ? '▲' : '▼'} ${money(Math.abs(mt.mtdDelta))} (${mt.mtdPct >= 0 ? '+' : ''}${mt.mtdPct.toFixed(1)}%) vs. same days last month`;
+      : `${up ? '▲' : '▼'} ${money(Math.abs(mt.mtdDelta))} ${up ? 'more' : 'less'} (${mt.mtdPct >= 0 ? '+' : ''}${mt.mtdPct.toFixed(1)}%) than by this point in ${escapeHtml(priorMonthName)}`;
 
+    // Two bars on one scale: this month so far vs. the same days last month.
+    const totalMax = Math.max(mt.mtdTotal, mt.priorMtdTotal, 1);
+    const totalBar = (label, amount, color, sub) => `
+          <tr>
+            <td style="padding:4px 12px 4px 0;font-size:12px;color:#475569;white-space:nowrap;width:1%;">${escapeHtml(label)}</td>
+            <td style="padding:4px 0;">
+              <div style="background:#f1f5f9;border-radius:4px;height:14px;overflow:hidden;">
+                <div style="background:${color};height:14px;width:${Math.max(2, Math.round((amount / totalMax) * 100))}%;border-radius:4px;"></div>
+              </div>
+            </td>
+            <td style="padding:4px 0 4px 12px;font-size:13px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;width:1%;color:${sub ? '#64748b' : '#111'};">${sub ? '' : '<strong>'}${money(amount)}${sub ? '' : '</strong>'}</td>
+          </tr>`;
+    const totalsTable = mt.priorMtdTotal > 0 ? `
+          <table role="presentation" width="100%" style="border-collapse:collapse;margin-top:12px;">
+            ${totalBar(curSpan, mt.mtdTotal, '#0058be', false)}
+            ${totalBar(priorSpan, mt.priorMtdTotal, '#cbd5e1', true)}
+          </table>` : '';
+
+    // Diverging bars: each category's change in dollars, drawn from a centre
+    // line — left (green) means it cost less than the same days last month,
+    // right (red) means it cost more. Bar length is the size of the change, so
+    // the categories that drove the headline number stand out at a glance.
+    const moverMax = Math.max(...mt.topMovers.map(m => Math.abs(m.delta)), 1);
     const moverRows = mt.topMovers.map(m => {
-      const up = m.delta >= 0;
-      const arrow = up ? '▲' : '▼';
-      const color = up ? '#b91c1c' : '#16a34a';
-      const pctStr = m.pct == null
-        ? '<span style="color:#64748b;">new this month</span>'
-        : `<span style="color:#64748b;">(${m.pct >= 0 ? '+' : ''}${m.pct.toFixed(0)}%)</span>`;
+      const isUp = m.delta >= 0;
+      const color = isUp ? UP : DOWN;
+      const w = Math.max(3, Math.round((Math.abs(m.delta) / moverMax) * 100));
+      const bar = `<div style="background:${color};height:12px;width:${w}%;border-radius:3px;${isUp ? '' : 'margin-left:auto;'}"></div>`;
+      const change = `<span style="color:${color};font-weight:600;white-space:nowrap;">${isUp ? '+' : '−'}${money(Math.abs(m.delta))}</span>`;
+      const note = m.pct == null
+        ? 'new this month'
+        : m.current === 0
+          ? `nothing yet vs. ${money(m.prior)}`
+          : `${money(m.prior)} → ${money(m.current)}`;
       return `
           <tr>
-            <td style="padding:6px 0;font-size:13px;color:#111;">${escapeHtml(m.name)}</td>
-            <td style="padding:6px 8px;font-size:12px;color:${color};white-space:nowrap;">${arrow} ${money(Math.abs(m.delta))}</td>
-            <td style="padding:6px 0;font-size:12px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;">
-              <strong style="color:#111;">${money(m.current)}</strong> ${pctStr}
+            <td style="padding:7px 10px 7px 0;font-size:13px;color:#111;">${escapeHtml(m.name)}</td>
+            <td style="padding:7px 0;width:20%;border-right:1px solid #94a3b8;">${isUp ? '' : bar}</td>
+            <td style="padding:7px 0;width:20%;">${isUp ? bar : ''}</td>
+            <td style="padding:7px 0 7px 12px;font-size:12px;text-align:right;font-variant-numeric:tabular-nums;">
+              ${change}<div style="font-size:11px;color:#64748b;margin-top:2px;">${note}</div>
             </td>
           </tr>`;
     }).join('');
@@ -591,9 +637,17 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
           <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:8px;">${escapeHtml(mt.monthLabel)} — Month-to-Date</div>
           <div style="font-size:24px;font-weight:700;color:#111;letter-spacing:-0.01em;line-height:1;">${money(mt.mtdTotal)}</div>
           <div style="font-size:12px;color:${headlineColor};margin-top:6px;">${headlineDelta}</div>
+          ${totalsTable}
           ${mt.topMovers.length ? `
-          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin:14px 0 4px;">Biggest Movers</div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin:18px 0 2px;">What Changed Most</div>
+          <div style="font-size:12px;color:#64748b;margin-bottom:6px;">Each bar is how much a category moved compared with ${escapeHtml(priorSpan)}.</div>
           <table role="presentation" width="100%" style="border-collapse:collapse;">
+            <tr>
+              <td></td>
+              <td style="padding:0 6px 4px 0;font-size:10px;font-weight:600;color:${DOWN};text-align:right;text-transform:uppercase;letter-spacing:0.06em;">◀ Spent less</td>
+              <td style="padding:0 0 4px 6px;font-size:10px;font-weight:600;color:${UP};text-transform:uppercase;letter-spacing:0.06em;">Spent more ▶</td>
+              <td style="padding:0 0 4px 12px;font-size:10px;color:#94a3b8;text-align:right;">last month → this month</td>
+            </tr>
             ${moverRows}
           </table>` : ''}
         </div>
