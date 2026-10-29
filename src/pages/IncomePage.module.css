@@ -180,6 +180,16 @@
   border-radius: 3px;
 }
 
+.legend .legendExpected {
+  background: transparent;
+  border: 1.5px dashed var(--color-text-muted);
+}
+
+.tooltipSub {
+  padding-left: 16px;
+  color: var(--color-text-tertiary);
+}
+
 .legend .legendTick {
   height: 2px;
   width: 14px;
@@ -257,7 +267,7 @@
 
 .tooltip {
   position: absolute;
-  width: 230px;
+  width: 250px;
   padding: 10px 12px;
   border-radius: var(--radius-md, 8px);
   background: var(--color-surface);

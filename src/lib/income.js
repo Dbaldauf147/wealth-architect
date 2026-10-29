@@ -11,17 +11,27 @@
    credits in spending categories. Those are reported separately here as
    "refunds & credits", and the two together reconcile to Cash Flow's Income.
 
+   Payroll deposits are also split into base salary and commission: the
+   commission arrives inside the month-end paycheck, taxed, so it's whatever
+   a paycheck carries above the typical plain one (splitPaychecks).
+
    Months are bucketed with cashFlowMonthKey, so rent received at the end of a
    month lands on the month it pays for, exactly as on Cash Flow.
 
    Pure: no React, no DOM. */
 
 import { cashFlowMonthKey } from './cashflowExport.js';
+import { isPayroll } from './commissions.js';
 
 const DAY = 86400000;
 const DEFAULT_INCOME = ['paycheck', 'income', 'tax refund/payment'];
 const MOVING = new Set(['transfer', 'credit card payment', 'credit card payments', 'investments', 'retirement']);
 const round2 = n => Math.round(n * 100) / 100;
+// A paycheck this little over base is payroll noise, not commission.
+const NOISE = 50;
+// Share of a pre-tax commission that reaches the account, until the ledger
+// has paychecks to measure it from.
+export const DEFAULT_TAKE_HOME = 0.6;
 const startOfDay = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
 function median(xs) {
@@ -76,6 +86,81 @@ export function payerKey(description) {
   return words.slice(0, 3).join(' ') || payerName(description).toLowerCase();
 }
 
+/** Payroll deposits split into base salary and what each carries on top —
+ *  commission, mostly, which arrives inside the paycheck rather than as its
+ *  own deposit. Base is the typical plain paycheck: the median of the last
+ *  three mid-month deposits (paid on or before the 20th, which carry no
+ *  commission) up to that date, so a raise moves it within a couple of months
+ *  and one mid-month bonus doesn't.
+ *  rows: [{ t, date, amount }] → oldest first, [{ t, date, key, amount, base, commission, typical }] */
+export function splitPaychecks(rows) {
+  const mids = [];
+  return [...rows].sort((a, b) => a.date - b.date).map(r => {
+    if (r.date.getDate() <= 20) mids.push(r.amount);
+    const typical = mids.length ? median(mids.slice(-3)) : r.amount;
+    let base = Math.min(r.amount, typical);
+    if (r.amount - base < NOISE) base = r.amount;
+    return { t: r.t, date: r.date, key: r.key || monthKeyFor(r.date), amount: r.amount, base: round2(base), commission: round2(r.amount - base), typical: round2(typical) };
+  });
+}
+
+/** How much of a pre-tax commission lands in the account: what the month-end
+ *  paychecks carried above base, over what the tracker says they paid, across
+ *  the last `months` pay months that have both. null without any. */
+export function commissionTakeHome(paychecks, payouts, today = new Date(), months = 12) {
+  const since = monthKeysEnding(monthKeyFor(today), months + 1)[0];
+  let carried = 0;
+  let preTax = 0;
+  for (const p of payouts || []) {
+    if (p.payMonth < since || !(p.amount > 0)) continue;
+    const got = (paychecks || []).filter(c => c.key === p.payMonth).reduce((s, c) => s + c.commission, 0);
+    if (!got) continue;
+    carried += got;
+    preTax += p.amount;
+  }
+  if (!preTax) return null;
+  return Math.min(0.95, Math.max(0.3, carried / preTax));
+}
+
+/**
+ * What's still to come from payroll, this month and the next `ahead`: base
+ * salary for each paycheck not yet in (mid-month and month-end), and the
+ * commission each month-end paycheck should carry, after tax.
+ * @param paychecks  splitPaychecks output
+ * @param payouts    commission still to be paid (lib/commissions expectedPayouts)
+ * @returns { months: [{ key, paychecks, base, commission, commissionPreTax, projected }], upcoming }
+ *          upcoming = the payouts not yet paid, with `takeHome` on each
+ */
+export function forecastPayroll({ paychecks, payouts, takeHome, today = new Date(), ahead = 6 }) {
+  const nowKey = monthKeyFor(today);
+  const rate = takeHome ?? DEFAULT_TAKE_HOME;
+  const thisMonth = (paychecks || []).filter(p => p.key === nowKey);
+  const endIn = thisMonth.some(p => p.date.getDate() > 20);
+  const midIn = thisMonth.some(p => p.date.getDate() <= 20);
+  const upcoming = (payouts || [])
+    .filter(p => p.payMonth > nowKey || (p.payMonth === nowKey && !endIn))
+    .map(p => ({ ...p, takeHome: round2(p.amount * rate) }));
+  const last = paychecks?.length ? paychecks[paychecks.length - 1] : null;
+  // No payroll in the last two months: the job's gone, or never was.
+  const employed = last && last.key >= monthKeysEnding(nowKey, 3)[0];
+  const base = employed ? last.typical : 0;
+  const [y, m] = nowKey.split('-').map(Number);
+  const endKey = `${y + Math.floor((m - 1 + ahead) / 12)}-${String(((m - 1 + ahead) % 12) + 1).padStart(2, '0')}`;
+  const months = monthKeysEnding(endKey, ahead + 1).map(key => {
+    const slots = key === nowKey ? (midIn ? 0 : 1) + (endIn ? 0 : 1) : 2;
+    const payout = upcoming.find(p => p.payMonth === key) || null;
+    return {
+      key,
+      paychecks: employed ? slots : 0,
+      base: round2(employed ? slots * base : 0),
+      commission: payout ? payout.takeHome : 0,
+      commissionPreTax: payout ? payout.amount : 0,
+      projected: !!payout?.projected,
+    };
+  });
+  return { months, upcoming };
+}
+
 /** How often a payer pays, from the gaps between deposits. */
 export function cadenceOf(dates) {
   if (dates.length < 3) return null;
@@ -120,6 +205,7 @@ export function computeIncome({ transactions, incomeCategories, monthKeys, today
   let priorTotal = 0;
   const yearAgo = {};  // monthKey (shifted +12) -> total, for same-month-last-year
   const allIncomeByMonth = {};
+  const payroll = [];
   for (const t of transactions || []) {
     const amount = Number(t.amount);
     if (!(amount > 0) || !t.date) continue;
@@ -131,6 +217,8 @@ export function computeIncome({ transactions, incomeCategories, monthKeys, today
     if (isIncome) {
       allIncomeByMonth[key] = (allIncomeByMonth[key] || 0) + amount;
       if (inPrior.has(key)) priorTotal += amount;
+      const date = new Date(t.date);
+      if (isPayroll(t) && !isNaN(date)) payroll.push({ t, date, key, amount });
     }
     if (!inWindow.has(key)) continue;
     const date = new Date(t.date);
@@ -142,6 +230,9 @@ export function computeIncome({ transactions, incomeCategories, monthKeys, today
     const [y, m] = k.split('-').map(Number);
     yearAgo[k] = round2(allIncomeByMonth[`${y - 1}-${String(m).padStart(2, '0')}`] || 0);
   }
+
+  const paychecks = splitPaychecks(payroll);
+  const splitOf = new Map(paychecks.map(p => [p.t, p]));
 
   // Sources: category › subcategory.
   const sourceOf = r => {
@@ -158,10 +249,22 @@ export function computeIncome({ transactions, incomeCategories, monthKeys, today
     for (const r of rows) bySource[sourceOf(r)] = round2((bySource[sourceOf(r)] || 0) + r.amount);
     const creditTotal = round2(credits.filter(r => r.key === key).reduce((s, r) => s + r.amount, 0));
     const total = round2(rows.reduce((s, r) => s + r.amount, 0));
+    // Base salary, commission, and everything else (by source).
+    const parts = { base: 0, commission: 0, other: 0 };
+    const otherBySource = {};
+    for (const r of rows) {
+      const p = splitOf.get(r.t);
+      if (p) { parts.base += p.base; parts.commission += p.commission; continue; }
+      parts.other += r.amount;
+      otherBySource[sourceOf(r)] = round2((otherBySource[sourceOf(r)] || 0) + r.amount);
+    }
+    for (const k of Object.keys(parts)) parts[k] = round2(parts[k]);
     return {
       key,
       total,
       bySource,
+      parts,
+      otherBySource,
       credits: creditTotal,
       cashFlowIncome: round2(total + creditTotal),
       lastYear: yearAgo[key],
@@ -266,5 +369,6 @@ export function computeIncome({ transactions, incomeCategories, monthKeys, today
       usingDefaults: !chosen.length,
     },
     current,
+    paychecks,
   };
 }
