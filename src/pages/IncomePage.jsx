@@ -446,7 +446,7 @@ function MonthlyChart({ months, forecast }) {
               <div key={p.key}><i style={{ background: p.color }} />{p.label}<b>{money(b.parts[p.key])}</b></div>
             ))}
             {others.slice(0, 3).map(([src, v]) => (
-              <div key={src} className={styles.tooltipSub}>{src}<b>{money(v)}</b></div>
+              <div key={src} className={styles.tooltipSub}>{src}<b>{amt(v)}</b></div>
             ))}
             {others.length > 3 && <div className={styles.tooltipSub}>and {others.length - 3} more</div>}
             {!b.future && <div className={styles.tooltipTotal}>{b.partial ? 'Received' : 'Total'}<b>{money(b.total)}</b></div>}
