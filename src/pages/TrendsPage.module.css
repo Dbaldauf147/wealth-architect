@@ -188,6 +188,23 @@
   color: var(--color-text-primary);
 }
 
+.catLink {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  text-decoration: underline dotted var(--color-text-tertiary);
+  text-underline-offset: 3px;
+}
+
+.catLink:hover {
+  color: #2a78d6;
+  text-decoration-color: currentColor;
+}
+
 .amountMain {
   font-family: var(--font-headline);
   font-weight: 700;

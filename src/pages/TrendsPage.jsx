@@ -4,6 +4,8 @@ import { buildWedgeBands, axisTicks, restackBands, OTHER_LABEL } from '../lib/we
 import { monthLabelShort, monthLabel } from '../lib/netWorthSnapshot';
 import { absorbedStepUp, MAX_AGE, PRE_LOOKBACK } from '../lib/levelShift';
 import { VendorAlerts } from '../components/VendorAlerts';
+import { CategoryDrilldownModal } from '../components/CategoryDrilldownModal';
+import { isTrendSpend, trendMonthKey } from '../lib/categoryDrilldown';
 import styles from './TrendsPage.module.css';
 
 function fmt(n) {
@@ -227,6 +229,8 @@ export function TrendsPage() {
   const [windowId, setWindowId] = useState('3v3');
   const [flaggedOnly, setFlaggedOnly] = useState(false);
   const [sort, setSort] = useState({ col: 'deltaAbs', dir: 'desc' });
+  // The category whose month-by-month drill-down is open, if any.
+  const [drillCat, setDrillCat] = useState(null);
   // The chart is a view preference, not account data — it stays in this
   // browser rather than going through the Firestore config everything else
   // syncs with. Remembered so the toggle survives a reload.
@@ -262,14 +266,11 @@ export function TrendsPage() {
     const byCatMonth = new Map();
     const monthSet = new Set();
     for (const t of transactions) {
-      if (!t.date) continue;
-      const amt = Number(t.amount) || 0;
-      if (amt >= 0) continue; // expense-only
-      const catLower = (t.category || '').toLowerCase();
-      if (catLower === 'transfer' || catLower === 'credit card payments' || catLower === 'credit card payment') continue;
-      const d = new Date(t.date);
-      if (isNaN(d)) continue;
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      // Expense-only, and never money moving between your own accounts.
+      if (!isTrendSpend(t)) continue;
+      const amt = Number(t.amount);
+      const key = trendMonthKey(t);
+      if (!key) continue;
       monthSet.add(key);
       const cat = t.category || 'Uncategorized';
       if (!byCatMonth.has(cat)) byCatMonth.set(cat, new Map());
@@ -446,7 +447,7 @@ export function TrendsPage() {
               {monthLabelShort(data.months[0])} – {monthLabelShort(data.months[data.months.length - 1])}
               {' · '}
               {hiddenCount ? `${wedge.bands.length - hiddenCount} of ${wedge.bands.length} shown` : 'every category'}, stacked
-              {' · '}hover a month for the breakdown · click a category below to toggle it
+              {' · '}hover a month for the breakdown · click a category below to toggle it, or one in the table for its history
             </div>
           </div>
           {shownWedge.bands.length > 0
@@ -564,7 +565,14 @@ export function TrendsPage() {
                     </td>
                     <td>
                       <div className={styles.catName}>
-                        {r.cat}
+                        <button
+                          type="button"
+                          className={styles.catLink}
+                          onClick={() => setDrillCat(r.cat)}
+                          title={`${r.cat}: month by month, its share of spending, and the places behind it`}
+                        >
+                          {r.cat}
+                        </button>
                         {r.step && (
                           <span
                             className={styles.stepChip}
@@ -597,6 +605,15 @@ export function TrendsPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {drillCat && (
+        <CategoryDrilldownModal
+          category={drillCat}
+          transactions={transactions}
+          months={data.months}
+          onClose={() => setDrillCat(null)}
+        />
       )}
     </div>
   );
