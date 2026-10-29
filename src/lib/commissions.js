@@ -165,12 +165,57 @@ export function payouts(commissions) {
     });
 }
 
+/**
+ * Commission still to be paid, by the paycheck it arrives in, soonest first —
+ * what the tracker already records for a month not yet paid, plus a
+ * projection for each live commission: every month after the last one
+ * recorded, up to its Comm End, at the amount last recorded (a recurring
+ * contract runs steady; the first month often carries catch-up). A row whose
+ * last entry is more than `staleMonths` old has stopped, whatever its window.
+ * [{ payMonth, payDate, earnedMonth, amount, projected, rows: [{ account, project, amount, projected }] }]
+ */
+export function expectedPayouts(commissions, today = new Date(), { staleMonths = 4, aheadMonths = 12 } = {}) {
+  const nowIdx = ymIndex(today.getFullYear(), today.getMonth());
+  const idxOf = ym => { const [y, m] = ym.split('-').map(Number); return ymIndex(y, m - 1); };
+  const keyOf = i => ymKey(Math.floor(i / 12), i % 12);
+  const byMonth = new Map();
+  const add = (earned, c, amount, projected) => {
+    if (idxOf(earned) + 1 < nowIdx) return;   // its paycheck has been and gone
+    if (!byMonth.has(earned)) byMonth.set(earned, []);
+    byMonth.get(earned).push({ account: c.account, project: c.project, amount, projected });
+  };
+  for (const c of commissions || []) {
+    for (const [earned, amount] of Object.entries(c.months)) add(earned, c, amount, false);
+    if (!c.lastPaid || !c.end) continue;
+    const last = idxOf(c.lastPaid);
+    if (last < nowIdx - staleMonths) continue;
+    const through = Math.min(idxOf(c.end.slice(0, 7)), nowIdx + aheadMonths);
+    for (let i = last + 1; i <= through; i++) add(keyOf(i), c, c.months[c.lastPaid], true);
+  }
+  return [...byMonth.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([earnedMonth, rows]) => {
+      const payMonth = payMonthOf(earnedMonth);
+      return {
+        payMonth,
+        payDate: ymdOf(monthEnd(payMonth)),
+        earnedMonth,
+        amount: Math.round(rows.reduce((s, r) => s + r.amount, 0) * 100) / 100,
+        projected: rows.some(r => r.projected),
+        rows: rows.sort((a, b) => b.amount - a.amount),
+      };
+    });
+}
+
 /** The payout due in a given pay month ("YYYY-MM"), or null. */
 export function payoutFor(list, payMonth) {
   return (list || []).find(p => p.payMonth === payMonth) || null;
 }
 
 const PAYROLL = /payroll|direct dep|salary/i;
+
+/** A payroll deposit, told by its bank description. */
+export const isPayroll = t => PAYROLL.test(`${t?.description || ''} ${t?.fullDescription || ''}`);
 
 /**
  * The payroll deposits of a pay month: { midMonth, monthEnd } (each
@@ -183,7 +228,7 @@ export function paychecksIn(transactions, payMonth) {
   let end = null;
   for (const t of transactions || []) {
     const amount = Number(t.amount);
-    if (!(amount >= 100) || !PAYROLL.test(`${t.description || ''} ${t.fullDescription || ''}`)) continue;
+    if (!(amount >= 100) || !isPayroll(t)) continue;
     const date = new Date(t.date);
     if (isNaN(date) || date.getFullYear() !== y || date.getMonth() !== m - 1) continue;
     if (date.getDate() > 20) { if (!end || amount > end.amount) end = { date, amount }; }

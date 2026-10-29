@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  parseMoney, parseRate, yearForMonth, payMonthOf, parseCommissionRows, earnedByMonth, payouts, payoutFor, paychecksIn,
+  parseMoney, parseRate, yearForMonth, payMonthOf, parseCommissionRows, earnedByMonth, payouts, payoutFor, paychecksIn, expectedPayouts,
 } from './commissions.js';
 
 const d = s => { const [y, m, day] = s.split('-').map(Number); return new Date(y, m - 1, day); };
@@ -84,5 +84,31 @@ describe('paychecksIn', () => {
     expect(p.midMonth.amount).toBe(2663.83);
     expect(p.monthEnd.amount).toBe(3922.07);
     expect(paychecksIn(txns, '2026-11')).toEqual({ midMonth: null, monthEnd: null });
+  });
+});
+
+describe('expectedPayouts', () => {
+  const row = (account, end, months) => ({ account, project: '', end, months, lastPaid: Object.keys(months).sort().pop() });
+  const now = d('2026-10-29');
+
+  it('carries a live contract forward at its last amount, to its Comm End', () => {
+    const list = expectedPayouts([
+      row('BlackRock', '2027-01-31', { '2026-06': 4180, '2026-07': 1040 }),
+      row('Willco', '2026-10-31', { '2026-07': 319.5 }),
+    ], now);
+    // Aug was paid in September, already past; Sep's arrives in October.
+    expect(list.map(p => p.payMonth)).toEqual(['2026-10', '2026-11', '2026-12', '2027-01', '2027-02']);
+    expect(list[0]).toMatchObject({ earnedMonth: '2026-09', amount: 1359.5, projected: true });
+    expect(list[1].amount).toBe(1359.5);   // October: both
+    expect(list[2].amount).toBe(1040);     // November: Willco has ended
+  });
+
+  it('keeps months the tracker already records but hasn’t paid', () => {
+    const [p] = expectedPayouts([row('Prologis', '2026-09-30', { '2026-09': 595 })], now);
+    expect(p).toMatchObject({ payMonth: '2026-10', amount: 595, projected: false });
+  });
+
+  it('drops a contract that stopped being entered long ago, whatever its window', () => {
+    expect(expectedPayouts([row('Old', '2027-12-31', { '2026-03': 500 })], now)).toEqual([]);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeIncome, payerKey, payerName, cadenceOf, monthKeysEnding } from './income.js';
+import { computeIncome, payerKey, payerName, cadenceOf, monthKeysEnding, splitPaychecks, commissionTakeHome, forecastPayroll } from './income.js';
 
 const tx = (date, amount, category, description, extra = {}) => ({ date, amount, category, description, account: 'Checking', ...extra });
 const d = (y, m, day) => new Date(y, m - 1, day);
@@ -101,5 +101,60 @@ describe('helpers', () => {
   });
   it('lists month keys back from an end', () => {
     expect(monthKeysEnding('2026-02', 3)).toEqual(['2025-12', '2026-01', '2026-02']);
+  });
+});
+
+describe('base salary and commission', () => {
+  const pay = (y, m, day, amount) => ({ t: {}, date: d(y, m, day), amount });
+  // Mid-month paychecks are plain; month-end ones carry last month's commission.
+  const split = splitPaychecks([
+    pay(2026, 7, 15, 2700), pay(2026, 7, 31, 7570),
+    pay(2026, 8, 14, 2700), pay(2026, 8, 31, 4076),
+    pay(2026, 9, 15, 2664), pay(2026, 9, 30, 3922),
+    pay(2026, 10, 15, 2664),
+  ]);
+
+  it('splits each paycheck at the typical plain one', () => {
+    expect(split[1]).toMatchObject({ key: '2026-07', base: 2700, commission: 4870 });
+    expect(split[5]).toMatchObject({ base: 2700, commission: 1222 });  // median of the last three mid-months
+    expect(split[6]).toMatchObject({ base: 2664, commission: 0 });
+  });
+
+  it('shows the split on each month, apart from other income', () => {
+    const txns = [
+      tx('07/15/2026', 2700, 'Paycheck', 'SUMMIT ENERGY DES:PAYROLL'),
+      tx('07/31/2026', 7570, 'Paycheck', 'SUMMIT ENERGY DES:PAYROLL'),
+      tx('07/01/2026', 1500, 'Income', 'Zelle from Tenant', { subcategory: 'Rent' }),
+    ];
+    const r = computeIncome({ transactions: txns, incomeCategories: ['Paycheck', 'Income'], monthKeys: ['2026-07'], today: d(2026, 8, 5) });
+    expect(r.months[0].parts).toEqual({ base: 5400, commission: 4870, other: 1500 });
+    expect(r.months[0].otherBySource).toEqual({ 'Income › Rent': 1500 });
+  });
+
+  it('measures take-home against what the tracker says was paid', () => {
+    const rate = commissionTakeHome(split, [{ payMonth: '2026-08', amount: 2000 }, { payMonth: '2026-09', amount: 2000 }], d(2026, 10, 29));
+    expect(rate).toBeCloseTo((1376 + 1222) / 4000);
+    expect(commissionTakeHome(split, [], d(2026, 10, 29))).toBe(null);
+  });
+
+  it('forecasts the paychecks still to come and the commission they carry', () => {
+    const f = forecastPayroll({
+      paychecks: split,
+      payouts: [{ payMonth: '2026-10', earnedMonth: '2026-09', amount: 2000, projected: true, rows: [] }],
+      takeHome: 0.5,
+      today: d(2026, 10, 29),
+      ahead: 2,
+    });
+    // October: the mid-month check is in, the month-end one isn't.
+    expect(f.months[0]).toMatchObject({ key: '2026-10', paychecks: 1, base: 2664, commission: 1000, commissionPreTax: 2000 });
+    expect(f.months[1]).toMatchObject({ key: '2026-11', paychecks: 2, base: 5328, commission: 0 });
+    expect(f.months).toHaveLength(3);
+    expect(f.upcoming[0].takeHome).toBe(1000);
+  });
+
+  it('drops a payout once its paycheck has arrived', () => {
+    const f = forecastPayroll({ paychecks: split.slice(0, 6), payouts: [{ payMonth: '2026-09', amount: 2000, rows: [] }], today: d(2026, 9, 30) });
+    expect(f.upcoming).toEqual([]);
+    expect(f.months[0]).toMatchObject({ paychecks: 0, commission: 0 });
   });
 });

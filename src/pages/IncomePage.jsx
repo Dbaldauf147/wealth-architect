@@ -1,17 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../contexts/DataContext';
-import { computeIncome, monthKeysEnding, monthKeyFor } from '../lib/income';
-import { CommissionsIncomeCard } from '../components/CommissionsIncomeCard';
+import { computeIncome, monthKeysEnding, monthKeyFor, commissionTakeHome, forecastPayroll } from '../lib/income';
+import { expectedPayouts, isPayroll } from '../lib/commissions';
+import { useCommissions } from '../hooks/useCommissions';
+import { CommissionsIncomeCard, ExpectedCommissionsCard } from '../components/CommissionsIncomeCard';
 import styles from './IncomePage.module.css';
 
 /* Just the income: where it comes from, how regularly, how it's trending.
    What counts as income is decided in lib/income.js. */
 
-// Categorical slots 1–3 (validated all-pairs; dataviz palette), then Other.
-// Past three, stacked segments fold into Other so yellow never sits on orange.
+// Categorical slots 1–3 (validated all-pairs; dataviz palette).
 const SERIES = ['#2a78d6', '#eb6834', '#1baf7a'];
 const OTHER = '#94a3b8';
-const TOP_N = 3;
+// Income by month: the paycheck split into base and commission, then the rest.
+const PARTS = [
+  { key: 'base', label: 'Base salary', color: SERIES[0] },
+  { key: 'commission', label: 'Commissions', color: SERIES[1] },
+  { key: 'other', label: 'Other income', color: SERIES[2] },
+];
+const AHEAD = 6;
 
 const RANGES = [
   { months: 6, label: '6M' },
@@ -77,6 +84,7 @@ export function IncomePage() {
   const { transactions, incomeCategories, loading } = useData();
   const [range, setRange] = useState(12);
   const [showAll, setShowAll] = useState(false);
+  const { commissions, payouts } = useCommissions();
 
   const result = useMemo(() => {
     if (!transactions?.length) return null;
@@ -87,15 +95,23 @@ export function IncomePage() {
     return computeIncome({ transactions, incomeCategories, monthKeys: keys, today });
   }, [transactions, incomeCategories, range]);
 
+  const outlook = useMemo(() => {
+    if (!result) return null;
+    const today = new Date();
+    const takeHome = commissionTakeHome(result.paychecks, payouts, today);
+    return { takeHome, ...forecastPayroll({ paychecks: result.paychecks, payouts: expectedPayouts(commissions, today), takeHome, today, ahead: AHEAD }) };
+  }, [result, commissions, payouts]);
+
   if (loading && !result) return <div className={styles.empty}>Loading transactions…</div>;
   if (!result) return <div className={styles.empty}>No transactions yet.</div>;
 
   const { months, sources, sourceOrder, summary, current, deposits, credits } = result;
-  const colorOf = src => {
-    const i = sourceOrder.indexOf(src);
-    return i >= 0 && i < TOP_N ? SERIES[i] : OTHER;
-  };
+  // Same colours as the chart: payroll in base-salary blue, the rest in other-income green.
+  const payrollSources = new Set(deposits.filter(x => isPayroll(x)).map(x => x.source));
+  const colorOf = src => (payrollSources.has(src) ? PARTS[0].color : sourceOrder.includes(src) ? PARTS[2].color : OTHER);
   const shownDeposits = showAll ? deposits : deposits.slice(0, 15);
+  const complete = months.filter(m => !m.partial);
+  const partTotals = Object.fromEntries(PARTS.map(p => [p.key, complete.reduce((s, m) => s + m.parts[p.key], 0)]));
 
   return (
     <div className={styles.page}>
@@ -178,16 +194,22 @@ export function IncomePage() {
         <div className={styles.cardHead}>
           <div>
             <h2 className={styles.cardTitle}>Income by month</h2>
-            <div className={styles.cardHint}>Stacked by source. The tick on each bar is the same month a year earlier.</div>
+            <div className={styles.cardHint}>
+              Base salary is the regular paycheck; commission is what a paycheck carries above it, after tax.
+              {complete.length > 0 && <> Over the {complete.length} complete month{complete.length === 1 ? '' : 's'}: {PARTS.map(p => `${p.label.toLowerCase()} ${money(partTotals[p.key])}`).join(' · ')}.</>}
+              {' '}Faded bars are what’s still expected from payroll. The tick is the same month a year earlier.
+            </div>
           </div>
           <div className={styles.legend}>
-            {sourceOrder.slice(0, TOP_N).map((s, i) => <span key={s}><i style={{ background: SERIES[i] }} />{s}</span>)}
-            {sourceOrder.length > TOP_N && <span><i style={{ background: OTHER }} />Other</span>}
+            {PARTS.map(p => <span key={p.key}><i style={{ background: p.color }} />{p.label}</span>)}
+            <span><i className={styles.legendExpected} />Expected</span>
             <span><i className={styles.legendTick} />A year earlier</span>
           </div>
         </div>
-        <MonthlyChart months={months} order={sourceOrder} colorOf={colorOf} />
+        <MonthlyChart months={months} forecast={outlook?.months || []} />
       </section>
+
+      {outlook && <ExpectedCommissionsCard upcoming={outlook.upcoming} takeHome={outlook.takeHome} />}
 
       <section className={styles.card}>
         <div className={styles.cardHead}>
@@ -317,45 +339,54 @@ function Stat({ value, label, sub }) {
   );
 }
 
-/* Stacked bars by source, top three named and the rest as Other, with a tick
-   for the same month a year earlier. */
-function MonthlyChart({ months, order, colorOf }) {
+/* Stacked bars of base salary, commission and other income, with what payroll
+   should still bring — the rest of this month and the next few — faded on top,
+   and a tick for the same month a year earlier. */
+function MonthlyChart({ months, forecast }) {
   const [ref, width] = useMeasuredWidth();
   const [hover, setHover] = useState(null);
+  const ahead = new Map(forecast.map(f => [f.key, f]));
+  const known = new Set(months.map(m => m.key));
+  const bars = [
+    ...months.map(m => ({ ...m, expected: ahead.get(m.key) || null })),
+    ...forecast.filter(f => !known.has(f.key) && f.base + f.commission > 0)
+      .map(f => ({ key: f.key, future: true, total: 0, lastYear: 0, parts: { base: 0, commission: 0, other: 0 }, otherBySource: {}, expected: f })),
+  ];
+  const expectedOf = b => (b.expected ? b.expected.base + b.expected.commission : 0);
   const H = 280;
   const pad = { top: 16, right: 8, bottom: 26, left: 48 };
   const innerW = width - pad.left - pad.right;
   const innerH = H - pad.top - pad.bottom;
-  const max = niceMax(Math.max(...months.map(m => Math.max(m.total, m.lastYear)), 1));
-  const step = innerW / months.length;
+  const max = niceMax(Math.max(...bars.map(b => Math.max(b.total + expectedOf(b), b.lastYear)), 1));
+  const step = innerW / bars.length;
   const barW = Math.max(4, Math.min(34, step * 0.62));
   const y = v => pad.top + innerH - (v / max) * innerH;
   const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => f * max);
-  const labelEvery = Math.ceil(months.length / Math.floor(innerW / 52));
-  const named = order.slice(0, TOP_N);
-  const segmentsOf = m => {
-    const segs = named.map(s => ({ source: s, value: m.bySource[s] || 0 }));
-    const other = Object.entries(m.bySource).filter(([s]) => !named.includes(s)).reduce((a, [, v]) => a + v, 0);
-    if (other) segs.push({ source: 'Other', value: other });
-    return segs.filter(s => s.value > 0);
-  };
+  const labelEvery = Math.ceil(bars.length / Math.floor(innerW / 52));
+  const segmentsOf = b => [
+    ...PARTS.map(p => ({ key: p.key, color: p.color, value: b.parts[p.key] || 0 })),
+    ...(b.expected ? [
+      { key: 'expected-base', color: PARTS[0].color, value: b.expected.base, expected: true },
+      { key: 'expected-commission', color: PARTS[1].color, value: b.expected.commission, expected: true },
+    ] : []),
+  ].filter(s => s.value > 0);
 
   return (
-    <div ref={ref} className={styles.chartWrap}>
-      <svg width={width} height={H} role="img" aria-label="Income by month, stacked by source">
+    <div ref={ref} className={styles.chartWrap} data-testid="income-by-month">
+      <svg width={width} height={H} role="img" aria-label="Income by month: base salary, commissions and other income, with expected payroll">
         {ticks.map(t => (
           <g key={t}>
             <line x1={pad.left} x2={width - pad.right} y1={y(t)} y2={y(t)} stroke="var(--color-surface-alt)" />
             <text x={pad.left - 8} y={y(t) + 4} textAnchor="end" className={styles.axisText}>{axis(t)}</text>
           </g>
         ))}
-        {months.map((m, i) => {
+        {bars.map((b, i) => {
           const cx = pad.left + step * i + step / 2;
           const x0 = cx - barW / 2;
           let base = 0;
-          const segs = segmentsOf(m);
+          const segs = segmentsOf(b);
           return (
-            <g key={m.key} opacity={m.partial ? 0.5 : 1}>
+            <g key={b.key} data-month={b.key}>
               {segs.map((s, j) => {
                 const top = y(base + s.value);
                 const h = y(base) - top;
@@ -368,27 +399,31 @@ function MonthlyChart({ months, order, colorOf }) {
                 const r = isTop ? Math.min(4, barW / 2, hh) : 0;
                 return (
                   <path
-                    key={s.source}
+                    key={s.key}
+                    data-part={s.key}
                     d={`M${x0},${top + hh} V${top + r} Q${x0},${top} ${x0 + r},${top} H${x0 + barW - r} Q${x0 + barW},${top} ${x0 + barW},${top + r} V${top + hh} Z`}
-                    fill={s.source === 'Other' ? OTHER : colorOf(s.source)}
+                    fill={s.color}
+                    fillOpacity={s.expected ? 0.3 : 1}
+                    stroke={s.expected ? s.color : 'none'}
+                    strokeDasharray={s.expected ? '3 2' : undefined}
                   />
                 );
               })}
-              {m.lastYear > 0 && (
-                <line x1={x0 - 3} x2={x0 + barW + 3} y1={y(m.lastYear)} y2={y(m.lastYear)} stroke="var(--color-text-primary)" strokeWidth={2} strokeLinecap="round" />
+              {b.lastYear > 0 && (
+                <line x1={x0 - 3} x2={x0 + barW + 3} y1={y(b.lastYear)} y2={y(b.lastYear)} stroke="var(--color-text-primary)" strokeWidth={2} strokeLinecap="round" />
               )}
             </g>
           );
         })}
-        {months.map((m, i) => i % labelEvery === 0 && (
-          <text key={m.key} x={pad.left + step * i + step / 2} y={H - 8} textAnchor="middle" className={styles.axisText}>
-            {short(m.key)}{m.partial ? '*' : ''}
+        {bars.map((b, i) => i % labelEvery === 0 && (
+          <text key={b.key} x={pad.left + step * i + step / 2} y={H - 8} textAnchor="middle" className={styles.axisText}>
+            {short(b.key)}{b.partial ? '*' : ''}
           </text>
         ))}
         <line x1={pad.left} x2={width - pad.right} y1={y(0)} y2={y(0)} stroke="var(--color-text-muted)" />
-        {months.map((m, i) => (
+        {bars.map((b, i) => (
           <rect
-            key={m.key}
+            key={b.key}
             x={pad.left + step * i}
             y={pad.top}
             width={step}
@@ -399,21 +434,31 @@ function MonthlyChart({ months, order, colorOf }) {
           />
         ))}
       </svg>
-      {hover != null && (() => {
-        const m = months[hover];
-        const left = Math.min(width - 230, Math.max(0, pad.left + step * hover + step / 2 - 115));
+      {hover != null && bars[hover] && (() => {
+        const b = bars[hover];
+        const x = b.expected;
+        const others = Object.entries(b.otherBySource || {}).sort((p, q) => q[1] - p[1]);
+        const left = Math.min(width - 250, Math.max(0, pad.left + step * hover + step / 2 - 125));
         return (
-          <div className={styles.tooltip} style={{ left, top: 4 }}>
-            <div className={styles.tooltipTitle}>{long(m.key)}{m.partial ? ' (so far)' : ''}</div>
-            {segmentsOf(m).reverse().map(s => (
-              <div key={s.source}><i style={{ background: s.source === 'Other' ? OTHER : colorOf(s.source) }} />{s.source}<b>{money(s.value)}</b></div>
+          <div className={styles.tooltip} style={{ left, top: 4 }} data-testid="income-tooltip">
+            <div className={styles.tooltipTitle}>{long(b.key)}{b.partial ? ' (so far)' : b.future ? ' (expected)' : ''}</div>
+            {!b.future && PARTS.map(p => (
+              <div key={p.key}><i style={{ background: p.color }} />{p.label}<b>{money(b.parts[p.key])}</b></div>
             ))}
-            <div className={styles.tooltipTotal}>Total<b>{money(m.total)}</b></div>
-            {m.lastYear > 0 && <div className={styles.muted}>A year earlier<b>{money(m.lastYear)}</b></div>}
+            {others.slice(0, 3).map(([src, v]) => (
+              <div key={src} className={styles.tooltipSub}>{src}<b>{amt(v)}</b></div>
+            ))}
+            {others.length > 3 && <div className={styles.tooltipSub}>and {others.length - 3} more</div>}
+            {!b.future && <div className={styles.tooltipTotal}>{b.partial ? 'Received' : 'Total'}<b>{money(b.total)}</b></div>}
+            {x && x.base > 0 && <div><i style={{ background: PARTS[0].color, opacity: 0.35 }} />Expected base · {x.paychecks} paycheck{x.paychecks === 1 ? '' : 's'}<b>{money(x.base)}</b></div>}
+            {x && x.commission > 0 && <div><i style={{ background: PARTS[1].color, opacity: 0.35 }} />Expected commission<b>{money(x.commission)}</b></div>}
+            {x && x.commission > 0 && <div className={styles.tooltipSub}>{money(x.commissionPreTax)} pre-tax{x.projected ? ', projected' : ''}</div>}
+            {x && x.base + x.commission > 0 && <div className={styles.tooltipTotal}>{b.future ? 'Expected' : 'Month, expected'}<b>{money(b.total + x.base + x.commission)}</b></div>}
+            {b.lastYear > 0 && <div className={styles.muted}>A year earlier<b>{money(b.lastYear)}</b></div>}
           </div>
         );
       })()}
-      {months.some(m => m.partial) && <div className={styles.chartFoot}>* month in progress</div>}
+      {bars.some(b => b.partial) && <div className={styles.chartFoot}>* month in progress</div>}
     </div>
   );
 }
