@@ -58,5 +58,15 @@ describe('isTrendSpend / placeOf', () => {
 
   it('names a place without processor prefixes or store numbers', () => {
     expect(placeOf({ description: 'SQ *COPPER MUG COFFEE 4421' }).name).toBe('Copper Mug Coffee');
+    expect(placeOf({ description: 'Cvs/pharmacy #x4421' }).name).toBe('Cvs Pharmacy');
+    expect(placeOf({ description: 'Planet Fitness G Des:iclub Fees ID:x1' }).name).toBe('Planet Fitness G');
+    expect(placeOf({ description: 'Doordash*12/31-3 Order' }).name).toBe('Doordash');
+  });
+
+  it('groups a merchant whose every charge carries an order code', () => {
+    const keys = ['Amazon.com*5E9HQ2GD0', 'Amazon.com*ad0nu6to3', 'Amazon Mktpl*W12G34Z56'].map(d => placeOf({ description: d }));
+    expect(new Set(keys.map(k => k.key))).toEqual(new Set(['amazon']));
+    expect(keys[0].name).toBe('Amazon');
+    expect(placeOf({ description: 'Citibik*7 Rides' }).name).toBe('Citibik');
   });
 });

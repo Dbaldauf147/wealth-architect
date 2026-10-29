@@ -36,8 +36,21 @@ function titleCase(s) {
     .replace(/\b([A-Z])&([a-z])\b/g, (_, a, b) => `${a}&${b.toUpperCase()}`);
 }
 
+/** Who a charge went to, for grouping: merchantKey, less what changes every
+ *  charge — order codes after a "*" ("Amazon.com*5E9HQ2GD0"), ACH coded
+ *  fields ("… Des:iclub Fees") and reference numbers ("Cvs/pharmacy #x1234"). */
 export function placeOf(t) {
-  const key = merchantKey(t.description) || String(t.description || '').trim().toLowerCase() || 'unknown';
+  const desc = String(t.description || '')
+    .replace(/\.com\b/gi, '')
+    .replace(/\s+des\s*:.*$/i, '')
+    .replace(/\*\s*(?=[a-z0-9/-]*\d)[a-z0-9/-]+.*$/i, '');
+  let key = merchantKey(desc)
+    .replace(/\b(?=[a-z]*\d)[a-z0-9]{3,}\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Amazon files the same shop under several names.
+  if (/^amazon (mktpl|marketplace|com)\b/.test(`${key} `)) key = 'amazon';
+  key ||= desc.toLowerCase().replace(/[^a-z&' ]+/g, ' ').replace(/\s+/g, ' ').trim() || 'unknown';
   return { key, name: titleCase(key) };
 }
 
