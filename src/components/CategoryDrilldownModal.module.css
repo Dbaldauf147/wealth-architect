@@ -1,0 +1,263 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.dialog {
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  width: min(860px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  padding: 20px 22px;
+}
+
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin-bottom: 2px;
+}
+
+.title {
+  font-family: var(--font-headline);
+  font-size: 20px;
+  font-weight: 800;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.sub {
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  padding: 4px;
+  line-height: 0;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin-bottom: 6px;
+}
+
+.legend span,
+.tooltip > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend i,
+.tooltip i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.legend .legendLine {
+  height: 2px;
+  width: 14px;
+  border-radius: 1px;
+}
+
+.chartWrap {
+  position: relative;
+  width: 100%;
+}
+
+.axis {
+  font-size: 10.5px;
+  fill: var(--color-text-tertiary);
+  font-family: var(--font-headline);
+  font-variant-numeric: tabular-nums;
+}
+
+.tooltip {
+  position: absolute;
+  top: 4px;
+  width: 210px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.14);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tooltip b {
+  margin-left: auto;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.tooltipTitle {
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.foot,
+.more {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  margin-top: 6px;
+}
+
+.muted {
+  color: var(--color-text-tertiary);
+}
+
+.sectionTitle {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin: 18px 0 8px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--color-surface-alt);
+}
+
+.report {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.month {
+  scroll-margin-top: 8px;
+}
+
+.monthHead {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  font-size: 12.5px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-surface-alt);
+}
+
+.monthName {
+  font-weight: 700;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.table td {
+  padding: 5px 4px;
+  border-bottom: 1px solid var(--color-surface-alt);
+  vertical-align: middle;
+}
+
+.place {
+  overflow-wrap: anywhere;
+}
+
+.shareCell {
+  width: 30%;
+  white-space: nowrap;
+}
+
+.shareCell span {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  margin-left: 6px;
+}
+
+.shareBar {
+  display: inline-block;
+  vertical-align: middle;
+  width: calc(100% - 40px);
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-surface-alt);
+  overflow: hidden;
+}
+
+.shareBar > div {
+  height: 100%;
+  background: #2a78d6;
+  border-radius: 3px;
+}
+
+.num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  width: 1%;
+  padding-left: 12px !important;
+}
+
+.delta {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+}
+
+.up {
+  color: #ba1a1a;
+}
+
+.down {
+  color: #16a34a;
+}
+
+@media (max-width: 560px) {
+  .dialog {
+    padding: 16px;
+  }
+
+  .shareCell {
+    display: none;
+  }
+}
