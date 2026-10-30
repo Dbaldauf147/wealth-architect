@@ -5,6 +5,7 @@ import { monthLabelShort, monthLabel } from '../lib/netWorthSnapshot';
 import { absorbedStepUp, MAX_AGE, PRE_LOOKBACK } from '../lib/levelShift';
 import { VendorAlerts } from '../components/VendorAlerts';
 import { CategoryDrilldownModal } from '../components/CategoryDrilldownModal';
+import { SpendShareRanking } from '../components/SpendShareRanking';
 import { isTrendSpend, trendMonthKey } from '../lib/categoryDrilldown';
 import styles from './TrendsPage.module.css';
 
@@ -67,6 +68,11 @@ function Sparkline({ series, flagged }) {
 /* How many categories keep their own wedge before the tail rolls into "Other". */
 const WEDGE_TOP_N = 8;
 const WEDGE_PREF_KEY = 'wa-trends-wedge';
+const TAB_PREF_KEY = 'wa-trends-tab';
+const TABS = [
+  { id: 'changes', label: 'What’s changing', icon: 'trending_up' },
+  { id: 'share', label: 'Share of spending', icon: 'leaderboard' },
+];
 
 const CHART_H = 300;
 const CHART_MIN_W = 320;
@@ -231,6 +237,14 @@ export function TrendsPage() {
   const [sort, setSort] = useState({ col: 'deltaAbs', dir: 'desc' });
   // The category whose month-by-month drill-down is open, if any.
   const [drillCat, setDrillCat] = useState(null);
+  // Which subtab is showing; a view preference, remembered in this browser.
+  const [tab, setTab] = useState(() => {
+    try { return TABS.some(t => t.id === localStorage.getItem(TAB_PREF_KEY)) ? localStorage.getItem(TAB_PREF_KEY) : 'changes'; } catch { return 'changes'; }
+  });
+  function chooseTab(id) {
+    setTab(id);
+    try { localStorage.setItem(TAB_PREF_KEY, id); } catch { /* private mode */ }
+  }
   // The chart is a view preference, not account data — it stays in this
   // browser rather than going through the Firestore config everything else
   // syncs with. Remembered so the toggle survives a reload.
@@ -396,6 +410,27 @@ export function TrendsPage() {
         </div>
       </div>
 
+      <div className={styles.subTabBar} role="tablist" aria-label="Spending Trends views">
+        {TABS.map(t => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            className={`${styles.subTab} ${tab === t.id ? styles.subTabActive : ''}`}
+            onClick={() => chooseTab(t.id)}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{t.icon}</span>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'share' && (loading
+        ? <div className={styles.emptyState}>Loading transactions...</div>
+        : <SpendShareRanking transactions={transactions} onOpenCategory={setDrillCat} />)}
+
+      {tab === 'changes' && <>
       <VendorAlerts />
 
       <div className={styles.controls}>
@@ -606,6 +641,7 @@ export function TrendsPage() {
           </table>
         </div>
       )}
+      </>}
 
       {drillCat && (
         <CategoryDrilldownModal
