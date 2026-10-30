@@ -1,12 +1,16 @@
-import { useMemo, useState } from 'react';
-import { rankSpendShare, isRentCategory, addMonths } from '../lib/spendShare';
+import { Fragment, useMemo, useState } from 'react';
+import { rankSpendShare, isRentCategory, addMonths, FOCUS_SHARE } from '../lib/spendShare';
 import { historyMonths, periodLabel } from '../lib/categoryDrilldown';
 import styles from './SpendShareRanking.module.css';
 
 /* Spending Trends › Share of spending: categories ranked by their share of
    everything spent over a period you pick, against the same-length period
    before it. Rent is left out until you show it; any other category can be
-   hidden the same way. Clicking a category opens its drill-down. */
+   hidden the same way. Clicking a category opens its drill-down.
+
+   The 80/20 focus picks out the few categories that make up 80% of the
+   spending — where cutting back moves the total — and can fold the long tail
+   below them into a single row. */
 
 const money = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
 const pct = n => `${(Math.round((n || 0) * 1000) / 10).toFixed(1)}%`;
@@ -74,6 +78,10 @@ export function SpendShareRanking({ transactions, onOpenCategory }) {
   const maxShare = r.rows[0]?.share || 1;
   const prevStart = r.prev.from < first ? first : r.prev.from;
   const hasPrev = r.prev.total > 0;
+  const { focus } = r;
+  const focusOnly = !!pref.focusOnly;
+  const focusRows = r.rows.slice(0, focus.count);
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
   return (
     <div className={styles.wrap} data-testid="spend-share">
@@ -148,6 +156,37 @@ export function SpendShareRanking({ transactions, onOpenCategory }) {
           </div>
         )}
 
+        {r.rows.length > 0 && (
+          <div className={styles.focus} data-testid="spend-share-focus">
+            <div className={styles.focusHead}>
+              <span className={styles.focusBadge}>80/20</span>
+              <div className={styles.focusText}>
+                <b>{plural(focus.count, 'category', 'categories')}</b> of {r.rows.length} make up{' '}
+                <b>{pct(focus.share)}</b> of your spending: {money(focus.amount)}
+                {r.months ? <>, {money(focus.amount / r.months)}/mo</> : null}.
+                {focus.tailCount > 0 && <> The other {plural(focus.tailCount, 'category adds', 'categories add')} up to {pct(focus.tailShare)} ({money(focus.tailAmount)}).</>}
+              </div>
+              <div className={styles.pillGroup} role="group" aria-label="Rows shown">
+                <button type="button" className={`${styles.pill} ${!focusOnly ? styles.pillActive : ''}`} onClick={() => update({ focusOnly: false })}>All categories</button>
+                <button type="button" className={`${styles.pill} ${focusOnly ? styles.pillActive : ''}`} onClick={() => update({ focusOnly: true })}>Focus only</button>
+              </div>
+            </div>
+            <div className={styles.focusStrip} role="img" aria-label={`Top ${focus.count} categories are ${pct(focus.share)} of spending`}>
+              {focusRows.map(row => (
+                <div key={row.cat} className={styles.focusSeg} style={{ flexGrow: row.share }} title={`${row.cat}: ${pct(row.share)}`} />
+              ))}
+              {focus.tailShare > 0 && <div className={styles.tailSeg} style={{ flexGrow: focus.tailShare }} title={`Other ${focus.tailCount}: ${pct(focus.tailShare)}`} />}
+            </div>
+            <div className={styles.focusChips}>
+              {focusRows.map(row => (
+                <button key={row.cat} type="button" className={styles.focusChip} onClick={() => onOpenCategory(row.cat)} title={`${row.cat}: month by month and the places behind it`}>
+                  {row.cat} <span>{pct(row.share)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {r.rows.length === 0 ? (
           <div className={styles.empty}>No spending in this period.</div>
         ) : (
@@ -167,10 +206,12 @@ export function SpendShareRanking({ transactions, onOpenCategory }) {
                 </tr>
               </thead>
               <tbody>
-                {r.rows.map(row => {
+                {(focusOnly ? focusRows : r.rows).map(row => {
                   const delta = row.prevShare == null ? null : row.share - row.prevShare;
+                  const atCut = row.rank === focus.count && focus.tailCount > 0;
                   return (
-                    <tr key={row.cat}>
+                    <Fragment key={row.cat}>
+                    <tr className={`${row.focus ? styles.focusRow : styles.tailRow} ${atCut ? styles.cutRow : ''}`}>
                       <td className={styles.rank}>{row.rank}</td>
                       <td>
                         <button type="button" className={styles.catLink} onClick={() => onOpenCategory(row.cat)} title={`${row.cat}: month by month and the places behind it`}>
@@ -179,7 +220,7 @@ export function SpendShareRanking({ transactions, onOpenCategory }) {
                         <div className={styles.muted}>{row.count} charge{row.count === 1 ? '' : 's'}</div>
                       </td>
                       <td className={styles.shareCell}>
-                        <div className={styles.shareBar}><div style={{ width: `${Math.max(1, (row.share / maxShare) * 100)}%` }} /></div>
+                        <div className={`${styles.shareBar} ${row.focus ? '' : styles.shareBarTail}`}><div style={{ width: `${Math.max(1, (row.share / maxShare) * 100)}%` }} /></div>
                         <span className={styles.sharePct}>{pct(row.share)}</span>
                       </td>
                       <td className={`${styles.num} ${styles.muted}`}>{pct(row.cumShare)}</td>
@@ -195,6 +236,20 @@ export function SpendShareRanking({ transactions, onOpenCategory }) {
                         </button>
                       </td>
                     </tr>
+                    {atCut && (
+                      <tr className={styles.cutLabel} data-testid="spend-share-cut">
+                        <td colSpan={9}>
+                          {focusOnly ? (
+                            <button type="button" className={styles.tailToggle} onClick={() => update({ focusOnly: false })}>
+                              Show the other {plural(focus.tailCount, 'category', 'categories')} · {pct(focus.tailShare)} · {money(focus.tailAmount)}
+                            </button>
+                          ) : (
+                            <>▲ {Math.round(FOCUS_SHARE * 100)}% line: the top {focus.count} above make up {pct(focus.share)} · the {plural(focus.tailCount, 'category', 'categories')} below, {pct(focus.tailShare)}</>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -204,6 +259,7 @@ export function SpendShareRanking({ transactions, onOpenCategory }) {
         <div className={styles.foot}>
           Shares are of all spending in the period except hidden categories; transfers and card payments never count.
           “Change” is the move in share, in percentage points, from the period before.
+          The highlighted rows are the fewest categories that together reach {Math.round(FOCUS_SHARE * 100)}% of spending.
         </div>
       </div>
     </div>

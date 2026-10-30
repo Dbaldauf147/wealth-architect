@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rankSpendShare, isRentCategory, addMonths, monthSpan } from './spendShare.js';
+import { rankSpendShare, paretoFocus, isRentCategory, addMonths, monthSpan } from './spendShare.js';
 
 const tx = (date, amount, category) => ({ date, amount, category, description: category });
 
@@ -42,11 +42,41 @@ describe('rankSpendShare', () => {
     expect(r.rows.find(x => x.cat === 'Travel')).toMatchObject({ prevAmount: 0, prevShare: 0 });
   });
 
+  it('marks the categories that make up 80% of spending', () => {
+    expect(r.focus).toMatchObject({ count: 2, amount: 800, tailCount: 1, tailAmount: 200 });
+    expect(r.focus.share).toBeCloseTo(0.8);
+    expect(r.focus.tailShare).toBeCloseTo(0.2);
+    expect(r.rows.map(x => x.focus)).toEqual([true, true, false]);
+  });
+
   it('counts rent once it is shown', () => {
     const all = rankSpendShare({ transactions: ledger, from: '2026-07', to: '2026-09' });
     expect(all.rows[0]).toMatchObject({ cat: 'Rent', amount: 2000 });
     expect(all.total).toBe(3000);
     expect(all.hiddenTotal).toBe(0);
+  });
+});
+
+describe('paretoFocus', () => {
+  const rows = shares => {
+    let cum = 0;
+    return shares.map(share => { cum += share; return { share, cumShare: cum, amount: share * 100 }; });
+  };
+
+  it('takes the fewest top categories that reach 80%', () => {
+    const f = paretoFocus(rows([0.5, 0.2, 0.15, 0.1, 0.05]));
+    expect(f.count).toBe(3);
+    expect(f.share).toBeCloseTo(0.85);
+    expect(f.tailCount).toBe(2);
+    expect(f.tailAmount).toBe(15);
+  });
+
+  it('stops at one category when it alone is 80%', () => {
+    expect(paretoFocus(rows([0.9, 0.1])).count).toBe(1);
+  });
+
+  it('copes with nothing to rank', () => {
+    expect(paretoFocus([])).toMatchObject({ count: 0, tailCount: 0 });
   });
 });
 
