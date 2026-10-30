@@ -611,7 +611,6 @@ export function TrendsPage() {
         <CategoryDrilldownModal
           category={drillCat}
           transactions={transactions}
-          months={data.months}
           onClose={() => setDrillCat(null)}
         />
       )}

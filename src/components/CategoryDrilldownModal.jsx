@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { categoryDrilldown } from '../lib/categoryDrilldown';
-import { monthLabel, monthLabelShort } from '../lib/netWorthSnapshot';
+import { categoryDrilldown, historyMonths, periodOf, periodLabel } from '../lib/categoryDrilldown';
 import styles from './CategoryDrilldownModal.module.css';
 
 /* Spending Trends: click a category for its own history — monthly spend as
@@ -12,6 +11,30 @@ import styles from './CategoryDrilldownModal.module.css';
 const BAR = '#2a78d6';
 const LINE = '#eb6834';
 const CHART_H = 240;
+
+// How far back to look, in months (0 = everything), and what each bar covers.
+const RANGES = [
+  { months: 6, label: '6M' },
+  { months: 12, label: '1Y' },
+  { months: 24, label: '2Y' },
+  { months: 36, label: '3Y' },
+  { months: 60, label: '5Y' },
+  { months: 0, label: 'All' },
+];
+const GROUPS = [
+  { id: 'month', label: 'Month', unit: 'month' },
+  { id: 'quarter', label: 'Quarter', unit: 'quarter' },
+  { id: 'year', label: 'Year', unit: 'year' },
+];
+// The range and grouping are a view preference: remembered in this browser only.
+const PREF_KEY = 'wa-trends-drilldown';
+function loadPref() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PREF_KEY) || 'null');
+    if (p && Number.isInteger(p.months) && p.months >= 0 && GROUPS.some(g => g.id === p.group)) return p;
+  } catch { /* private mode */ }
+  return { months: 12, group: 'month' };
+}
 
 const money = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
 const pct = n => `${Math.round((n || 0) * 1000) / 10}%`;
@@ -40,7 +63,7 @@ function useMeasuredWidth() {
   return [ref, width];
 }
 
-function Chart({ months, nowKey, onPick }) {
+function Chart({ months, nowKey, unit, onPick }) {
   const [ref, width] = useMeasuredWidth();
   const [hover, setHover] = useState(null);
   const pad = { top: 14, right: 44, bottom: 26, left: 48 };
@@ -88,7 +111,7 @@ function Chart({ months, nowKey, onPick }) {
         <line x1={pad.left} x2={width - pad.right} y1={y(0)} y2={y(0)} stroke="var(--color-text-muted)" />
         {months.map((m, i) => (i % labelEvery === 0 || i === months.length - 1) && (
           <text key={m.key} x={cx(i)} y={CHART_H - 8} textAnchor="middle" className={styles.axis}>
-            {monthLabelShort(m.key)}{m.key === nowKey ? '*' : ''}
+            {periodLabel(m.key, true)}{m.key === nowKey ? '*' : ''}
           </text>
         ))}
         {months.map((m, i) => (
@@ -111,14 +134,14 @@ function Chart({ months, nowKey, onPick }) {
         const left = Math.min(width - 210, Math.max(0, cx(hover) - 105));
         return (
           <div className={styles.tooltip} style={{ left }} data-testid="drilldown-tooltip">
-            <div className={styles.tooltipTitle}>{monthLabel(m.key)}{m.key === nowKey ? ' (so far)' : ''}</div>
+            <div className={styles.tooltipTitle}>{periodLabel(m.key)}{m.key === nowKey ? ' (so far)' : ''}</div>
             <div><i style={{ background: BAR }} />Spent<b>{money(m.amount)}</b></div>
             <div><i style={{ background: LINE }} />Share of spending<b>{pct(m.share)}</b></div>
             <div className={styles.muted}>of {money(m.total)} total{m.places[0] ? ` · top: ${m.places[0].name}` : ''}</div>
           </div>
         );
       })()}
-      {months.some(m => m.key === nowKey) && <div className={styles.foot}>* month in progress · click a bar to jump to that month</div>}
+      <div className={styles.foot}>{months.some(m => m.key === nowKey) ? `* ${unit} in progress · ` : ''}click a bar to jump to that {unit}</div>
     </div>
   );
 }
@@ -126,20 +149,45 @@ function Chart({ months, nowKey, onPick }) {
 /**
  * @param category      the category to show
  * @param transactions  the ledger
- * @param months        YYYY-MM keys, oldest first (the page's chart window)
  * @param onClose
  */
-export function CategoryDrilldownModal({ category, transactions, months, onClose }) {
+export function CategoryDrilldownModal({ category, transactions, onClose }) {
   const reportRef = useRef(null);
+  const [pref, setPref] = useState(loadPref);
+  const [customN, setCustomN] = useState(() => String(pref.months >= 12 && pref.months % 12 === 0 ? pref.months / 12 : pref.months || 12));
+  const [customUnit, setCustomUnit] = useState(() => (pref.months >= 12 && pref.months % 12 === 0 ? 'years' : 'months'));
+  function choose(next) {
+    setPref(prev => {
+      const p = { ...prev, ...next };
+      try { localStorage.setItem(PREF_KEY, JSON.stringify(p)); } catch { /* private mode */ }
+      return p;
+    });
+  }
+  function applyCustom(n = customN, unit = customUnit) {
+    const v = Math.floor(Number(n));
+    if (!(v > 0)) return;
+    choose({ months: Math.min(1200, unit === 'years' ? v * 12 : v) });
+  }
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const d = useMemo(() => categoryDrilldown({ transactions, category, months }), [transactions, category, months]);
+  const history = useMemo(() => historyMonths(transactions), [transactions]);
+  // Grouped, the window starts at the beginning of its first quarter or year, so
+  // the first bar isn't a part-period that reads as a dip.
+  const months = useMemo(() => {
+    let start = pref.months ? Math.max(0, history.length - pref.months) : 0;
+    while (start > 0 && periodOf(history[start - 1], pref.group) === periodOf(history[start], pref.group)) start--;
+    return history.slice(start);
+  }, [history, pref.months, pref.group]);
+  const d = useMemo(() => categoryDrilldown({ transactions, category, months, group: pref.group }), [transactions, category, months, pref.group]);
+  const unit = GROUPS.find(g => g.id === pref.group).unit;
   const now = new Date();
-  const nowKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const nowKey = periodOf(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`, pref.group);
+  const isPreset = RANGES.some(r => r.months === pref.months);
+  const short = pref.months > history.length;
   const complete = d.months.filter(m => m.key !== nowKey);
   const latest = complete[complete.length - 1] || null;
   const newestFirst = [...d.months].reverse().filter(m => m.amount > 0);
@@ -157,9 +205,10 @@ export function CategoryDrilldownModal({ category, transactions, months, onClose
             <div className={styles.eyebrow}>Spending Trends</div>
             <h2 id="drilldown-title" className={styles.title}>{category}</h2>
             <div className={styles.sub}>
-              {monthLabel(months[0])} – {monthLabel(months[months.length - 1])}
+              {periodLabel(months[0])} – {periodLabel(months[months.length - 1])}
               {' · '}{money(d.avg)}/mo on average, {pct(d.avgShare)} of all spending
-              {latest && <> · {monthLabel(latest.key)}: {money(latest.amount)} ({pct(latest.share)})</>}
+              {latest && <> · {periodLabel(latest.key)}: {money(latest.amount)} ({pct(latest.share)})</>}
+              {short && <> · your history only goes back {history.length} month{history.length === 1 ? '' : 's'}</>}
             </div>
           </div>
           <button type="button" className={styles.close} onClick={onClose} aria-label="Close">
@@ -167,11 +216,62 @@ export function CategoryDrilldownModal({ category, transactions, months, onClose
           </button>
         </div>
 
+        <div className={styles.controls}>
+          <div className={styles.segment} role="group" aria-label="Time range">
+            {RANGES.map(r => (
+              <button
+                key={r.label}
+                type="button"
+                className={`${styles.segmentBtn} ${pref.months === r.months ? styles.segmentActive : ''}`}
+                onClick={() => choose({ months: r.months })}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+          <form
+            className={`${styles.custom} ${!isPreset ? styles.customActive : ''}`}
+            onSubmit={e => { e.preventDefault(); applyCustom(); }}
+          >
+            <label htmlFor="drill-custom-n">Last</label>
+            <input
+              id="drill-custom-n"
+              type="number"
+              min="1"
+              max={customUnit === 'years' ? 100 : 1200}
+              value={customN}
+              onChange={e => setCustomN(e.target.value)}
+              onBlur={() => applyCustom()}
+              aria-label="Number of months or years"
+            />
+            <select
+              value={customUnit}
+              onChange={e => { setCustomUnit(e.target.value); applyCustom(customN, e.target.value); }}
+              aria-label="Months or years"
+            >
+              <option value="months">months</option>
+              <option value="years">years</option>
+            </select>
+          </form>
+          <div className={styles.segment} role="group" aria-label="Group by">
+            {GROUPS.map(g => (
+              <button
+                key={g.id}
+                type="button"
+                className={`${styles.segmentBtn} ${pref.group === g.id ? styles.segmentActive : ''}`}
+                onClick={() => choose({ group: g.id })}
+              >
+                By {g.label.toLowerCase()}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className={styles.legend}>
-          <span><i style={{ background: BAR }} />Spent per month</span>
+          <span><i style={{ background: BAR }} />Spent per {unit}</span>
           <span><i className={styles.legendLine} style={{ background: LINE }} />% of all spending (right axis)</span>
         </div>
-        <Chart months={d.months} nowKey={nowKey} onPick={jumpTo} />
+        <Chart months={d.months} nowKey={nowKey} unit={unit} onPick={jumpTo} />
 
         {d.places.length > 0 && (
           <div className={styles.overall}>
@@ -184,12 +284,12 @@ export function CategoryDrilldownModal({ category, transactions, months, onClose
           </div>
         )}
 
-        <div className={styles.sectionTitle}>Top places each month</div>
+        <div className={styles.sectionTitle}>Top places each {unit}</div>
         <div className={styles.report} ref={reportRef} data-testid="drilldown-report">
           {newestFirst.map(m => (
             <div key={m.key} className={styles.month} data-month={m.key}>
               <div className={styles.monthHead}>
-                <span className={styles.monthName}>{monthLabel(m.key)}{m.key === nowKey ? ' (so far)' : ''}</span>
+                <span className={styles.monthName}>{periodLabel(m.key)}{m.key === nowKey ? ' (so far)' : ''}</span>
                 <span className={styles.muted}>{money(m.amount)} · {pct(m.share)} of spending · {m.count} charge{m.count === 1 ? '' : 's'}</span>
               </div>
               <table className={styles.table}>
@@ -216,9 +316,9 @@ export function CategoryDrilldownModal({ category, transactions, months, onClose
             </div>
           ))}
           {!newestFirst.length && <div className={styles.muted}>Nothing spent in {category} in this window.</div>}
-          {quiet > 0 && newestFirst.length > 0 && <div className={styles.more}>{quiet} month{quiet === 1 ? '' : 's'} with nothing in {category} not shown.</div>}
+          {quiet > 0 && newestFirst.length > 0 && <div className={styles.more}>{quiet} {unit}{quiet === 1 ? '' : 's'} with nothing in {category} not shown.</div>}
         </div>
-        <div className={styles.foot}>The last column is the change from that place’s spend the month before.</div>
+        <div className={styles.foot}>The last column is the change from that place’s spend the {unit} before.</div>
       </div>
     </div>
   );
