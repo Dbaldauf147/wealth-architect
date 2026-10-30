@@ -15,6 +15,32 @@ const round2 = n => Math.round(n * 100) / 100;
 /** Categories hidden until you show them: rent, which dwarfs everything else. */
 export const isRentCategory = cat => /\brent\b/i.test(String(cat || ''));
 
+/** The 80/20 line: the share of spending the "vital few" categories cover. */
+export const FOCUS_SHARE = 0.8;
+
+/**
+ * The 80/20 split of ranked rows: the fewest top categories whose shares add
+ * up to at least `threshold` of spending, and the long tail after them.
+ * @returns { count, share, amount, tailCount, tailShare, tailAmount }
+ */
+export function paretoFocus(rows, threshold = FOCUS_SHARE) {
+  if (!rows.length) return { count: 0, share: 0, amount: 0, tailCount: 0, tailShare: 0, tailAmount: 0 };
+  // A hair of tolerance so 79.99999% from float sums still counts as 80%.
+  const i = rows.findIndex(r => r.cumShare >= threshold - 1e-9);
+  const count = i < 0 ? rows.length : i + 1;
+  const head = rows.slice(0, count);
+  const tail = rows.slice(count);
+  const sum = (list, k) => list.reduce((s, r) => s + r[k], 0);
+  return {
+    count,
+    share: head[head.length - 1].cumShare,
+    amount: round2(sum(head, 'amount')),
+    tailCount: tail.length,
+    tailShare: sum(tail, 'share'),
+    tailAmount: round2(sum(tail, 'amount')),
+  };
+}
+
 /** "YYYY-MM" plus n months (n may be negative). */
 export function addMonths(key, n) {
   const [y, m] = key.split('-').map(Number);
@@ -35,7 +61,8 @@ export function monthSpan(from, to) {
  * @param hidden        Set of category names left out
  * @returns {
  *   rows: [{ rank, cat, amount, perMonth, share, cumShare, count, prevShare, prevAmount }],
- *   total, months, hiddenTotal, hiddenCats: [{ cat, amount }], prev: { from, to, total }, all: [names seen]
+ *   total, months, hiddenTotal, hiddenCats: [{ cat, amount }], prev: { from, to, total }, all: [names seen],
+ *   focus: paretoFocus(rows) — rows also carry `focus: true` inside the 80%
  * }
  */
 export function rankSpendShare({ transactions, from, to, hidden = new Set() }) {
@@ -93,8 +120,12 @@ export function rankSpendShare({ transactions, from, to, hidden = new Set() }) {
       };
     });
 
+  const focus = paretoFocus(rows);
+  rows.forEach((row, i) => { row.focus = i < focus.count; });
+
   return {
     rows,
+    focus,
     total: round2(total),
     months,
     hiddenTotal: round2([...hiddenAmt.values()].reduce((s, v) => s + v, 0)),
