@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { categoryDrilldown, isTrendSpend, placeOf } from './categoryDrilldown.js';
+import { categoryDrilldown, isTrendSpend, placeOf, historyMonths, periodOf, periodLabel } from './categoryDrilldown.js';
 
 const tx = (date, amount, category, description) => ({ date, amount, category, description });
 
@@ -68,5 +68,27 @@ describe('isTrendSpend / placeOf', () => {
     expect(new Set(keys.map(k => k.key))).toEqual(new Set(['amazon']));
     expect(keys[0].name).toBe('Amazon');
     expect(placeOf({ description: 'Citibik*7 Rides' }).name).toBe('Citibik');
+  });
+});
+
+describe('longer ranges', () => {
+  it('lists every month from the first charge to today', () => {
+    expect(historyMonths(ledger, new Date(2026, 9, 30))).toEqual(['2026-08', '2026-09', '2026-10']);
+    expect(historyMonths([], new Date(2026, 9, 30))).toEqual(['2026-10']);
+  });
+
+  it('names quarters and years', () => {
+    expect(periodOf('2026-08', 'quarter')).toBe('2026-Q3');
+    expect(periodOf('2026-08', 'year')).toBe('2026');
+    expect(periodLabel('2026-Q3')).toBe('Q3 2026');
+    expect(periodLabel('2026-08', true)).toBe('Aug 26');
+    expect(periodLabel('2026')).toBe('2026');
+  });
+
+  it('groups months into quarters, keeping the average per month', () => {
+    const q = categoryDrilldown({ transactions: ledger, category: 'Groceries', months: ['2026-07', '2026-08', '2026-09', '2026-10'], group: 'quarter' });
+    expect(q.months.map(p => [p.key, p.monthCount, p.amount, p.total])).toEqual([['2026-Q3', 3, 400, 1500], ['2026-Q4', 1, 0, 0]]);
+    expect(q.months[0].places[0]).toMatchObject({ name: 'Whole Foods Market', amount: 210 });
+    expect(q.avg).toBe(100);
   });
 });
