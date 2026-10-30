@@ -1,0 +1,264 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.card {
+  background: var(--color-surface);
+  border: var(--border-ghost);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xs);
+  padding: 20px 22px;
+}
+
+.head {
+  margin-bottom: 14px;
+}
+
+.title {
+  font-family: var(--font-headline);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.sub {
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  margin-top: 4px;
+  line-height: 1.6;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.pillGroup {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-lg);
+}
+
+.pill {
+  padding: 6px 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pill:hover {
+  color: var(--color-text-primary);
+}
+
+.pillActive {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-xs);
+}
+
+.range {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-surface-alt);
+  border-radius: var(--radius-lg);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.rangeActive {
+  border-color: #2a78d6;
+  color: var(--color-text-primary);
+}
+
+.range label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.range input {
+  font: inherit;
+  font-size: 12px;
+  border: 1px solid var(--color-surface-alt);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  padding: 3px 6px;
+}
+
+.hiddenBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.hiddenChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  border: 1px dashed var(--color-text-tertiary);
+  background: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.hiddenChip:hover {
+  border-style: solid;
+  color: var(--color-text-primary);
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th {
+  padding: 9px 10px;
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  background: var(--color-surface-alt);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 9px 10px;
+  border-bottom: var(--border-ghost);
+  vertical-align: middle;
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+.rank {
+  width: 1%;
+  text-align: right;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.num {
+  text-align: right !important;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.catLink {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  text-align: left;
+  text-decoration: underline dotted var(--color-text-tertiary);
+  text-underline-offset: 3px;
+}
+
+.catLink:hover {
+  color: #2a78d6;
+  text-decoration-color: currentColor;
+}
+
+.shareCell {
+  min-width: 180px;
+  width: 32%;
+  white-space: nowrap;
+}
+
+.shareBar {
+  display: inline-block;
+  vertical-align: middle;
+  width: calc(100% - 56px);
+  height: 8px;
+  border-radius: 4px;
+  background: var(--color-surface-alt);
+  overflow: hidden;
+}
+
+.shareBar > div {
+  height: 100%;
+  background: #2a78d6;
+  border-radius: 4px;
+}
+
+.sharePct {
+  display: inline-block;
+  width: 48px;
+  text-align: right;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.hideBtn {
+  background: none;
+  border: none;
+  padding: 2px;
+  line-height: 0;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.hideBtn:hover {
+  opacity: 1;
+  color: var(--color-text-primary);
+}
+
+.muted {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.up {
+  color: #ba1a1a;
+}
+
+.down {
+  color: #16a34a;
+}
+
+.empty {
+  padding: 24px 0;
+  color: var(--color-text-tertiary);
+}
+
+.foot {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  margin-top: 12px;
+  line-height: 1.5;
+}
