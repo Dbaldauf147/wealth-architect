@@ -141,7 +141,7 @@ function Chart({ months, nowKey, unit, onPick }) {
           </div>
         );
       })()}
-      <div className={styles.foot}>{months.some(m => m.key === nowKey) ? `* ${unit} in progress · ` : ''}click a bar to jump to that ${unit}</div>
+      <div className={styles.foot}>{months.some(m => m.key === nowKey) ? `* ${unit} in progress · ` : ''}click a bar to jump to that {unit}</div>
     </div>
   );
 }
@@ -175,7 +175,13 @@ export function CategoryDrilldownModal({ category, transactions, onClose }) {
   }, [onClose]);
 
   const history = useMemo(() => historyMonths(transactions), [transactions]);
-  const months = useMemo(() => (pref.months ? history.slice(-pref.months) : history), [history, pref.months]);
+  // Grouped, the window starts at the beginning of its first quarter or year, so
+  // the first bar isn't a part-period that reads as a dip.
+  const months = useMemo(() => {
+    let start = pref.months ? Math.max(0, history.length - pref.months) : 0;
+    while (start > 0 && periodOf(history[start - 1], pref.group) === periodOf(history[start], pref.group)) start--;
+    return history.slice(start);
+  }, [history, pref.months, pref.group]);
   const d = useMemo(() => categoryDrilldown({ transactions, category, months, group: pref.group }), [transactions, category, months, pref.group]);
   const unit = GROUPS.find(g => g.id === pref.group).unit;
   const now = new Date();
