@@ -9,6 +9,7 @@ import {
 import {
   SEED_PROMOS, isPromoCompleted, promoHasAutoMatch, promoIsTracked, autoUsedForPromo,
   matchingTransactions, periodWindowStart, nextResetDate, lastUsedFor,
+  markPromoDone, reopenPromo, syncCompletionLog, removeUsageEntry, promoUsageHistory,
 } from '../lib/cardPromos';
 import CardChoiceModal from '../components/CardChoiceModal';
 
@@ -125,7 +126,10 @@ function relativeDayLabel(days) {
   return `${Math.round(ago / 365)} yr ago`;
 }
 
-export function CardPromosPage() {
+/** One component, two pages: `mode="csr"` is the CSR Benefits page (the
+ *  Sapphire table plus its usage history), `mode="promos"` is every other card
+ *  plus the cross-card comparisons. */
+export function CardPromosPage({ mode = 'promos' }) {
   const { transactions, accountNicknames, accountGroups, cardMap, cardPromos: promos, promoTags } = useData();
   const { setCardForAccount, setCardPromos, setPromoTagForTransactions, clearPromoTagsFor } = useDataActions();
   const displayName = (name) => (accountGroups && accountGroups[name]) || (accountNicknames && accountNicknames[name]) || name;
@@ -138,7 +142,7 @@ export function CardPromosPage() {
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState({});
   const [showSeedBtn, setShowSeedBtn] = useState(false);
-  const [view, setView] = useState('csr'); // 'csr' | 'promos'
+  const view = mode;
   // Which promo has its counted-transactions list open.
   const [expandedId, setExpandedId] = useState(null);
   // Which promo has its "Next up" date open for editing, inline in the table.
@@ -273,11 +277,11 @@ export function CardPromosPage() {
   }
 
   function saveEdit() {
-    setPromos(prev => prev.map(p => p.id === editingId ? {
+    setPromos(prev => prev.map(p => p.id === editingId ? syncCompletionLog({
       ...editDraft,
       value: Number(editDraft.value) || 0,
       used: Number(editDraft.used) || 0,
-    } : p));
+    }) : p));
     setEditingId(null);
     setEditDraft({});
   }
@@ -299,7 +303,7 @@ export function CardPromosPage() {
   // and where; unticking a done promo reopens it straight away.
   function toggleCompleted(promo) {
     if (isPromoCompleted(promo)) {
-      setPromos(prev => prev.map(p => p.id === promo.id ? { ...p, completedAt: '', completedNote: '' } : p));
+      setPromos(prev => prev.map(p => p.id === promo.id ? reopenPromo(p) : p));
       return;
     }
     if (completingId === promo.id) { setCompletingId(null); return; }
@@ -310,17 +314,19 @@ export function CardPromosPage() {
   function saveCompleted() {
     const date = completeDraft.date || todayISO();
     const note = (completeDraft.note || '').trim();
-    setPromos(prev => prev.map(p => p.id === completingId ? { ...p, completedAt: date, completedNote: note } : p));
+    setPromos(prev => prev.map(p => p.id === completingId ? markPromoDone(p, { date, note }) : p));
     setCompletingId(null);
   }
 
   function resetAllUsage() {
-    if (!confirm('Reset all promos for a new cycle? This clears manual "used" amounts and un-marks anything logged as completed.')) return;
-    setPromos(prev => prev.map(p => ({ ...p, used: 0, completedAt: '', completedNote: '' })));
+    if (!confirm('Reset all promos for a new cycle? This clears manual "used" amounts and un-marks anything logged as completed. Usage history is kept.')) return;
+    // syncCompletionLog first so a completion stamped before the history
+    // existed gets written into it, rather than vanishing with completedAt.
+    setPromos(prev => prev.map(p => ({ ...syncCompletionLog(p), used: 0, completedAt: '', completedNote: '', completedLogId: '' })));
   }
 
   function restoreSeed() {
-    if (!confirm('Replace your list with the default seed list? Your custom changes will be lost.')) return;
+    if (!confirm('Replace your list with the default seed list? Your custom changes and usage history will be lost.')) return;
     setPromos(SEED_PROMOS);
   }
 
@@ -329,7 +335,9 @@ export function CardPromosPage() {
       {/* Header + sub-tabs */}
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
         <div>
-          <div style={{ fontFamily: 'var(--font-headline)', fontSize: 24, fontWeight: 700, marginBottom: 4 }}>Card Promotions</div>
+          <div style={{ fontFamily: 'var(--font-headline)', fontSize: 24, fontWeight: 700, marginBottom: 4 }}>
+            {view === 'csr' ? 'Sapphire Reserve Benefits' : 'Card Promotions'}
+          </div>
           <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>
             {view === 'csr'
               ? 'Statement credits and benefits included with your Chase Sapphire Reserve'
@@ -337,27 +345,6 @@ export function CardPromosPage() {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ display: 'inline-flex', gap: 2, background: 'var(--color-surface-alt)', padding: 2, borderRadius: 10 }}>
-            {[{ key: 'csr', label: 'Chase Sapphire Reserve' }, { key: 'promos', label: 'Card Promotions' }].map(t => (
-              <button
-                key={t.key}
-                onClick={() => setView(t.key)}
-                style={{
-                  padding: '6px 14px',
-                  border: 'none',
-                  background: view === t.key ? 'var(--color-surface)' : 'transparent',
-                  boxShadow: view === t.key ? 'var(--shadow-xs)' : 'none',
-                  borderRadius: 8,
-                  cursor: 'pointer',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: view === t.key ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-                }}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
           <button onClick={addPromo} style={btnPrimaryStyle}>
             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
             Add Promo
@@ -406,7 +393,7 @@ export function CardPromosPage() {
           {view === 'csr'
             ? 'No Chase Sapphire Reserve benefits yet. Click "Add Promo" to get started.'
             : csrCount > 0
-              ? 'No promos on other cards yet. Click "Add Promo" to add one, or switch to the Chase Sapphire Reserve tab.'
+              ? 'No promos on other cards yet. Click "Add Promo" to add one — Sapphire Reserve benefits live on the CSR Benefits page.'
               : 'No promos yet. Click "Add Promo" to get started.'}
         </div>
       )}
@@ -884,6 +871,90 @@ export function CardPromosPage() {
           </div>
         );
       })}
+
+      {view === 'csr' && (
+        <UsageHistory
+          promos={visiblePromos}
+          onRemove={(promoId, entryId) => setPromos(prev => prev.map(p => p.id === promoId ? removeUsageEntry(p, entryId) : p))}
+        />
+      )}
+    </div>
+  );
+}
+
+/* Every time a benefit was ticked off, across cycles — the log that survives
+   Reset Usage. Filtered by year because that's how the card's credits reset. */
+function UsageHistory({ promos, onRemove }) {
+  const history = useMemo(() => promoUsageHistory(promos), [promos]);
+  const years = useMemo(() => [...new Set(history.map(e => String(e.date).slice(0, 4)))].sort().reverse(), [history]);
+  const [year, setYear] = useState('all');
+  const rows = year === 'all' ? history : history.filter(e => String(e.date).startsWith(year));
+  const total = rows.reduce((s, e) => s + e.amount, 0);
+  const cardStyle = { background: 'var(--color-surface)', border: 'var(--border-ghost)', borderRadius: 'var(--radius-xl)', padding: 20, boxShadow: 'var(--shadow-xs)' };
+  const td = { ...promoTdStyle, verticalAlign: 'top' };
+
+  return (
+    <div style={cardStyle} data-testid="usage-history">
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 14 }}>
+        <div>
+          <div style={{ fontFamily: 'var(--font-headline)', fontSize: 16, fontWeight: 700, marginBottom: 2 }}>Usage history</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+            Every time a benefit was marked done, and where. Kept across cycles — Reset Usage doesn't clear it.
+          </div>
+        </div>
+        {history.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontFamily: 'var(--font-headline)', fontSize: 20, fontWeight: 700, color: '#16a34a' }}>{fmt(total)}</div>
+              <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{rows.length} use{rows.length === 1 ? '' : 's'}</div>
+            </div>
+            <select aria-label="Year" value={year} onChange={e => setYear(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
+              <option value="all">All years</option>
+              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {rows.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>
+          Nothing logged yet. Tick a benefit above and it lands here with the date and where it was spent.
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
+            <thead>
+              <tr>
+                <th scope="col" style={promoThStyle}>Date</th>
+                <th scope="col" style={promoThStyle}>Benefit</th>
+                <th scope="col" style={promoThStyle}>Where it was spent</th>
+                <th scope="col" style={{ ...promoThStyle, textAlign: 'right' }}>Value</th>
+                <th scope="col" style={{ ...promoThStyle, width: 36 }}><span style={srOnlyStyle}>Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(e => (
+                <tr key={`${e.promoId}:${e.id}`}>
+                  <td style={{ ...td, whiteSpace: 'nowrap', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{longDate(parseISODate(e.date))}</td>
+                  <td style={{ ...td, fontWeight: 600 }}>{e.promoName}</td>
+                  <td style={{ ...td, color: e.note ? 'inherit' : 'var(--color-text-tertiary)' }}>{e.note || '—'}</td>
+                  <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{e.amount > 0 ? fmt(e.amount) : '—'}</td>
+                  <td style={td}>
+                    <button
+                      type="button"
+                      onClick={() => { if (confirm(`Remove this ${e.promoName} entry from the history?`)) onRemove(e.promoId, e.id); }}
+                      title="Remove from history (reopens the benefit if it's this cycle's completion)"
+                      style={{ ...iconBtnStyle, color: '#ba1a1a' }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

@@ -12,6 +12,11 @@ import {
   promoTagCounts,
   nextResetDate,
   lastUsedFor,
+  markPromoDone,
+  reopenPromo,
+  syncCompletionLog,
+  removeUsageEntry,
+  promoUsageHistory,
 } from './cardPromos.js';
 
 // A fixed "now" so cycle boundaries are assertable: Tue 2026-08-25.
@@ -366,5 +371,53 @@ describe('lastUsedFor', () => {
   it('finds a hand-tagged charge on a promo with no match rules', () => {
     const last = lastUsedFor(manualPromo, txns, { t2: 'manual' }, NOW);
     expect(last).toMatchObject({ source: 'transaction', amount: 6 });
+  });
+});
+
+describe('usage history', () => {
+  const lounge = { id: 'pp', card: 'Chase Sapphire Reserve', name: 'Priority Pass', value: 469, period: 'annual' };
+
+  it('adds an entry per completion and keeps old ones across a reset', () => {
+    let p = markPromoDone(lounge, { date: '2025-03-02', note: ' LAX ' });
+    p = { ...p, completedAt: '', completedNote: '', completedLogId: '' }; // Reset Usage
+    p = markPromoDone(p, { date: '2026-10-14', note: 'JFK T4' });
+    const h = promoUsageHistory([p]);
+    expect(h.map(e => [e.date, e.note, e.amount])).toEqual([['2026-10-14', 'JFK T4', 469], ['2025-03-02', 'LAX', 469]]);
+  });
+
+  it('reopening drops only the entry the current completion wrote', () => {
+    let p = markPromoDone(lounge, { date: '2025-03-02', note: 'LAX' });
+    p = markPromoDone({ ...p, completedLogId: '' }, { date: '2026-10-14', note: 'JFK' });
+    p = reopenPromo(p);
+    expect(p.completedAt).toBe('');
+    expect(promoUsageHistory([p]).map(e => e.note)).toEqual(['LAX']);
+  });
+
+  it('edit-form changes update the linked entry, and clearing the date removes it', () => {
+    let p = markPromoDone(lounge, { date: '2026-10-14', note: 'JFK' });
+    p = syncCompletionLog({ ...p, completedAt: '2026-10-15', completedNote: 'JFK T4' });
+    expect(promoUsageHistory([p])).toMatchObject([{ date: '2026-10-15', note: 'JFK T4' }]);
+    expect(p.usageLog).toHaveLength(1);
+    p = syncCompletionLog({ ...p, completedAt: '' });
+    expect(promoUsageHistory([p])).toEqual([]);
+  });
+
+  it('shows a completion stamped before the log existed, and adopts it on edit', () => {
+    const legacy = { ...lounge, completedAt: '2026-11-01', completedNote: 'Old note' };
+    expect(promoUsageHistory([legacy])).toMatchObject([{ id: 'legacy-pp', date: '2026-11-01', note: 'Old note' }]);
+    const adopted = syncCompletionLog(legacy);
+    expect(promoUsageHistory([adopted])).toHaveLength(1);
+    expect(adopted.usageLog).toHaveLength(1);
+  });
+
+  it('removing the current entry reopens the benefit; an older one leaves it done', () => {
+    let p = markPromoDone(lounge, { date: '2025-03-02', note: 'LAX' });
+    const oldId = p.completedLogId;
+    p = markPromoDone({ ...p, completedLogId: '' }, { date: '2026-10-14', note: 'JFK' });
+    const keptDone = removeUsageEntry(p, oldId);
+    expect(keptDone.completedAt).toBe('2026-10-14');
+    expect(keptDone.usageLog).toHaveLength(1);
+    expect(removeUsageEntry(p, p.completedLogId).completedAt).toBe('');
+    expect(removeUsageEntry({ ...lounge, completedAt: '2026-11-01' }, 'legacy-pp').completedAt).toBe('');
   });
 });
