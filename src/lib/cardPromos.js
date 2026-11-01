@@ -376,3 +376,85 @@ export function summarizeCardPromos({ promos, transactions, asOf = new Date(), l
     moreCount: Math.max(0, ranked.length - limit),
   };
 }
+
+/* ── Usage history ──
+   `completedAt`/`completedNote` say whether a benefit is done THIS cycle, and
+   get cleared when it resets. `usageLog` is the record that outlives cycles:
+   one entry per time a benefit was ticked off, so last year's lounge visits
+   are still there after Reset Usage. `completedLogId` points at the entry the
+   current completion wrote, so editing or reopening it touches that entry and
+   not an older one. */
+
+let logSeq = 0;
+function newLogId() {
+  logSeq += 1;
+  return `use-${Date.now().toString(36)}-${logSeq}`;
+}
+
+/** Tick a benefit off: stamp the cycle fields and add a fresh history entry. */
+export function markPromoDone(promo, { date, note = '' }) {
+  const id = newLogId();
+  const entry = { id, date, note: (note || '').trim(), amount: Number(promo.value) || 0 };
+  return {
+    ...promo,
+    completedAt: date,
+    completedNote: entry.note,
+    completedLogId: id,
+    usageLog: [...(promo.usageLog || []), entry],
+  };
+}
+
+/** Untick: clears this cycle's completion and drops the entry it wrote. An
+ *  untick is "I didn't actually use it", so it shouldn't linger in history. */
+export function reopenPromo(promo) {
+  const log = (promo.usageLog || []).filter(e => e.id !== promo.completedLogId);
+  return { ...promo, completedAt: '', completedNote: '', completedLogId: '', usageLog: log };
+}
+
+/** After the Edit form changed completedAt/completedNote by hand, bring the
+ *  history in line: update the entry the completion points at, add one if a
+ *  completion was typed in fresh, or drop it if the date was cleared. */
+export function syncCompletionLog(promo) {
+  const log = promo.usageLog || [];
+  const linked = promo.completedLogId && log.find(e => e.id === promo.completedLogId);
+  if (!promo.completedAt) {
+    if (!linked) return { ...promo, completedLogId: '' };
+    return { ...promo, completedNote: '', completedLogId: '', usageLog: log.filter(e => e !== linked) };
+  }
+  if (linked) {
+    return {
+      ...promo,
+      usageLog: log.map(e => e === linked ? { ...e, date: promo.completedAt, note: promo.completedNote || '' } : e),
+    };
+  }
+  return markPromoDone(promo, { date: promo.completedAt, note: promo.completedNote || '' });
+}
+
+/** Remove one history entry. If it's the one backing the current completion,
+ *  the benefit is reopened too, so the table and the history can't disagree. */
+export function removeUsageEntry(promo, entryId) {
+  if (entryId === promo.completedLogId || entryId === legacyEntryId(promo)) return reopenPromo(promo);
+  return { ...promo, usageLog: (promo.usageLog || []).filter(e => e.id !== entryId) };
+}
+
+function legacyEntryId(promo) {
+  return `legacy-${promo.id}`;
+}
+
+/** Every logged use across `promos`, newest first. A completion stamped before
+ *  the log existed has no entry, so it's shown from completedAt instead. */
+export function promoUsageHistory(promos) {
+  const out = [];
+  for (const p of promos || []) {
+    const base = { promoId: p.id, promoName: p.name || 'Untitled promo', card: p.card || '', color: p.color || null };
+    for (const e of p.usageLog || []) {
+      if (!e || !e.date) continue;
+      out.push({ ...base, id: e.id, date: e.date, note: e.note || '', amount: Number(e.amount) || 0 });
+    }
+    const linked = p.completedLogId && (p.usageLog || []).some(e => e.id === p.completedLogId);
+    if (p.completedAt && !linked) {
+      out.push({ ...base, id: legacyEntryId(p), date: p.completedAt, note: p.completedNote || '', amount: Number(p.value) || 0 });
+    }
+  }
+  return out.sort((a, b) => String(b.date).localeCompare(String(a.date)) || a.promoName.localeCompare(b.promoName));
+}

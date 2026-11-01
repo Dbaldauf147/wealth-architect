@@ -163,6 +163,7 @@ const NAV_ITEMS = [
   { id: 'home', label: 'Buying a Home', icon: 'home_work' },
   { id: 'assets', label: 'Assets & Liabilities', icon: 'account_balance' },
   { id: 'cards', label: 'Cards Overview', icon: 'credit_card' },
+  { id: 'benefits', label: 'CSR Benefits', icon: 'workspace_premium' },
   { id: 'promos', label: 'Card Promotions', icon: 'redeem' },
   { id: 'loan', label: 'Short-Term Loan', icon: 'request_quote' },
 ];
@@ -327,7 +328,8 @@ export function App() {
       case 'recurring': return <RecurringPage />;
       case 'assets': return <AssetsPage />;
       case 'cards': return <CardsPage />;
-      case 'promos': return <CardPromosPage />;
+      case 'benefits': return <CardPromosPage key="csr" mode="csr" />;
+      case 'promos': return <CardPromosPage key="promos" mode="promos" />;
       // Hidden from the sidebar, but the route still answers: an open tab or a
       // bookmark on #splitwise loads the page rather than silently falling
       // through to Overview.
