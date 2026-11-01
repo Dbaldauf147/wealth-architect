@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
+import { SplitwiseMonthly } from '../components/SplitwiseMonthly';
 
 /* What Splitwise knows, read from this account's side.
 
@@ -83,10 +84,15 @@ export function SplitwisePage() {
         <div>
           <div style={{ fontFamily: 'var(--font-headline)', fontSize: 24, fontWeight: 700, marginBottom: 4 }}>Splitwise</div>
           <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>
-            What you have been charged with, and who is up on whom.
+            Who is up on whom, and the biggest shared bills — from Splitwise's monthly email.
           </div>
         </div>
-        <div style={{ ...card, borderColor: 'rgba(232,163,23,0.4)', background: 'rgba(232,163,23,0.06)' }}>
+        <SplitwiseMonthly />
+        <details style={{ ...card, borderColor: 'rgba(232,163,23,0.4)', background: 'rgba(232,163,23,0.06)' }}>
+          <summary style={{ cursor: 'pointer', fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+            Want every expense and live balances? Connect the Splitwise API
+          </summary>
+          <div style={{ height: 12 }} />
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 14, marginBottom: 8 }}>
             <span className="material-symbols-outlined" style={{ fontSize: 19, color: '#a36b00' }}>link_off</span>
             Not connected
@@ -100,7 +106,7 @@ export function SplitwisePage() {
             and redeploy. Nothing else needs configuring, and the key never reaches the browser —
             the page reads Splitwise through <code>/api/splitwise</code>.
           </div>
-        </div>
+        </details>
       </div>
     );
   }
@@ -299,6 +305,9 @@ export function SplitwisePage() {
           )}
         </div>
       </div>
+
+      <div style={{ fontFamily: 'var(--font-headline)', fontSize: 18, fontWeight: 700, marginTop: 8 }}>Monthly emails</div>
+      <SplitwiseMonthly />
     </div>
   );
 }

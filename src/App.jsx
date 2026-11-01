@@ -165,6 +165,7 @@ const NAV_ITEMS = [
   { id: 'cards', label: 'Cards Overview', icon: 'credit_card' },
   { id: 'benefits', label: 'CSR Benefits', icon: 'workspace_premium' },
   { id: 'promos', label: 'Card Promotions', icon: 'redeem' },
+  { id: 'splitwise', label: 'Splitwise', icon: 'group' },
   { id: 'loan', label: 'Short-Term Loan', icon: 'request_quote' },
 ];
 
@@ -330,9 +331,6 @@ export function App() {
       case 'cards': return <CardsPage />;
       case 'benefits': return <CardPromosPage key="csr" mode="csr" />;
       case 'promos': return <CardPromosPage key="promos" mode="promos" />;
-      // Hidden from the sidebar, but the route still answers: an open tab or a
-      // bookmark on #splitwise loads the page rather than silently falling
-      // through to Overview.
       case 'splitwise': return <SplitwisePage />;
       case 'home': return <HomeBuyingPage />;
       case 'loan': return <ShortTermLoanPage />;
