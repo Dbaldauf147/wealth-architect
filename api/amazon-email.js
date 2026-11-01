@@ -12,6 +12,11 @@
 // the body, which carries a name and a shipping address into a collection the
 // page can read without signing in.
 //
+// It also takes Splitwise's monthly "Your balance for <Month>" email, which
+// the same script finds (see GMAIL_QUERY): rather than a second script and a
+// second secret, that one email is parsed by src/lib/parseSplitwiseEmail.js
+// and saved as one doc per month in `splitwiseMonthly`.
+//
 // Request:  POST { emails: [{ id, subject, from, date, body }] }
 //           header x-ingest-secret. ?dry=1 parses and reports without writing.
 // Response: { ok, saved, orders: [...ids], ignored: [{ id, reason }] }
@@ -24,8 +29,10 @@
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { parseAmazonEmailOrders, mergeAmazonOrder } from '../src/lib/parseAmazonEmail.js';
+import { isSplitwiseSummaryEmail, parseSplitwiseEmail } from '../src/lib/parseSplitwiseEmail.js';
 
 const COLLECTION = 'amazonOrders';
+const SPLITWISE_COLLECTION = 'splitwiseMonthly';
 
 // What the Apps Script searches Gmail for. Served from here (GET ?config=1)
 // so a sender Amazon adds is picked up by a deploy, not a re-paste; the
@@ -33,7 +40,8 @@ const COLLECTION = 'amazonOrders';
 // from more than one Amazon address, so it is found by name.
 const GMAIL_QUERY = '{from:(auto-confirm@amazon.com OR shipment-tracking@amazon.com OR order-update@amazon.com '
   + 'OR return@amazon.com OR digital-no-reply@amazon.com OR payments-messages@amazon.com) '
-  + '(from:(amazon.com OR wholefoodsmarket.com) "whole foods")}';
+  + '(from:(amazon.com OR wholefoodsmarket.com) "whole foods") '
+  + '(from:splitwise.com subject:"your balance for")}';
 // What the script's diagnose() dry-runs, with the text of every email shown.
 // Change it here to look at a different kind of mail.
 const DIAGNOSE_QUERY = 'from:(amazon.com OR wholefoodsmarket.com) "whole foods" newer_than:45d';
@@ -121,8 +129,23 @@ export default async function handler(req, res) {
   const ignored = [];
   const parsedByOrder = new Map(); // orderId -> [{ parsed, key }]
   const samples = [];
+  const splitwise = new Map(); // month -> summary; a later email for a month wins
   for (const e of emails) {
     const id = clean(e?.id, 64);
+    const mail = { subject: clean(e?.subject, 500), from: clean(e?.from, 200), date: clean(e?.date, 60), body: clean(e?.body, MAX_BODY) };
+    if (isSplitwiseSummaryEmail(mail)) {
+      const r = parseSplitwiseEmail(mail);
+      if (!r.ok) {
+        ignored.push({ id, reason: `splitwise: ${r.reason}` });
+        if (sampleAll) samples.push({ id, from: mail.from, subject: mail.subject, ignored: r.reason, lines: textSample(mail.body) });
+        continue;
+      }
+      const prev = splitwise.get(r.summary.month);
+      if (!prev || String(mail.date) >= String(prev.sentAt)) {
+        splitwise.set(r.summary.month, { ...r.summary, source: 'gmail', emailId: id, sentAt: mail.date });
+      }
+      continue;
+    }
     // One email can be about several orders — a checkout Amazon split up.
     const result = parseAmazonEmailOrders({
       subject: clean(e?.subject, 500),
@@ -159,6 +182,7 @@ export default async function handler(req, res) {
       ok: true,
       dry: true,
       parsed: [...parsedByOrder.values()].flat().map(p => p.parsed),
+      splitwise: [...splitwise.values()],
       ignored,
       [sampleAll ? 'samples' : 'noItemsRead']: samples,
     });
@@ -169,6 +193,9 @@ export default async function handler(req, res) {
     if (!db) return res.status(500).json({ error: 'Missing FIREBASE_SERVICE_ACCOUNT_JSON' });
 
     const now = new Date().toISOString();
+    for (const [month, summary] of splitwise) {
+      await db.collection(SPLITWISE_COLLECTION).doc(month).set({ ...summary, updatedAt: now });
+    }
     for (const [orderId, list] of parsedByOrder) {
       const ref = db.collection(COLLECTION).doc(orderId);
       // Read-merge-write in a transaction: the hourly run and a backfill can
@@ -183,8 +210,9 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       ok: true,
-      saved: [...parsedByOrder.values()].reduce((n, l) => n + l.length, 0),
+      saved: [...parsedByOrder.values()].reduce((n, l) => n + l.length, 0) + splitwise.size,
       orders: [...parsedByOrder.keys()],
+      splitwiseMonths: [...splitwise.keys()],
       ignored,
     });
   } catch (err) {

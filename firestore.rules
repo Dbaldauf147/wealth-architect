@@ -59,6 +59,14 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false;
     }
+    // Splitwise's monthly "Your balance for <Month>" email, one doc per month
+    // (id YYYY-MM). Written by api/amazon-email from Gmail (Admin SDK), and by
+    // the Splitwise page's paste box — so the browser writes too, open like
+    // /spendAlerts because there is no auth yet. Balances and the largest
+    // expenses only; the route stores no email body.
+    match /splitwiseMonthly/{doc} {
+      allow read, write: if true;
+    }
     match /{document=**} {
       allow read, write: if false;
     }

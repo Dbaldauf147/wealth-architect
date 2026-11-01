@@ -5,7 +5,8 @@
  * signed in to the Gmail account that receives your Amazon email. It runs as
  * you, reads only Amazon's order, shipment and refund emails, and posts them
  * to /api/amazon-email, which keeps the order number, totals and item names
- * and nothing else.
+ * and nothing else. It also picks up Splitwise's monthly "Your balance for"
+ * email, which the same route turns into that month's Splitwise summary.
  *
  * One-time setup (see "Amazon order emails" in README.md):
  *   1. Project Settings → Script properties → add INGEST_SECRET with the same
@@ -28,7 +29,8 @@ const ENDPOINT = 'https://wealth-architect-delta.vercel.app/api/amazon-email';
 // server ignores anything that isn't an order regardless.
 const QUERY = '{from:(auto-confirm@amazon.com OR shipment-tracking@amazon.com OR order-update@amazon.com '
   + 'OR return@amazon.com OR digital-no-reply@amazon.com OR payments-messages@amazon.com) '
-  + '(from:(amazon.com OR wholefoodsmarket.com) "whole foods")}';
+  + '(from:(amazon.com OR wholefoodsmarket.com) "whole foods") '
+  + '(from:splitwise.com subject:"your balance for")}';
 const DIAGNOSE_QUERY = 'from:(amazon.com OR wholefoodsmarket.com) "whole foods" newer_than:45d';
 
 let config_ = null;
