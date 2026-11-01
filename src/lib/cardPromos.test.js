@@ -349,6 +349,11 @@ describe('lastUsedFor', () => {
     expect(last.date).toEqual(new Date(2026, 7, 20));
   });
 
+  it('carries the note typed when it was ticked off', () => {
+    const p = { ...manualPromo, period: 'monthly', completedAt: '2026-08-05', completedNote: 'Lyft to JFK' };
+    expect(lastUsedFor(p, [], null, NOW)).toMatchObject({ source: 'completed', description: 'Lyft to JFK' });
+  });
+
   it('still reports a completion from an earlier cycle, flagged as prior', () => {
     // Ticked in July, so it no longer counts toward August's allowance — but it
     // is still the honest answer to "when did I last use this".

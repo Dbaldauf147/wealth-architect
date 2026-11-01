@@ -141,6 +141,12 @@ describe('Card Promotions section', () => {
     expect(html).toContain('1 marked done');
   });
 
+  it('shows where a ticked-off promo was spent, escaped', () => {
+    const html = render('cardPromos', promos([promo({ completed: true, completedAt: '2026-09-20', completedNote: 'JFK T4 <Chase lounge>', used: 469, remaining: 0 })]));
+    expect(rowText(html, 'Priority Pass Select')).toContain('Marked done Sep 20, 2026 · JFK T4');
+    expect(html).toContain('&lt;Chase lounge&gt;');
+  });
+
   it('does not call a promo with no value set "Fully used"', () => {
     const html = render('cardPromos', promos([promo({ name: '$150 in Dining', value: 0, remaining: 0 })]));
     const row = rowText(html, '$150 in Dining');

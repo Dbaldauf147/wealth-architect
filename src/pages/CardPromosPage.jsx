@@ -143,6 +143,9 @@ export function CardPromosPage() {
   const [expandedId, setExpandedId] = useState(null);
   // Which promo has its "Next up" date open for editing, inline in the table.
   const [editingNextId, setEditingNextId] = useState(null);
+  // Which promo has its "mark done" form open, and what's typed into it.
+  const [completingId, setCompletingId] = useState(null);
+  const [completeDraft, setCompleteDraft] = useState({ date: '', note: '' });
 
   // Charges in the last 30 days that would have earned more on another card.
   // An explicit mapping wins over guessing the card from the account name.
@@ -292,15 +295,28 @@ export function CardPromosPage() {
     clearPromoTagsFor(id);
   }
 
-  // Manual completion log: stamps today's date, or clears it to reopen the promo.
+  // Manual completion log. Ticking opens a small form for the day it was used
+  // and where; unticking a done promo reopens it straight away.
   function toggleCompleted(promo) {
-    const done = isPromoCompleted(promo);
-    setPromos(prev => prev.map(p => p.id === promo.id ? { ...p, completedAt: done ? '' : todayISO() } : p));
+    if (isPromoCompleted(promo)) {
+      setPromos(prev => prev.map(p => p.id === promo.id ? { ...p, completedAt: '', completedNote: '' } : p));
+      return;
+    }
+    if (completingId === promo.id) { setCompletingId(null); return; }
+    setCompletingId(promo.id);
+    setCompleteDraft({ date: todayISO(), note: '' });
+  }
+
+  function saveCompleted() {
+    const date = completeDraft.date || todayISO();
+    const note = (completeDraft.note || '').trim();
+    setPromos(prev => prev.map(p => p.id === completingId ? { ...p, completedAt: date, completedNote: note } : p));
+    setCompletingId(null);
   }
 
   function resetAllUsage() {
     if (!confirm('Reset all promos for a new cycle? This clears manual "used" amounts and un-marks anything logged as completed.')) return;
-    setPromos(prev => prev.map(p => ({ ...p, used: 0, completedAt: '' })));
+    setPromos(prev => prev.map(p => ({ ...p, used: 0, completedAt: '', completedNote: '' })));
   }
 
   function restoreSeed() {
@@ -482,7 +498,10 @@ export function CardPromosPage() {
                               <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 8 }}>
                                 Marking a promo complete (the checkbox on the row, or "Completed on" above) wins over everything below and counts the full value. Otherwise: if any match field is set — or any transaction is tagged to this promo from the Transactions page — "used" auto-sums the absolute value of those transactions in the current cycle (manual "Used $" is ignored). A hand-tag always wins over the match fields, including another promo's, so a charge only ever counts once. Sign doesn't matter — tag the original travel charge (negative) to track redeemable spend, or tag the statement credit (positive) to track actual redemption. Multiple match fields are OR'd. "Merchant contains" matches anywhere in the transaction's merchant text. "Renews on" is the anniversary the Next up column counts from — leave it blank to reset on the calendar cycle.
                               </div>
-                              <LabeledInput label="Notes" value={editDraft.notes} onChange={v => setEditDraft({ ...editDraft, notes: v })} />
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                                <LabeledInput label="Notes" value={editDraft.notes} onChange={v => setEditDraft({ ...editDraft, notes: v })} />
+                                <LabeledInput label="Where it was spent (when completed)" value={editDraft.completedNote} onChange={v => setEditDraft({ ...editDraft, completedNote: v })} />
+                              </div>
                               <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
                                 <button onClick={cancelEdit} style={btnSecondaryStyle}>Cancel</button>
                                 <button onClick={saveEdit} style={btnPrimaryStyle}>Save</button>
@@ -507,8 +526,8 @@ export function CardPromosPage() {
                             <button
                               onClick={() => toggleCompleted(p)}
                               title={isDone
-                                ? `Marked complete${(() => { const d = parseISODate(p.completedAt); return d ? ` on ${longDate(d)}` : ''; })()} — click to reopen`
-                                : 'Mark this benefit as used/completed'}
+                                ? `Marked complete${(() => { const d = parseISODate(p.completedAt); return d ? ` on ${longDate(d)}` : ''; })()}${p.completedNote ? ` — ${p.completedNote}` : ''} — click to reopen`
+                                : "Mark this benefit as used — you'll be asked when and where"}
                               style={{
                                 flexShrink: 0, width: 22, height: 22, borderRadius: 6, cursor: 'pointer',
                                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -597,8 +616,8 @@ export function CardPromosPage() {
                               <div title={lastUsed.source === 'transaction'
                                 ? `${lastUsed.description || 'Matching charge'} — ${fmtCents(lastUsed.amount)}`
                                 : lastUsed.source === 'completed'
-                                  ? 'Ticked off by hand this cycle'
-                                  : 'Ticked off by hand in an earlier cycle — no longer counts toward this one'}>
+                                  ? `Ticked off by hand this cycle${lastUsed.description ? ` — ${lastUsed.description}` : ''}`
+                                  : `Ticked off by hand in an earlier cycle${lastUsed.description ? ` (${lastUsed.description})` : ''} — no longer counts toward this one`}>
                                 <div style={{ fontSize: 12.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{longDate(lastUsed.date)}</div>
                                 <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 1 }}>
                                   <span className="material-symbols-outlined" style={{ fontSize: 12 }}>
@@ -606,6 +625,11 @@ export function CardPromosPage() {
                                   </span>
                                   {relativeDayLabel(daysFromToday(lastUsed.date))}
                                 </div>
+                                {lastUsed.source !== 'transaction' && lastUsed.description && (
+                                  <div data-testid="promo-done-note" style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 2, maxWidth: 180, whiteSpace: 'normal', lineHeight: 1.35 }}>
+                                    {lastUsed.description}
+                                  </div>
+                                )}
                               </div>
                             ) : (
                               <span style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>Not yet</span>
@@ -725,6 +749,58 @@ export function CardPromosPage() {
                             </div>
                           </td>
                         </tr>
+
+                        {/* "Mark done" — when it was used and where, before it's stamped. */}
+                        {completingId === p.id && !isDone && (() => {
+                          const start = periodWindowStart(p.period);
+                          const picked = parseISODate(completeDraft.date);
+                          const beforeCycle = start && picked && picked < start;
+                          return (
+                            <tr>
+                              <td colSpan={8} style={{ padding: '0 10px 10px 40px', borderBottom: '1px solid var(--border-ghost)' }}>
+                                <form
+                                  onSubmit={e => { e.preventDefault(); saveCompleted(); }}
+                                  onKeyDown={e => { if (e.key === 'Escape') setCompletingId(null); }}
+                                  style={{ display: 'flex', alignItems: 'flex-end', gap: 8, flexWrap: 'wrap', border: '1px solid rgba(22,163,74,0.35)', background: 'rgba(22,163,74,0.045)', borderRadius: 8, padding: 10 }}
+                                >
+                                  <div style={{ width: 150 }}>
+                                    <div style={labelStyle}>Date used</div>
+                                    <input
+                                      type="date"
+                                      aria-label="Date used"
+                                      value={completeDraft.date}
+                                      max={todayISO()}
+                                      onChange={e => setCompleteDraft(d => ({ ...d, date: e.target.value }))}
+                                      style={{ ...inputStyle, padding: '6px 8px' }}
+                                    />
+                                  </div>
+                                  <div style={{ flex: 1, minWidth: 220 }}>
+                                    <div style={labelStyle}>Where it was spent</div>
+                                    <input
+                                      type="text"
+                                      autoFocus
+                                      aria-label="Where it was spent"
+                                      placeholder="e.g. Delta flight to SFO, JFK Terminal 4 lounge"
+                                      value={completeDraft.note}
+                                      onChange={e => setCompleteDraft(d => ({ ...d, note: e.target.value }))}
+                                      style={{ ...inputStyle, padding: '6px 8px' }}
+                                    />
+                                  </div>
+                                  <button type="button" onClick={() => setCompletingId(null)} style={{ ...btnSecondaryStyle, padding: '6px 12px' }}>Cancel</button>
+                                  <button type="submit" style={{ ...btnPrimaryStyle, padding: '6px 12px', background: '#16a34a' }}>
+                                    <span className="material-symbols-outlined" style={{ fontSize: 15 }}>check</span>
+                                    Mark done
+                                  </button>
+                                  {beforeCycle && (
+                                    <div style={{ flexBasis: '100%', fontSize: 11, color: '#a36b00' }}>
+                                      That date is before this {p.period} cycle started, so it will show as last used but won't count this cycle as done.
+                                    </div>
+                                  )}
+                                </form>
+                              </td>
+                            </tr>
+                          );
+                        })()}
 
                         {/* The charges behind the number, on their own full-width row so
                             the reading columns above keep their alignment. */}

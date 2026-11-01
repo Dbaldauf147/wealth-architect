@@ -487,7 +487,7 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
       // the case actually worth flagging.
       let lastLine;
       if (item.completed) {
-        lastLine = `<span style="color:#16a34a;font-weight:600;">&#10003; Marked done${item.completedAt ? ` ${shortDate(item.completedAt)}` : ''}</span>`;
+        lastLine = `<span style="color:#16a34a;font-weight:600;">&#10003; Marked done${item.completedAt ? ` ${shortDate(item.completedAt)}` : ''}</span>${item.completedNote ? ` · ${escapeHtml(item.completedNote)}` : ''}`;
       } else if (!last) {
         lastLine = item.tracked ? 'No matching charge yet' : 'Tracked by hand — no match rule set';
       } else {
