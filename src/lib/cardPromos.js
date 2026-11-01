@@ -166,7 +166,7 @@ export function lastUsedFor(promo, transactions, promoTags, asOf = new Date()) {
   if (!promo) return null;
   const completedAt = parseISODate(promo.completedAt);
   if (completedAt && isPromoCompleted(promo, asOf)) {
-    return { date: completedAt, source: 'completed', description: '', amount: 0 };
+    return { date: completedAt, source: 'completed', description: promo.completedNote || '', amount: 0 };
   }
   const last = matchingTransactions(promo, transactions, promoTags)[0] || null;
   if (last) {
@@ -179,7 +179,7 @@ export function lastUsedFor(promo, transactions, promoTags, asOf = new Date()) {
   }
   // A completion stamped in an earlier cycle still answers "when did I last use
   // this", even though it no longer counts toward the current allowance.
-  if (completedAt) return { date: completedAt, source: 'completed-prior', description: '', amount: 0 };
+  if (completedAt) return { date: completedAt, source: 'completed-prior', description: promo.completedNote || '', amount: 0 };
   return null;
 }
 
@@ -337,6 +337,8 @@ export function summarizeCardPromos({ promos, transactions, asOf = new Date(), l
       completed,
       // The day it was ticked off, for "Marked done Sep 20" in the email.
       completedAt: completed ? (p.completedAt || null) : null,
+      // Where it went, as typed when it was ticked off ("Delta flight to SFO").
+      completedNote: completed ? (p.completedNote || null) : null,
       tracked: promoIsTracked(p, promoTags),
       matchCount: matches.length,
       taggedCount: tagCounts[p.id] || 0,
