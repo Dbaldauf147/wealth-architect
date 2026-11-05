@@ -1222,6 +1222,12 @@ export function DataProvider({ children }) {
     (sym) => (scrambler ? scrambler.realTicker(sym) : sym),
     [scrambler],
   );
+  // The same demo-mode treatment for a trade set held outside this context
+  // (another person's portfolio), so it can't leak real figures either.
+  const scrambleTrades = useCallback(
+    (stored) => (scrambler ? scrambleRobinhood(stored, scrambler) : stored),
+    [scrambler],
+  );
 
   const transactions = useMemo(
     () => (scrambler ? scrambleTransactions(visibleTransactions, scrambler) : visibleTransactions),
@@ -2706,6 +2712,7 @@ export function DataProvider({ children }) {
     // turn a displayed symbol back into the real one first. Identity when
     // demo mode is off, which keeps the call sites free of conditionals.
     revealTicker,
+    scrambleTrades,
     hiddenCount: hiddenIds.size,
   }), [
     transactions,
@@ -2753,6 +2760,7 @@ export function DataProvider({ children }) {
     promoTags,
     privacyMode,
     revealTicker,
+    scrambleTrades,
     shownBalanceHistory,
     shownRobinhood,
     shownCustomAssets,

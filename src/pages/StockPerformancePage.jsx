@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { fetchSeries, fetchQuotes, fetchCpi } from '../lib/marketData';
 import {
@@ -31,7 +31,13 @@ import {
 } from '../lib/portfolioHistory';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { useSharedPortfolio } from '../hooks/useSharedPortfolio';
 import styles from './StockPerformancePage.module.css';
+
+// Whose trades the tabs are reading. null is yours, from DataContext; another
+// person's portfolio (Joanne's) is provided by the page with its own store,
+// its own tax answers, and none of your recorded account snapshots.
+const PortfolioSource = createContext(null);
 
 // The S&P 500 *total return* index — dividends reinvested. Using the price
 // index instead would understate the benchmark by roughly 1.8%/yr, which
@@ -352,8 +358,11 @@ function PortfolioHistoryChart({ history, events, benchLabel = 'Same deposits in
  * and simply loses the recorded precision.
  */
 function useLoggedHistory() {
-  const [rows, setRows] = useState(null);
+  const source = useContext(PortfolioSource);
+  // The snapshots are of your account; nobody else's history has any.
+  const [rows, setRows] = useState(source ? [] : null);
   useEffect(() => {
+    if (source) return undefined;
     let cancelled = false;
     getDoc(doc(db, 'portfolioHistory', 'daily'))
       .then(snap => {
@@ -362,7 +371,7 @@ function useLoggedHistory() {
       })
       .catch(() => { if (!cancelled) setRows([]); });
     return () => { cancelled = true; };
-  }, []);
+  }, [source]);
   return rows;
 }
 
@@ -1845,7 +1854,9 @@ function ImportWizard({ existingTrades, existingActions, existingIncome, existin
  * work in practice.
  */
 function usePortfolio(series) {
-  const { robinhoodTrades, revealTicker } = useData();
+  const { robinhoodTrades: mine, revealTicker } = useData();
+  const source = useContext(PortfolioSource);
+  const robinhoodTrades = source ? source.robinhoodTrades : mine;
   const [quoteResult, setQuoteResult] = useState(null);
 
   // Stored trades come back without their derived `t` timestamp — restore it
@@ -1977,7 +1988,9 @@ function realReturnTint(value, worst, best) {
 }
 
 function TradesTab({ series, meta, cpi }) {
-  const { setRobinhoodTrades } = useDataActions();
+  const { setRobinhoodTrades: setMine } = useDataActions();
+  const source = useContext(PortfolioSource);
+  const setRobinhoodTrades = source ? source.setRobinhoodTrades : setMine;
   const [showLots, setShowLots] = useState(false);
   const [reimporting, setReimporting] = useState(false);
   const [view, setView] = useState('summary');
@@ -3014,13 +3027,13 @@ function defaultStateRateText(code) {
   return s ? String(+(s.rate * 100).toFixed(2)) : '';
 }
 
-function loadTaxPrefs() {
-  try { return JSON.parse(localStorage.getItem(TAX_PREFS_KEY)) || {}; }
+function loadTaxPrefs(key = TAX_PREFS_KEY) {
+  try { return JSON.parse(localStorage.getItem(key)) || {}; }
   catch { return {}; }
 }
 
-function saveTaxPrefs(prefs) {
-  try { localStorage.setItem(TAX_PREFS_KEY, JSON.stringify(prefs)); }
+function saveTaxPrefs(prefs, key = TAX_PREFS_KEY) {
+  try { localStorage.setItem(key, JSON.stringify(prefs)); }
   catch { /* private mode — the inputs just won't persist */ }
 }
 
@@ -3031,15 +3044,19 @@ function saveTaxPrefs(prefs) {
  * can never be quoting bills computed from different incomes.
  */
 function useTaxPrefs() {
-  const [prefs, setPrefsState] = useState(loadTaxPrefs);
+  // Each person's own income and filing answers: Joanne's tax on a sale is
+  // worked out from hers, not yours.
+  const source = useContext(PortfolioSource);
+  const key = source ? `${TAX_PREFS_KEY}:${source.id}` : TAX_PREFS_KEY;
+  const [prefs, setPrefsState] = useState(() => loadTaxPrefs(key));
 
   const setPrefs = useCallback((patch) => {
     setPrefsState(prev => {
       const next = { ...prev, ...patch };
-      saveTaxPrefs(next);
+      saveTaxPrefs(next, key);
       return next;
     });
-  }, []);
+  }, [key]);
 
   const num = (v, strip) => Number(String(v ?? '').replace(strip, '')) || 0;
   const status = prefs.status || 'single';
@@ -6340,8 +6357,22 @@ function useCpi() {
   return state;
 }
 
+const OTHER_PORTFOLIOS = [{ id: 'joanne', label: "Joanne's Investments", name: 'Joanne' }];
+
 export function StockPerformancePage() {
   const [tab, setTab] = useState('benchmark');
+  // 'me', or the id of another person's portfolio.
+  const [owner, setOwner] = useState('me');
+  const { scrambleTrades } = useData();
+  const joanne = useSharedPortfolio('joanne');
+  const other = OTHER_PORTFOLIOS.find(o => o.id === owner) || null;
+  const source = useMemo(() => (other ? {
+    id: other.id,
+    name: other.name,
+    robinhoodTrades: scrambleTrades ? scrambleTrades(joanne.robinhoodTrades) : joanne.robinhoodTrades,
+    setRobinhoodTrades: joanne.setRobinhoodTrades,
+    error: joanne.error,
+  } : null), [other, joanne.robinhoodTrades, joanne.setRobinhoodTrades, joanne.error, scrambleTrades]);
   const [payload, setPayload] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -6390,18 +6421,47 @@ export function StockPerformancePage() {
       <div className={styles.tabBar}>
         {TABS.map(t => (
           <button key={t.id} type="button"
-            className={`${styles.tab} ${tab === t.id ? styles.tabActive : ''}`}
-            onClick={() => setTab(t.id)}>
+            className={`${styles.tab} ${owner === 'me' && tab === t.id ? styles.tabActive : ''}`}
+            onClick={() => { setOwner('me'); setTab(t.id); }}>
             {t.label}
+          </button>
+        ))}
+        {OTHER_PORTFOLIOS.map(o => (
+          <button key={o.id} type="button"
+            className={`${styles.tab} ${owner === o.id ? styles.tabActive : ''}`}
+            onClick={() => setOwner(o.id)}>
+            {o.label}
           </button>
         ))}
       </div>
 
-      {tab === 'benchmark' && <BenchmarkTab series={series} meta={meta} cpi={cpi} />}
-      {tab === 'trades' && <TradesTab series={series} meta={meta} cpi={cpi} />}
-      {tab === 'inflation' && <InflationTab series={series} cpi={cpi} />}
-      {tab === 'tax' && <TaxTab series={series} />}
-      {tab === 'stock' && <SingleStockTab series={series} cpi={cpi} />}
+      {other && (
+        <div className={styles.subTabBar} data-testid="other-portfolio-tabs">
+          {TABS.map(t => (
+            <button key={t.id} type="button"
+              className={`${styles.tab} ${tab === t.id ? styles.tabActive : ''}`}
+              onClick={() => setTab(t.id)}>
+              {t.id === 'trades' ? `${other.name}'s Trades` : t.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {source?.error && (
+        <div className={styles.cardSub} style={{ color: 'var(--color-error)', marginBottom: 12 }}>
+          {source.error}
+        </div>
+      )}
+
+      <PortfolioSource.Provider value={source}>
+        {/* Keyed by owner so no tab carries one person's selections into the other's data. */}
+        <div key={owner}>
+          {tab === 'benchmark' && <BenchmarkTab series={series} meta={meta} cpi={cpi} />}
+          {tab === 'trades' && <TradesTab series={series} meta={meta} cpi={cpi} />}
+          {tab === 'inflation' && <InflationTab series={series} cpi={cpi} />}
+          {tab === 'tax' && <TaxTab series={series} />}
+          {tab === 'stock' && <SingleStockTab series={series} cpi={cpi} />}
+        </div>
+      </PortfolioSource.Provider>
     </div>
   );
 }

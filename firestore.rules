@@ -67,6 +67,13 @@ service cloud.firestore {
     match /splitwiseMonthly/{doc} {
       allow read, write: if true;
     }
+    // Another person's imported Robinhood trades (portfolios/joanne), written
+    // by the Stock Performance page's import. Kept out of /config/default so
+    // it can never merge into the owner's own trades. Open like that doc
+    // because there is no auth yet.
+    match /portfolios/{doc} {
+      allow read, write: if true;
+    }
     match /{document=**} {
       allow read, write: if false;
     }
