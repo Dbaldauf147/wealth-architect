@@ -25,6 +25,7 @@ import {
   tradedSymbols, hydrateTrades, hydrateActions, hydrateIncome, hydrateCashRows, FIELDS,
 } from '../lib/robinhood';
 import { benchmarkLots, externalCashComparison } from '../lib/tradeBenchmark';
+import { pickLots, scenarioBridge, LOT_METHODS } from '../lib/partialSale';
 import {
   priceSeries, buildPortfolioHistory, contributionEvents, mergeLoggedHistory,
 } from '../lib/portfolioHistory';
@@ -4569,6 +4570,9 @@ function SingleStockTab({ series, cpi }) {
   // hold you stated alone, so zooming in to look at year one doesn't quietly
   // rewrite the horizon the headline and the table are reporting on.
   const [chartYears, setChartYears] = useState(20);
+  // How much of the position the Tax section and Scenario Analysis sell.
+  const [sellPct, setSellPct] = useState(100);
+  const [lotMethod, setLotMethod] = useState('fifo');
 
   const nowT = series.lastT;
   const taxYear = new Date(nowT).getUTCFullYear();
@@ -4885,6 +4889,40 @@ function SingleStockTab({ series, cpi }) {
 
   const summedTax = comparison.reduce((t, r) => t + r.taxCost, 0);
 
+  // The Tax section's sale: all or part of the position, lot by lot, priced
+  // against the rest of the year the same way as the whole-position figure.
+  const partial = useMemo(() => {
+    if (!active?.open.length) return { picked: { sold: [] }, sale: null, tax: null, asOfT: nowT };
+    const held = active.open.reduce((t, r) => t + (Number.isFinite(r.value) ? r.value : 0), 0);
+    const picked = pickLots(active.open, held * sellPct / 100, lotMethod, nowT);
+    if (!picked.sold.length) return { picked, sale: null, tax: null, asOfT: nowT };
+    const s = summarizeLots(picked.sold, nowT);
+    const common = { otherTaxableIncome: otherIncome, status, stateRate, includeNiit };
+    const before = estimateTax({
+      shortTermGain: base.shortTermGain, longTermGain: base.longTermGain, ...common,
+    });
+    const after = estimateTax({
+      shortTermGain: base.shortTermGain + s.shortTermGain,
+      longTermGain: base.longTermGain + s.longTermGain,
+      ...common,
+    });
+    const d = (k) => after[k] - before[k];
+    return {
+      picked,
+      sale: s,
+      tax: {
+        cost: d('total') - d('lossRelief'),
+        federalLong: d('federalLong'),
+        federalShort: d('federalShort'),
+        niit: d('niit'),
+        state: d('state'),
+        lossRelief: d('lossRelief'),
+      },
+      asOfT: nowT,
+    };
+  }, [active, sellPct, lotMethod, nowT, base.shortTermGain, base.longTermGain,
+    otherIncome, status, stateRate, includeNiit]);
+
   if (!trades.length) {
     return (
       <div className={styles.card}>
@@ -5093,6 +5131,24 @@ function SingleStockTab({ series, cpi }) {
         series={series}
         cpi={cpi?.series || null}
       />
+
+      {active.open.length > 0 && (
+        <>
+          <div className={styles.sectionHead}>
+            Tax
+            <span> — what selling all or part of {active.symbol} would cost you this year</span>
+          </div>
+          <PartialSaleTax
+            symbol={active.symbol}
+            position={active}
+            sellPct={sellPct}
+            setSellPct={setSellPct}
+            method={lotMethod}
+            setMethod={setLotMethod}
+            partial={partial}
+          />
+        </>
+      )}
 
       {active.open.length > 0 && sale && tax && (
         <>
@@ -5546,10 +5602,24 @@ function SingleStockTab({ series, cpi }) {
               </li>
               <li>
                 Selling in pieces across tax years, or selling only the long-term lots, can cut the
-                bill well below the figure shown here. This models selling the whole position at once.
+                bill well below the figure shown here. The break-even models selling the whole position
+                at once; the <strong>Tax</strong> section and <strong>Scenario Analysis</strong> handle part of it.
               </li>
             </ul>
           </div>
+
+          <ScenarioAnalysis
+            symbol={active.symbol}
+            positions={positions}
+            revealTicker={revealTicker}
+            nowT={nowT}
+            partial={partial}
+            keepDefault={activeScenario.rate}
+            indexReturn={indexReturn}
+            futureTaxRate={futureTaxRate}
+            forever={forever}
+            horizon={horizon}
+          />
         </>
       )}
       </>
@@ -5771,6 +5841,457 @@ function CompareAllPositions({
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * The tax on selling all or part of one position.
+ *
+ * Which lots go decides the bill, so the sale is built lot by lot (oldest
+ * first by default, as a broker would) and priced incrementally against the
+ * rest of the year, the same way as the whole-position figure.
+ */
+function PartialSaleTax({ symbol, position, sellPct, setSellPct, method, setMethod, partial }) {
+  const [dollarText, setDollarText] = useState('');
+  const total = position.value;
+  const { sale, tax, picked } = partial;
+  const fromDollars = (text) => {
+    setDollarText(text);
+    const n = Number(String(text).replace(/[$,\s]/g, ''));
+    if (Number.isFinite(n) && n > 0 && total > 0) setSellPct(Math.min(100, (n / total) * 100));
+  };
+  const parts = tax ? [
+    { label: 'Federal, long-term gains', value: tax.federalLong },
+    { label: 'Federal, short-term gains (ordinary rates)', value: tax.federalShort },
+    { label: `Investment surtax (${fmtPlain(NIIT_RATE)})`, value: tax.niit },
+    { label: 'State', value: tax.state },
+    { label: 'Loss deducted against other income', value: -tax.lossRelief },
+  ].filter(p => Math.abs(p.value) >= 0.5) : [];
+
+  return (
+    <div className={styles.card} data-testid="partial-sale-tax">
+      <div className={styles.cardTitle}>How much of {symbol} to sell</div>
+      <div className={styles.cardSub}>
+        You hold {fmt(total)}. Pick a share or type a dollar amount; the tax below follows it.
+      </div>
+
+      <div className={styles.inputRow} style={{ alignItems: 'flex-end' }}>
+        <label className={styles.inputField} style={{ flex: '1 1 260px' }}>
+          <span>Sell {sellPct.toFixed(0)}% · {fmt(total * sellPct / 100)}</span>
+          <input type="range" min="0" max="100" step="1" value={sellPct}
+            aria-label="Share of the position to sell"
+            style={{ width: '100%', padding: 0, border: 'none', background: 'transparent' }}
+            onChange={e => { setDollarText(''); setSellPct(Number(e.target.value)); }} />
+        </label>
+        <label className={styles.inputField}>
+          <span>Or a dollar amount</span>
+          <input type="text" inputMode="decimal" placeholder={fmt(total * sellPct / 100)}
+            aria-label="Dollar amount to sell"
+            value={dollarText} onChange={e => fromDollars(e.target.value)} />
+        </label>
+      </div>
+      <div className={styles.pillGroup} style={{ marginTop: 10, flexWrap: 'wrap' }}>
+        {[25, 50, 75, 100].map(p => (
+          <button key={p} type="button"
+            className={`${styles.pill} ${Math.round(sellPct) === p ? styles.pillActive : ''}`}
+            onClick={() => { setDollarText(''); setSellPct(p); }}>
+            {p === 100 ? 'All of it' : `${p}%`}
+          </button>
+        ))}
+      </div>
+
+      <div className={styles.stepLabel} style={{ fontSize: 13, marginTop: 14, marginBottom: 4 }}>
+        Which lots go
+      </div>
+      <div className={styles.pillGroup} style={{ flexWrap: 'wrap' }}>
+        {LOT_METHODS.map(m => (
+          <button key={m.id} type="button" title={m.hint}
+            className={`${styles.pill} ${method === m.id ? styles.pillActive : ''}`}
+            onClick={() => setMethod(m.id)}>
+            {m.label}
+          </button>
+        ))}
+      </div>
+      <div className={styles.cardSub} style={{ marginTop: 6 }}>
+        {LOT_METHODS.find(m => m.id === method)?.hint}.
+        {method !== 'fifo' && ' Tell your broker which lots to sell (specific identification) before the trade, or it will use oldest first.'}
+      </div>
+
+      {!sale || !(sale.proceeds > 0) ? (
+        <div className={styles.cardSub} style={{ marginTop: 14 }}>Choose an amount to see the tax.</div>
+      ) : (
+        <>
+          <div className={styles.statGrid} style={{ marginTop: 14 }}>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>You&apos;d sell</div>
+              <div className={styles.statValue}>{fmt(sale.proceeds)}</div>
+              <div className={styles.statSub}>{fmtPlain(sale.proceeds / total, 0)} of the position · {picked.sold.length} lot{picked.sold.length === 1 ? '' : 's'}</div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>Taxable gain</div>
+              <div className={`${styles.statValue} ${sale.gain >= 0 ? styles.up : styles.down}`}>{fmtSigned(sale.gain)}</div>
+              <div className={styles.statSub}>{fmtSigned(sale.longTermGain)} long · {fmtSigned(sale.shortTermGain)} short</div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>{tax.cost >= 0 ? 'Tax you would pay' : 'Tax you would save'}</div>
+              <div className={`${styles.statValue} ${tax.cost > 0 ? styles.down : styles.up}`} data-testid="partial-tax-cost">
+                {fmt(Math.abs(tax.cost))}
+              </div>
+              <div className={styles.statSub}>
+                {sale.gain > 0 && tax.cost > 0 ? `${fmtPlain(tax.cost / sale.gain)} of the gain` : 'the loss lowers your bill'}
+              </div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>Left after tax</div>
+              <div className={styles.statValue}>{fmt(sale.proceeds - tax.cost)}</div>
+              <div className={styles.statSub}>what you could reinvest</div>
+            </div>
+          </div>
+
+          {parts.length > 0 && (
+            <div className={styles.tableWrap} style={{ marginTop: 14 }}>
+              <table className={styles.table}>
+                <thead>
+                  <tr><th>Where the tax goes</th><th className={styles.num}>Amount</th></tr>
+                </thead>
+                <tbody>
+                  {parts.map(p => (
+                    <tr key={p.label}>
+                      <td>{p.label}</td>
+                      <td className={`${styles.num} ${p.value > 0 ? styles.down : styles.up}`}>{fmtSigned(-p.value)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td><strong>Net effect on your tax bill</strong></td>
+                    <td className={`${styles.num} ${tax.cost > 0 ? styles.down : styles.up}`}><strong>{fmtSigned(-tax.cost)}</strong></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+
+          <details style={{ marginTop: 14 }} open={picked.sold.length <= 6}>
+            <summary className={styles.cardSub} style={{ cursor: 'pointer' }}>
+              Lots sold ({picked.sold.filter(r => r.value >= 0.5).length})
+            </summary>
+          <div className={styles.tableWrap} style={{ marginTop: 8 }}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Lot bought</th>
+                  <th>Term</th>
+                  <th className={styles.num}>Shares sold</th>
+                  <th className={styles.num}>Proceeds</th>
+                  <th className={styles.num}>Cost</th>
+                  <th className={styles.num}>Gain</th>
+                </tr>
+              </thead>
+              <tbody>
+                {picked.sold.filter(r => r.value >= 0.5).map((r, i) => (
+                  <tr key={`${r.buyT}-${i}`}>
+                    <td>{fmtDay(r.buyT)}{r.fraction < 0.9999 && <span className={styles.muted}> · part</span>}</td>
+                    <td>{isLongTerm(r.buyT, partial.asOfT) ? 'Long' : 'Short'}</td>
+                    <td className={styles.num}>{Number.isFinite(r.quantity) ? r.quantity.toLocaleString('en-US', { maximumFractionDigits: 4 }) : '—'}</td>
+                    <td className={styles.num}>{fmt(r.value)}</td>
+                    <td className={`${styles.num} ${styles.muted}`}>{fmt(r.costBasis)}</td>
+                    <td className={`${styles.num} ${r.value - r.costBasis >= 0 ? styles.up : styles.down}`}>{fmtSigned(r.value - r.costBasis)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </details>
+        </>
+      )}
+    </div>
+  );
+}
+
+const SCENARIO_YEARS = [1, 3, 5, 10, 20];
+
+/**
+ * Sell some of the position, pay the tax, and put the rest in something else.
+ *
+ * The tax is shown as what it really costs by the horizon: the dollars paid
+ * today plus the growth they never get. A loss works the other way and shows
+ * up as a credit. The rest of the gap is just one investment beating the
+ * other, and the two parts add up to the whole difference.
+ */
+function ScenarioAnalysis({
+  symbol, positions, revealTicker, nowT, partial, keepDefault, indexReturn,
+  futureTaxRate, forever, horizon,
+}) {
+  const [altKey, setAltKey] = useState('sp');
+  const [tickerText, setTickerText] = useState('');
+  const [altPayload, setAltPayload] = useState(null);
+  const [altRateText, setAltRateText] = useState('');
+  const [keepRateText, setKeepRateText] = useState('');
+  const [years, setYears] = useState(SCENARIO_YEARS.includes(horizon) ? horizon : 10);
+
+  const others = positions.filter(p => p.symbol !== symbol && p.open.length && !p.all.some(r => r.basket));
+  // Switching into the stock being sold is no comparison at all.
+  const altSymbol = altKey === 'sp' || altKey === symbol ? null : altKey;
+  const [tickerNote, setTickerNote] = useState('');
+
+  useEffect(() => {
+    if (!altSymbol) return undefined;
+    let cancelled = false;
+    const real = others.some(p => p.symbol === altSymbol) ? revealTicker(altSymbol) : altSymbol;
+    const start = toISODate(nowT - 11 * 365.25 * MS_DAY);
+    const accept = (payload) => { if (!cancelled) setAltPayload({ symbol: altSymbol, payload }); };
+    setAltPayload({ symbol: altSymbol, loading: true });
+    fetchSeries(real, start, { onFresh: accept })
+      .then(({ payload }) => accept(payload))
+      .catch(err => { if (!cancelled) setAltPayload({ symbol: altSymbol, error: err.message }); });
+    return () => { cancelled = true; };
+    // `others` is rebuilt every render; which list a symbol came from only
+    // matters for the scrambled demo tickers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [altSymbol, nowT, revealTicker]);
+
+  const altRecord = useMemo(() => {
+    if (!altSymbol) return { rate: indexReturn, label: 'typical 10-year S&P hold' };
+    if (altPayload?.symbol !== altSymbol) return { loading: true };
+    if (altPayload.loading) return { loading: true };
+    if (altPayload.error) return { error: altPayload.error };
+    const s = makeSeries(altPayload.payload.points);
+    if (!s.length) return { error: `No price history for ${altSymbol}` };
+    const wanted = s.lastT - 10 * 365.25 * MS_DAY;
+    const from = Math.max(wanted, s.firstT);
+    const yrs = (s.lastT - from) / (365.25 * MS_DAY);
+    if (yrs < 1) return { error: `${altSymbol} has under a year of history; enter a return yourself` };
+    const rate = cagr(s, from, s.lastT);
+    if (!Number.isFinite(rate)) return { error: `Couldn't work out a return for ${altSymbol}` };
+    return {
+      rate: Math.max(-0.5, Math.min(0.5, rate)),
+      label: wanted < s.firstT ? `its ${yrs.toFixed(0)}-year record` : 'its 10-year record',
+    };
+  }, [altSymbol, altPayload, indexReturn]);
+
+  const parseRate = (text) => Math.max(-0.5, Math.min(0.5, (Number(text.replace(/[%\s]/g, '')) || 0) / 100));
+  const altName = altSymbol || 'S&P 500';
+  const altReturn = altRateText.trim() !== '' ? parseRate(altRateText) : altRecord.rate;
+  const keepReturn = keepRateText.trim() !== '' ? parseRate(keepRateText) : keepDefault;
+
+  const { sale, tax } = partial;
+  const ready = sale && tax && sale.proceeds > 0 && Number.isFinite(altReturn) && sale.proceeds - tax.cost > 0;
+
+  const rows = useMemo(() => {
+    if (!ready) return [];
+    return SCENARIO_YEARS.map(n => {
+      const b = scenarioBridge({ value: sale.proceeds, tax: tax.cost, keepReturn, altReturn, years: n });
+      const p = projectPaths({
+        value: sale.proceeds, basis: sale.basis, taxToSell: tax.cost,
+        indexReturn: altReturn, stockReturn: keepReturn, futureTaxRate, forever, years: n,
+      });
+      return { ...b, cashedOut: p ? p.last.sell - p.last.keep : null };
+    });
+  }, [ready, sale, tax, keepReturn, altReturn, futureTaxRate, forever]);
+
+  const pick = rows.find(r => r.years === years) || null;
+
+  const submitTicker = (e) => {
+    e.preventDefault();
+    const t = tickerText.trim().toUpperCase().replace(/[^A-Z0-9.^-]/g, '');
+    if (!t) return;
+    if (t === symbol) { setTickerNote(`That is the stock you'd be selling; pick something else.`); return; }
+    setTickerNote('');
+    setAltKey(t);
+    setAltRateText('');
+  };
+
+  return (
+    <div data-testid="scenario-analysis">
+      <div className={styles.sectionHead}>
+        Scenario Analysis
+        <span> — sell {sale ? fmt(sale.proceeds) : 'some'} of {symbol}, pay the tax, buy something else</span>
+      </div>
+
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Put the money in</div>
+        <div className={styles.cardSub}>
+          The amount sold and the tax come from the <strong>Tax</strong> section above. Pick what
+          the money goes into instead.
+        </div>
+        <div className={styles.pillGroup} style={{ flexWrap: 'wrap' }}>
+          <button type="button"
+            className={`${styles.pill} ${!altSymbol ? styles.pillActive : ''}`}
+            onClick={() => { setAltKey('sp'); setAltRateText(''); }}>
+            S&amp;P 500
+          </button>
+          {others.map(p => (
+            <button key={p.symbol} type="button"
+              className={`${styles.pill} ${altKey === p.symbol ? styles.pillActive : ''}`}
+              onClick={() => { setAltKey(p.symbol); setAltRateText(''); }}>
+              {p.symbol}
+            </button>
+          ))}
+          {altSymbol && !others.some(p => p.symbol === altSymbol) && (
+            <button type="button" className={`${styles.pill} ${styles.pillActive}`}>{altSymbol}</button>
+          )}
+        </div>
+        <form onSubmit={submitTicker} className={styles.inputRow} style={{ marginTop: 12, alignItems: 'flex-end' }}>
+          <label className={styles.inputField}>
+            <span>Any other ticker</span>
+            <input type="text" placeholder="e.g. QQQ" aria-label="Ticker to compare"
+              value={tickerText} onChange={e => setTickerText(e.target.value)} />
+          </label>
+          <button type="submit" className={styles.ghostBtn} style={{ marginTop: 0 }}>Compare</button>
+        </form>
+        {tickerNote && <div className={`${styles.cardSub} ${styles.down}`} style={{ marginTop: 6 }}>{tickerNote}</div>}
+
+        <div className={styles.inputRow} style={{ marginTop: 14 }}>
+          <label className={styles.inputField}>
+            <span>{altName} return a year</span>
+            <input type="text" inputMode="decimal" aria-label="Alternative return a year"
+              placeholder={Number.isFinite(altRecord.rate) ? (altRecord.rate * 100).toFixed(1) : ''}
+              value={altRateText} onChange={e => setAltRateText(e.target.value)} />
+          </label>
+          <label className={styles.inputField}>
+            <span>{symbol} return a year</span>
+            <input type="text" inputMode="decimal" aria-label="Kept stock return a year"
+              placeholder={(keepDefault * 100).toFixed(1)}
+              value={keepRateText} onChange={e => setKeepRateText(e.target.value)} />
+          </label>
+        </div>
+        <div className={styles.cardSub} style={{ marginTop: 8 }}>
+          {altRecord.loading && <>Loading {altName}&apos;s price history…</>}
+          {altRecord.error && <span className={styles.down}>{altRecord.error}.</span>}
+          {Number.isFinite(altRecord.rate) && (
+            <>Blank uses {fmtPlain(altRecord.rate, 1)}/yr for {altName}, {altRecord.label}, </>
+          )}
+          {!altRecord.loading && <>and {fmtPlain(keepDefault, 1)}/yr for {symbol}, the case picked in the break-even above. </>}
+          Past returns are not a forecast, so try a few.
+        </div>
+        <div className={styles.pillGroup} style={{ marginTop: 12 }}>
+          {SCENARIO_YEARS.map(y => (
+            <button key={y} type="button"
+              className={`${styles.pill} ${years === y ? styles.pillActive : ''}`}
+              onClick={() => setYears(y)}>
+              {y} year{y === 1 ? '' : 's'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {!ready ? (
+        <div className={styles.card}>
+          <div className={styles.cardSub}>
+            {!sale || !(sale.proceeds > 0)
+              ? 'Choose an amount to sell in the Tax section above.'
+              : altRecord.loading ? 'Waiting for a return for the comparison…' : 'Enter a return for the comparison to run it.'}
+          </div>
+        </div>
+      ) : pick && (
+        <>
+          <div className={styles.statGrid}>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>Keep {symbol}</div>
+              <div className={styles.statValue}>{fmt(pick.keep)}</div>
+              <div className={styles.statSub}>{fmt(sale.proceeds)} at {fmtPlain(keepReturn, 1)}/yr for {years}y</div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>Switch to {altName}</div>
+              <div className={styles.statValue}>{fmt(pick.switched)}</div>
+              <div className={styles.statSub}>{fmt(pick.reinvested)} at {fmtPlain(altReturn, 1)}/yr for {years}y</div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statLabel}>Switching comes out</div>
+              <div className={`${styles.statValue} ${pick.difference >= 0 ? styles.up : styles.down}`} data-testid="scenario-difference">
+                {fmtSigned(pick.difference)}
+              </div>
+              <div className={styles.statSub}>{pick.difference >= 0 ? 'ahead of keeping' : 'behind keeping'}</div>
+            </div>
+          </div>
+
+          <div className={styles.card}>
+            <div className={styles.cardTitle}>Where the difference comes from, after {years} year{years === 1 ? '' : 's'}</div>
+            <div className={styles.tableWrap}>
+              <table className={styles.table} data-testid="scenario-bridge">
+                <tbody>
+                  <tr>
+                    <td>{tax.cost >= 0 ? 'Tax paid to switch' : 'Tax saved by selling at a loss'}</td>
+                    <td className={`${styles.num} ${tax.cost > 0 ? styles.down : styles.up}`}>{fmtSigned(-tax.cost)}</td>
+                  </tr>
+                  <tr>
+                    <td>{tax.cost >= 0 ? 'Growth that tax money would have earned' : 'Growth on the tax saved'}</td>
+                    <td className={`${styles.num} ${pick.taxGrowth < 0 ? styles.down : styles.up}`}>{fmtSigned(pick.taxGrowth)}</td>
+                  </tr>
+                  <tr>
+                    <td><strong>{tax.cost >= 0 ? 'Total cost of the tax' : 'Total benefit of the loss'}</strong></td>
+                    <td className={`${styles.num} ${pick.taxDrag < 0 ? styles.down : styles.up}`}><strong>{fmtSigned(pick.taxDrag)}</strong></td>
+                  </tr>
+                  <tr>
+                    <td>
+                      {altName} {altReturn >= keepReturn ? 'beating' : 'trailing'} {symbol} on the{' '}
+                      {fmt(sale.proceeds)} ({fmtPlain(altReturn, 1)} vs {fmtPlain(keepReturn, 1)} a year)
+                    </td>
+                    <td className={`${styles.num} ${pick.performance >= 0 ? styles.up : styles.down}`}>{fmtSigned(pick.performance)}</td>
+                  </tr>
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td><strong>Switching vs keeping</strong></td>
+                    <td className={`${styles.num} ${pick.difference >= 0 ? styles.up : styles.down}`}><strong>{fmtSigned(pick.difference)}</strong></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            <div className={styles.cardSub} style={{ marginTop: 10 }}>
+              These are balances before any tax owed when you eventually sell either one.
+              {!forever && pick.cashedOut != null && (
+                <> If you cashed out at year {years} and paid that tax too
+                  (at {fmtPlain(futureTaxRate)}), switching would be{' '}
+                  <strong className={pick.cashedOut >= 0 ? styles.up : styles.down}>{fmtSigned(pick.cashedOut)}</strong>.
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className={styles.card}>
+            <div className={styles.cardTitle}>By how long you hold</div>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>After</th>
+                    <th className={styles.num}>Keep {symbol}</th>
+                    <th className={styles.num}>Switch to {altName}</th>
+                    <th className={styles.num}>Cost of the tax</th>
+                    <th className={styles.num}>Performance</th>
+                    <th className={styles.num}>Difference</th>
+                    {!forever && <th className={styles.num}>If cashed out</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(r => (
+                    <tr key={r.years} className={styles.clickRow} onClick={() => setYears(r.years)}
+                      style={r.years === years ? { background: 'rgba(0, 88, 190, 0.06)', fontWeight: 600 } : undefined}>
+                      <td>{r.years} year{r.years === 1 ? '' : 's'}</td>
+                      <td className={styles.num}>{fmt(r.keep)}</td>
+                      <td className={styles.num}>{fmt(r.switched)}</td>
+                      <td className={`${styles.num} ${r.taxDrag < 0 ? styles.down : styles.up}`}>{fmtSigned(r.taxDrag)}</td>
+                      <td className={`${styles.num} ${r.performance >= 0 ? styles.up : styles.down}`}>{fmtSigned(r.performance)}</td>
+                      <td className={`${styles.num} ${r.difference >= 0 ? styles.up : styles.down}`}><strong>{fmtSigned(r.difference)}</strong></td>
+                      {!forever && (
+                        <td className={`${styles.num} ${(r.cashedOut ?? 0) >= 0 ? styles.up : styles.down}`}>{fmtSigned(r.cashedOut)}</td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className={styles.cardSub} style={{ marginTop: 10 }}>
+              Both sides grow at a steady rate, and risk is ignored: one stock and an index
+              returning the same are not the same bet. The part of {symbol} you don&apos;t sell is
+              left out, because it is the same on both sides.
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
