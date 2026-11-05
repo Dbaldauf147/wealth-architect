@@ -25,6 +25,7 @@ import {
   tradedSymbols, hydrateTrades, hydrateActions, hydrateIncome, hydrateCashRows, FIELDS,
 } from '../lib/robinhood';
 import { benchmarkLots, externalCashComparison } from '../lib/tradeBenchmark';
+import { mergeLotSets, mergeStoredTrades } from '../lib/householdLots';
 import { pickLots, scenarioBridge, LOT_METHODS } from '../lib/partialSale';
 import {
   priceSeries, buildPortfolioHistory, contributionEvents, mergeLoggedHistory,
@@ -1857,6 +1858,9 @@ function usePortfolio(series) {
   const { robinhoodTrades: mine, revealTicker } = useData();
   const source = useContext(PortfolioSource);
   const robinhoodTrades = source ? source.robinhoodTrades : mine;
+  // The household view: each person's trade set, so lots are matched within
+  // one person's account and only then combined.
+  const parts = source?.parts || null;
   const [quoteResult, setQuoteResult] = useState(null);
 
   // Stored trades come back without their derived `t` timestamp — restore it
@@ -1922,10 +1926,15 @@ function usePortfolio(series) {
     return out;
   }, [quotes]);
 
-  const lots = useMemo(
-    () => (trades.length && !awaitingQuotes ? buildLots(trades, corporateActions, apiSplits) : null),
-    [trades, corporateActions, apiSplits, awaitingQuotes],
-  );
+  const lots = useMemo(() => {
+    if (!trades.length || awaitingQuotes) return null;
+    if (parts) {
+      return mergeLotSets(parts.map(p => buildLots(
+        hydrateTrades(p.trades), hydrateActions(p.corporateActions), apiSplits,
+      )));
+    }
+    return buildLots(trades, corporateActions, apiSplits);
+  }, [trades, corporateActions, apiSplits, awaitingQuotes, parts]);
 
   const result = useMemo(() => {
     if (!lots) return null;
@@ -2050,6 +2059,18 @@ function TradesTab({ series, meta, cpi }) {
     setRobinhoodTrades(payload);
     setReimporting(false);
   }, [setRobinhoodTrades]);
+
+  if (!trades.length && source?.readOnly) {
+    return (
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>No trades to combine yet</div>
+        <div className={styles.cardSub}>
+          Import trades on <strong>My Trades</strong> and on <strong>Joanne&apos;s Investments</strong>,
+          and the household view adds them together here.
+        </div>
+      </div>
+    );
+  }
 
   if (!trades.length) {
     return (
@@ -2491,6 +2512,11 @@ function TradesTab({ series, meta, cpi }) {
             ? ` (${robinhoodTrades.lastImport.added} added, ${robinhoodTrades.lastImport.duplicates} already held)`
             : ''}
         </span>
+        {source?.readOnly ? (
+          <span className={styles.muted}>
+            Combined from {source.memberNames.join(' and ')}. Add or clear trades on each person&apos;s own tab.
+          </span>
+        ) : (
         <span className={styles.footerActions}>
           <button type="button" className={styles.ghostBtn} onClick={() => setReimporting(v => !v)}>
             {reimporting ? 'Cancel' : 'Add more trades'}
@@ -2500,9 +2526,10 @@ function TradesTab({ series, meta, cpi }) {
             Clear trades
           </button>
         </span>
+        )}
       </div>
 
-      {reimporting && (
+      {reimporting && !source?.readOnly && (
         <ImportWizard
           existingTrades={trades}
           existingActions={corporateActions}
@@ -3059,7 +3086,9 @@ function useTaxPrefs() {
   }, [key]);
 
   const num = (v, strip) => Number(String(v ?? '').replace(strip, '')) || 0;
-  const status = prefs.status || 'single';
+  // One bill for two people only exists on a joint return, so that's the
+  // household view's starting answer; it can still be changed.
+  const status = prefs.status || (source?.id === 'household' ? 'mfj' : 'single');
 
   // New York unless told otherwise — where this is being used from. `??` not
   // `||`, so clearing the picker back to "no state" is an answer that sticks
@@ -6357,22 +6386,44 @@ function useCpi() {
   return state;
 }
 
-const OTHER_PORTFOLIOS = [{ id: 'joanne', label: "Joanne's Investments", name: 'Joanne' }];
+const OTHER_PORTFOLIOS = [
+  { id: 'joanne', label: "Joanne's Investments", name: 'Joanne' },
+  // Both portfolios together. Read-only: trades are added on each person's tab.
+  { id: 'household', label: 'Household', name: 'Household', combined: true },
+];
 
 export function StockPerformancePage() {
   const [tab, setTab] = useState('benchmark');
   // 'me', or the id of another person's portfolio.
   const [owner, setOwner] = useState('me');
-  const { scrambleTrades } = useData();
   const joanne = useSharedPortfolio('joanne');
   const other = OTHER_PORTFOLIOS.find(o => o.id === owner) || null;
-  const source = useMemo(() => (other ? {
-    id: other.id,
-    name: other.name,
-    robinhoodTrades: scrambleTrades ? scrambleTrades(joanne.robinhoodTrades) : joanne.robinhoodTrades,
-    setRobinhoodTrades: joanne.setRobinhoodTrades,
-    error: joanne.error,
-  } : null), [other, joanne.robinhoodTrades, joanne.setRobinhoodTrades, joanne.error, scrambleTrades]);
+  const { robinhoodTrades: mine, scrambleTrades } = useData();
+  const source = useMemo(() => {
+    if (!other) return null;
+    const hers = scrambleTrades ? scrambleTrades(joanne.robinhoodTrades) : joanne.robinhoodTrades;
+    if (other.combined) {
+      // `mine` is already demo-scrambled by DataContext.
+      const parts = [mine, hers].filter(p => Array.isArray(p?.trades) && p.trades.length);
+      return {
+        id: other.id,
+        name: other.name,
+        readOnly: true,
+        memberNames: ['you', 'Joanne'],
+        parts,
+        robinhoodTrades: mergeStoredTrades(parts),
+        setRobinhoodTrades: () => {},
+        error: joanne.error,
+      };
+    }
+    return {
+      id: other.id,
+      name: other.name,
+      robinhoodTrades: hers,
+      setRobinhoodTrades: joanne.setRobinhoodTrades,
+      error: joanne.error,
+    };
+  }, [other, mine, joanne.robinhoodTrades, joanne.setRobinhoodTrades, joanne.error, scrambleTrades]);
   const [payload, setPayload] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -6441,7 +6492,7 @@ export function StockPerformancePage() {
             <button key={t.id} type="button"
               className={`${styles.tab} ${tab === t.id ? styles.tabActive : ''}`}
               onClick={() => setTab(t.id)}>
-              {t.id === 'trades' ? `${other.name}'s Trades` : t.label}
+              {t.id === 'trades' ? (other.combined ? 'Household Trades' : `${other.name}'s Trades`) : t.label}
             </button>
           ))}
         </div>
