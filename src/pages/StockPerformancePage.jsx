@@ -4737,26 +4737,48 @@ function SingleStockTab({ series, cpi }) {
     ? realized
     : { shortTermGain: 0, longTermGain: 0 };
 
-  const sale = useMemo(
-    () => (active ? summarizeLots(active.open, nowT) : null),
-    [active, nowT],
-  );
-
-  // Incremental again: the bill with this position sold, less the bill without.
-  const tax = useMemo(() => {
-    if (!sale) return null;
+  // The Tax section's sale: all or part of the position, lot by lot, priced
+  // against the rest of the year. The cost of switching, the break-even and
+  // Scenario Analysis all work on this amount, not the whole position.
+  const partial = useMemo(() => {
+    if (!active?.open.length) return { picked: { sold: [] }, sale: null, tax: null, asOfT: nowT };
+    const held = active.open.reduce((t, r) => t + (Number.isFinite(r.value) ? r.value : 0), 0);
+    const picked = pickLots(active.open, held * sellPct / 100, lotMethod, nowT);
+    if (!picked.sold.length) return { picked, sale: null, tax: null, asOfT: nowT };
+    const s = summarizeLots(picked.sold, nowT);
     const common = { otherTaxableIncome: otherIncome, status, stateRate, includeNiit };
     const before = estimateTax({
       shortTermGain: base.shortTermGain, longTermGain: base.longTermGain, ...common,
     });
     const after = estimateTax({
-      shortTermGain: base.shortTermGain + sale.shortTermGain,
-      longTermGain: base.longTermGain + sale.longTermGain,
+      shortTermGain: base.shortTermGain + s.shortTermGain,
+      longTermGain: base.longTermGain + s.longTermGain,
       ...common,
     });
-    const net = (after.total - before.total) - (after.lossRelief - before.lossRelief);
-    return { before, after, cost: net, proceeds: sale.proceeds - net };
-  }, [sale, base.shortTermGain, base.longTermGain, otherIncome, status, stateRate, includeNiit]);
+    const d = (k) => after[k] - before[k];
+    return {
+      picked,
+      sale: s,
+      tax: {
+        cost: d('total') - d('lossRelief'),
+        federalLong: d('federalLong'),
+        federalShort: d('federalShort'),
+        niit: d('niit'),
+        state: d('state'),
+        lossRelief: d('lossRelief'),
+      },
+      asOfT: nowT,
+    };
+  }, [active, sellPct, lotMethod, nowT, base.shortTermGain, base.longTermGain,
+    otherIncome, status, stateRate, includeNiit]);
+
+  const sale = partial.sale;
+  const tax = useMemo(
+    () => (partial.sale && partial.tax
+      ? { ...partial.tax, proceeds: partial.sale.proceeds - partial.tax.cost }
+      : null),
+    [partial],
+  );
 
   // The rate on gains taxed at the horizon. Defaulted to the one selling today
   // implies, but overridable — this is the single input a bracket calculation
@@ -4889,39 +4911,6 @@ function SingleStockTab({ series, cpi }) {
 
   const summedTax = comparison.reduce((t, r) => t + r.taxCost, 0);
 
-  // The Tax section's sale: all or part of the position, lot by lot, priced
-  // against the rest of the year the same way as the whole-position figure.
-  const partial = useMemo(() => {
-    if (!active?.open.length) return { picked: { sold: [] }, sale: null, tax: null, asOfT: nowT };
-    const held = active.open.reduce((t, r) => t + (Number.isFinite(r.value) ? r.value : 0), 0);
-    const picked = pickLots(active.open, held * sellPct / 100, lotMethod, nowT);
-    if (!picked.sold.length) return { picked, sale: null, tax: null, asOfT: nowT };
-    const s = summarizeLots(picked.sold, nowT);
-    const common = { otherTaxableIncome: otherIncome, status, stateRate, includeNiit };
-    const before = estimateTax({
-      shortTermGain: base.shortTermGain, longTermGain: base.longTermGain, ...common,
-    });
-    const after = estimateTax({
-      shortTermGain: base.shortTermGain + s.shortTermGain,
-      longTermGain: base.longTermGain + s.longTermGain,
-      ...common,
-    });
-    const d = (k) => after[k] - before[k];
-    return {
-      picked,
-      sale: s,
-      tax: {
-        cost: d('total') - d('lossRelief'),
-        federalLong: d('federalLong'),
-        federalShort: d('federalShort'),
-        niit: d('niit'),
-        state: d('state'),
-        lossRelief: d('lossRelief'),
-      },
-      asOfT: nowT,
-    };
-  }, [active, sellPct, lotMethod, nowT, base.shortTermGain, base.longTermGain,
-    otherIncome, status, stateRate, includeNiit]);
 
   if (!trades.length) {
     return (
@@ -5030,7 +5019,7 @@ function SingleStockTab({ series, cpi }) {
 
       <div className={styles.hero}>
         <div className={styles.heroLabel}>
-          {active.symbol} · keep it, or sell and buy the index?
+          {active.symbol} · keep it, or sell {active.open.length && sale && sellPct < 100 ? `${fmt(sale.proceeds)} of it ` : ''}and buy the index?
         </div>
         {!active.open.length ? (
           <>
@@ -5041,7 +5030,7 @@ function SingleStockTab({ series, cpi }) {
             </div>
           </>
         ) : !headline ? (
-          <div className={styles.heroValue}>…</div>
+          <div className={styles.heroValue}>{sale ? '…' : 'Pick an amount to sell below'}</div>
         ) : (
           <>
             <div className={styles.heroValue}>
@@ -5150,12 +5139,24 @@ function SingleStockTab({ series, cpi }) {
         </>
       )}
 
+      {active.open.length > 0 && !(sale && tax) && (
+        <div className={styles.card}>
+          <div className={styles.cardSub}>
+            Choose how much of {active.symbol} to sell in the <strong>Tax</strong> section above to
+            see the cost of switching and the break-even.
+          </div>
+        </div>
+      )}
+
       {active.open.length > 0 && sale && tax && (
         <>
           {/* ── What selling costs ── */}
           <div className={styles.sectionHead}>
             The cost of switching
-            <span> — what the taxman takes on the way out</span>
+            <span>
+              {' '}— {sellPct >= 100 ? 'selling the whole position' : `selling ${fmt(sale.proceeds)} of your ${fmt(active.value)}`}
+              , as set in the Tax section
+            </span>
           </div>
 
           <div className={styles.card}>
@@ -5198,7 +5199,7 @@ function SingleStockTab({ series, cpi }) {
               <div className={styles.statLabel}>Reaches the index</div>
               <div className={styles.statValue}>{fmt(tax.proceeds)}</div>
               <div className={styles.statSub}>
-                {fmtPlain(1 - tax.proceeds / sale.proceeds)} smaller than the stake you hold now
+                {fmtPlain(1 - tax.proceeds / sale.proceeds)} smaller than the {sellPct >= 100 ? 'stake you hold now' : 'amount sold'}
               </div>
             </div>
             <div className={styles.statCard}>
@@ -5602,8 +5603,8 @@ function SingleStockTab({ series, cpi }) {
               </li>
               <li>
                 Selling in pieces across tax years, or selling only the long-term lots, can cut the
-                bill well below the figure shown here. The break-even models selling the whole position
-                at once; the <strong>Tax</strong> section and <strong>Scenario Analysis</strong> handle part of it.
+                bill well below the figure shown here. Everything on this page uses the amount and the
+                lots chosen in the <strong>Tax</strong> section, so try a smaller sale or lowest tax first.
               </li>
             </ul>
           </div>
