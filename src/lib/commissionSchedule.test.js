@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { baseSalary, paySchedule, commissionRows, chartPoints, rawSheetRows, chartSheetRows, addMonths } from './commissionSchedule.js';
+import { baseSalary, paySchedule, commissionRows, chartPoints, rawSheetRows, chartSheetRows, addMonths, expectedVsActual, expectedVsActualTotals, expectedVsActualSheetRows } from './commissionSchedule.js';
 
 const today = new Date(2026, 10, 8); // Sun Nov 8, 2026
 const pc = (y, m, d, amount) => ({ date: new Date(y, m - 1, d), amount });
@@ -97,5 +97,35 @@ describe('paySchedule past paydays', () => {
     const later = new Date(2026, 10, 20);
     const s = paySchedule({ base, paychecks, expected: [], takeHome: 0.5, today: later, months: 1 });
     expect(s.map(p => p.kind)).toEqual(['end']);
+  });
+});
+
+describe('expectedVsActual', () => {
+  const rows = commissionRows(commissions, today);
+  // splitPaychecks-shaped: month-end deposit = base 3000 + commission carried.
+  const split = [
+    { date: new Date(2026, 9, 15), amount: 3000, base: 3000, commission: 0 },
+    { date: new Date(2026, 9, 30), amount: 3480, base: 3000, commission: 480 },   // Oct: Sep's 1000 expected → 500
+    { date: new Date(2026, 8, 30), amount: 3240, base: 3000, commission: 240 },   // Sep: Aug's 500 expected → 250
+  ];
+  const pts = expectedVsActual({ rows, paychecks: split, takeHome: 0.5, range: 'around', today });
+  const at = k => pts.find(p => p.payMonth === k);
+
+  it('pairs each month-end paycheck with what the tracker expected', () => {
+    expect(at('2026-10')).toMatchObject({ expectedPreTax: 1000, expectedTakeHome: 500, diff: -20, actual: { deposit: 3480, base: 3000, commission: 480 } });
+    expect(at('2026-09')).toMatchObject({ expectedTakeHome: 250, diff: -10 });
+  });
+  it('has no actual for paychecks still to come', () => {
+    expect(at('2026-11')).toMatchObject({ expectedPreTax: 1200, actual: null, diff: null });
+  });
+  it('totals only the months with both sides', () => {
+    expect(expectedVsActualTotals(pts)).toEqual({ months: 2, expected: 750, actual: 720, diff: -30 });
+  });
+  it('exports one row per month', () => {
+    const sheet = expectedVsActualSheetRows(pts);
+    expect(sheet).toHaveLength(pts.length + 1);
+    const oct = sheet.find(r => r[1] === '2026-10');
+    expect([oct[4].v, oct[5].v, oct[7].v, oct[8].v]).toEqual([500, 3480, 480, -20]);
+    expect(sheet.find(r => r[1] === '2026-12')[5]).toBe('not paid yet');
   });
 });

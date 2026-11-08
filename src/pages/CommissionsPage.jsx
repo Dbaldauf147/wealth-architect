@@ -5,6 +5,7 @@ import { earnedByMonth, monthLabel, payMonthOf, ymKey, expectedPayouts } from '.
 import { computeIncome, commissionTakeHome, monthKeysEnding, monthKeyFor } from '../lib/income';
 import {
   baseSalary, paySchedule, commissionRows, chartPoints, rawSheetRows, chartSheetRows,
+  expectedVsActual, expectedVsActualTotals, expectedVsActualSheetRows,
   CHART_RANGES, STATUSES,
 } from '../lib/commissionSchedule';
 import { downloadXlsx } from '../lib/xlsx';
@@ -249,7 +250,73 @@ function CommissionChart({ points, selected, onSelect }) {
   );
 }
 
-function CommissionChartCard({ commissions, takeHome }) {
+/* Expected vs actual: two bars per pay month — what the tracker said the
+   month-end paycheck would carry (take-home) and what it really carried above
+   base salary. Click (or Enter) selects a month. */
+function ExpectedVsActualChart({ points, selected, onSelect }) {
+  const [ref, width] = useMeasuredWidth();
+  const H = 260;
+  const pad = { top: 14, right: 8, bottom: 26, left: 52 };
+  const innerW = width - pad.left - pad.right;
+  const innerH = H - pad.top - pad.bottom;
+  const max = niceMax(Math.max(1, ...points.map(p => Math.max(p.expectedTakeHome, p.actual ? p.actual.commission : 0))));
+  const step = innerW / Math.max(1, points.length);
+  const barW = Math.max(3, Math.min(16, step * 0.32));
+  const y = v => pad.top + innerH - (Math.max(0, v) / max) * innerH;
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => f * max);
+  const labelEvery = Math.max(1, Math.ceil(points.length / Math.max(1, Math.floor(innerW / 52))));
+  const nowKey = monthKeyFor(new Date());
+  const bar = (x, v, style) => (v > 0 ? <rect x={x} y={y(v)} width={barW} height={Math.max(0, y(0) - y(v))} rx={2} {...style} /> : null);
+
+  return (
+    <div ref={ref} className={styles.chartWrap} data-testid="commissions-eva-chart">
+      <svg width={width} height={H} role="img" aria-label="Expected versus actual commission by paycheck">
+        {ticks.map(t => (
+          <g key={t}>
+            <line x1={pad.left} x2={width - pad.right} y1={y(t)} y2={y(t)} stroke="var(--color-surface-alt)" />
+            <text x={pad.left - 8} y={y(t) + 4} textAnchor="end" className={styles.axisText}>{axis(t)}</text>
+          </g>
+        ))}
+        {points.map((p, i) => {
+          const cx = pad.left + step * i + step / 2;
+          const isSel = selected === p.payMonth;
+          const dim = selected && !isSel;
+          const label = `${monthLabel(p.payMonth)} paycheck: expected ${cents(p.expectedTakeHome)}, ${p.actual ? `actual ${cents(p.actual.commission)}` : 'not paid yet'}`;
+          return (
+            <g key={p.payMonth} className={own.bar} data-month={p.payMonth} tabIndex={0} role="button" aria-pressed={isSel} aria-label={label}
+              onClick={() => onSelect(isSel ? null : p.payMonth)}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(isSel ? null : p.payMonth); } }}
+              opacity={dim ? 0.35 : 1}>
+              <title>{`${label} · click for details`}</title>
+              {bar(cx - barW - 1, p.expectedTakeHome, { fill: EVA.expected, fillOpacity: 0.3, stroke: EVA.expected, strokeDasharray: '3 2' })}
+              {p.actual && bar(cx + 1, p.actual.commission, { fill: EVA.actual })}
+              <rect x={pad.left + step * i} y={pad.top} width={step} height={innerH} fill="transparent"
+                stroke={isSel ? 'var(--color-text-primary)' : 'none'} strokeWidth={isSel ? 1 : 0} strokeDasharray="2 3" />
+            </g>
+          );
+        })}
+        {points.map((p, i) => i % labelEvery === 0 && (
+          <text key={p.payMonth} x={pad.left + step * i + step / 2} y={H - 8} textAnchor="middle" className={styles.axisText}
+            fontWeight={p.payMonth === nowKey ? 700 : undefined}>
+            {shortKey(p.payMonth)}
+          </text>
+        ))}
+        <line x1={pad.left} x2={width - pad.right} y1={y(0)} y2={y(0)} stroke="var(--color-text-muted)" />
+      </svg>
+    </div>
+  );
+}
+
+const EVA = { expected: '#eb6834', actual: '#2a78d6' };
+const CHART_VIEWS = [
+  { id: 'status', label: 'By status' },
+  { id: 'eva', label: 'Expected vs actual' },
+];
+const signed = n => `${n > 0 ? '+' : n < 0 ? '−' : ''}${cents(Math.abs(n))}`;
+const diffColor = n => (n < -0.5 ? '#b91c1c' : n > 0.5 ? '#16a34a' : 'var(--color-text-secondary)');
+
+function CommissionChartCard({ commissions, takeHome, paychecks }) {
+  const [chartView, setChartView] = useState('status');
   const [range, setRange] = useState('around');
   const [account, setAccount] = useState('');
   const [statuses, setStatuses] = useState(() => new Set(STATUSES.map(s => s.id)));
@@ -257,12 +324,19 @@ function CommissionChartCard({ commissions, takeHome }) {
 
   const rows = useMemo(() => commissionRows(commissions, new Date()), [commissions]);
   const accounts = useMemo(() => [...new Set(rows.map(r => r.account).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [rows]);
-  const points = useMemo(
+  const statusPoints = useMemo(
     () => chartPoints({ rows, accounts: account ? new Set([account]) : null, statuses, range, today: new Date() }),
     [rows, account, statuses, range],
   );
+  const evaPoints = useMemo(
+    () => expectedVsActual({ rows, paychecks, takeHome, range, today: new Date() }),
+    [rows, paychecks, takeHome, range],
+  );
+  const eva = chartView === 'eva';
+  const points = eva ? evaPoints : statusPoints;
+  const evaTotals = useMemo(() => expectedVsActualTotals(evaPoints), [evaPoints]);
   const sel = points.find(p => p.payMonth === selected) || null;
-  const total = points.reduce((s, p) => s + p.amount, 0);
+  const total = statusPoints.reduce((s, p) => s + p.amount, 0);
   const rate = takeHome ?? 0.6;
 
   const toggleStatus = id => setStatuses(prev => {
@@ -276,21 +350,38 @@ function CommissionChartCard({ commissions, takeHome }) {
     STATUSES.filter(s => statuses.has(s.id)).map(s => s.label).join(', '),
   ].join(' · ');
 
-  const exportChart = () => downloadXlsx([
+  const today = new Date().toISOString().slice(0, 10);
+  const rateNote = `Take-home at ${Math.round(rate * 100)}% of pre-tax, the share past month-end paychecks carried`;
+  const exportChart = () => downloadXlsx(eva ? [
+    { name: 'Expected vs actual', rows: [[{ v: 'Commission: expected vs actual', s: 'title' }], [{ v: `${CHART_RANGES.find(r => r.id === range)?.label} · ${rateNote}. Actual = month-end deposit minus base salary.`, s: 'muted' }], [], ...expectedVsActualSheetRows(points)], cols: [12, 10, 12, 16, 16, 16, 14, 22, 12, 8] },
+    { name: 'Raw data', rows: rawSheetRows(points, takeHome), cols: [12, 10, 12, 28, 28, 20, 20, 14] },
+  ] : [
     { name: 'Chart', rows: [[{ v: 'Commissions by paycheck', s: 'title' }], [{ v: filterNote, s: 'muted' }], [], ...chartSheetRows(points, takeHome)], cols: [12, 10, 12, 12, 20, 12, 16, 14, 8] },
     { name: 'Raw data', rows: rawSheetRows(points, takeHome), cols: [12, 10, 12, 28, 28, 20, 20, 14] },
-  ], `commissions-chart-${new Date().toISOString().slice(0, 10)}`);
+  ], `commissions-${eva ? 'expected-vs-actual' : 'chart'}-${today}`);
   const exportPoint = () => sel && downloadXlsx([
-    { name: monthLabel(sel.payMonth, { month: 'short', year: 'numeric' }), rows: rawSheetRows([sel], takeHome), cols: [12, 10, 12, 28, 28, 20, 20, 14] },
-  ], `commissions-${sel.payMonth}-paycheck`);
+    ...(eva ? [{ name: 'Expected vs actual', rows: expectedVsActualSheetRows([sel]), cols: [12, 10, 12, 16, 16, 16, 14, 22, 12, 8] }] : []),
+    { name: eva ? 'Deals' : monthLabel(sel.payMonth, { month: 'short', year: 'numeric' }), rows: rawSheetRows([sel], takeHome), cols: [12, 10, 12, 28, 28, 20, 20, 14] },
+  ], `commissions-${sel.payMonth}-paycheck${eva ? '-expected-vs-actual' : ''}`);
+  const switchView = id => { setChartView(id); setSelected(null); };
 
   return (
     <section className={styles.card} data-testid="commissions-chart-card">
       <div className={styles.cardHead}>
         <div>
-          <h2 className={styles.cardTitle}>Expected commissions</h2>
+          <h2 className={styles.cardTitle}>{eva ? 'Expected vs actual commissions' : 'Expected commissions'}</h2>
           <div className={styles.cardHint}>
-            Pre-tax, by the month-end paycheck each lands in. {money(total)} across what’s shown. Click a bar to see the deals behind it and export them.
+            {eva ? (
+              <>
+                Each month-end paycheck: the commission the tracker expected (take-home) beside what the paycheck actually carried above base salary.
+                {evaTotals.months > 0 && (
+                  <> Across the {evaTotals.months} paid month{evaTotals.months === 1 ? '' : 's'} shown: expected {money(evaTotals.expected)}, received {money(evaTotals.actual)}{' '}
+                    (<span style={{ color: diffColor(evaTotals.diff), fontWeight: 700 }}>{signed(evaTotals.diff)}</span>).</>
+                )}
+              </>
+            ) : (
+              <>Pre-tax, by the month-end paycheck each lands in. {money(total)} across what’s shown. Click a bar to see the deals behind it and export them.</>
+            )}
           </div>
         </div>
         <button type="button" className={own.exportBtn} onClick={exportChart} disabled={!points.length} data-testid="export-chart">
@@ -299,6 +390,13 @@ function CommissionChartCard({ commissions, takeHome }) {
       </div>
 
       <div className={own.filters}>
+        <div className={styles.segment} role="group" aria-label="Chart view" data-testid="chart-view">
+          {CHART_VIEWS.map(v => (
+            <button key={v.id} type="button" className={`${styles.segmentBtn} ${chartView === v.id ? styles.segmentActive : ''}`} aria-pressed={chartView === v.id} onClick={() => switchView(v.id)}>
+              {v.label}
+            </button>
+          ))}
+        </div>
         <div className={styles.segment} role="group" aria-label="Range">
           {CHART_RANGES.map(r => (
             <button key={r.id} type="button" className={`${styles.segmentBtn} ${range === r.id ? styles.segmentActive : ''}`} onClick={() => { setRange(r.id); setSelected(null); }}>
@@ -306,11 +404,19 @@ function CommissionChartCard({ commissions, takeHome }) {
             </button>
           ))}
         </div>
+        {eva ? (
+          <>
+            <span className={own.chip} style={{ cursor: 'default' }}><i style={{ background: EVA.expected, opacity: 0.35, border: `1px dashed ${EVA.expected}` }} />Expected (take-home)</span>
+            <span className={own.chip} style={{ cursor: 'default' }}><i style={{ background: EVA.actual }} />Actual, in the paycheck</span>
+            <span className={own.hint} style={{ marginTop: 0 }}>All accounts: a paycheck can’t be split by account.</span>
+          </>
+        ) : (
         <select className={own.select} value={account} onChange={e => { setAccount(e.target.value); setSelected(null); }} aria-label="Account" data-testid="account-filter">
           <option value="">All accounts</option>
           {accounts.map(a => <option key={a} value={a}>{a}</option>)}
         </select>
-        {STATUSES.map(s => {
+        )}
+        {!eva && STATUSES.map(s => {
           const st = STATUS_STYLE[s.id];
           const on = statuses.has(s.id);
           return (
@@ -322,10 +428,12 @@ function CommissionChartCard({ commissions, takeHome }) {
         })}
       </div>
 
-      {points.length ? (
-        <CommissionChart points={points} selected={selected} onSelect={setSelected} />
-      ) : (
+      {!points.length ? (
         <div className={styles.muted}>Nothing matches these filters.</div>
+      ) : eva ? (
+        <ExpectedVsActualChart points={points} selected={selected} onSelect={setSelected} />
+      ) : (
+        <CommissionChart points={points} selected={selected} onSelect={setSelected} />
       )}
 
       {sel ? (
@@ -333,14 +441,20 @@ function CommissionChartCard({ commissions, takeHome }) {
           <div className={own.detailHead}>
             <div>
               <div className={own.detailTitle}>
-                {monthLabel(sel.payMonth)} paycheck · {cents(sel.amount)} pre-tax
+                {eva
+                  ? <>{monthLabel(sel.payMonth)} paycheck · expected {cents(sel.expectedTakeHome)}, {sel.actual ? <>actual {cents(sel.actual.commission)} <span style={{ color: diffColor(sel.diff) }}>({signed(sel.diff)})</span></> : 'not paid yet'}</>
+                  : <>{monthLabel(sel.payMonth)} paycheck · {cents(sel.amount)} pre-tax</>}
               </div>
               <div className={styles.cardHint}>
-                Lands {dayY(asDate(sel.payDate))} · about {cents(sel.amount * rate)} take-home · {sel.rows.length} deal{sel.rows.length === 1 ? '' : 's'}
+                {eva
+                  ? (sel.actual
+                    ? <>Landed {dayY(sel.actual.date)}: {cents(sel.actual.deposit)} deposit − {cents(sel.actual.base)} base salary = {cents(sel.actual.commission)} commission. Expected {cents(sel.expectedPreTax)} pre-tax × {Math.round(rate * 100)}%.</>
+                    : <>Due {dayY(asDate(sel.payDate))}. Expected {cents(sel.expectedPreTax)} pre-tax × {Math.round(rate * 100)}%. No month-end deposit yet.</>)
+                  : <>Lands {dayY(asDate(sel.payDate))} · about {cents(sel.amount * rate)} take-home · {sel.rows.length} deal{sel.rows.length === 1 ? '' : 's'}</>}
               </div>
             </div>
             <div className={own.detailActions}>
-              <button type="button" className={own.exportBtn} onClick={exportPoint} disabled={!sel.rows.length} data-testid="export-point">Export this paycheck</button>
+              <button type="button" className={own.exportBtn} onClick={exportPoint} disabled={!sel.rows.length && !(eva && sel.actual)} data-testid="export-point">Export this paycheck</button>
               <button type="button" className={styles.linkBtn} style={{ marginTop: 0 }} onClick={() => setSelected(null)}>Close</button>
             </div>
           </div>
@@ -372,10 +486,10 @@ function CommissionChartCard({ commissions, takeHome }) {
               </table>
             </div>
           ) : (
-            <div className={styles.muted}>No commission in this paycheck with the current filters.</div>
+            <div className={styles.muted}>{eva ? 'The tracker expected no commission in this paycheck.' : 'No commission in this paycheck with the current filters.'}</div>
           )}
         </div>
-      ) : points.length > 0 && <div className={own.hint}>Tip: click any bar to see and export its deals.</div>}
+      ) : points.length > 0 && <div className={own.hint}>Tip: click any bar to see {eva ? 'how the paycheck compares and' : ''} export its deals.</div>}
     </section>
   );
 }
@@ -390,13 +504,13 @@ export function CommissionsPage() {
 
   // Paychecks split into base + commission exactly as the Income page does.
   const pay = useMemo(() => {
-    if (!transactions?.length) return { base: null, schedule: [], takeHome: null };
+    if (!transactions?.length) return { base: null, schedule: [], takeHome: null, paychecks: [] };
     const now = new Date();
     const { paychecks } = computeIncome({ transactions, incomeCategories, monthKeys: monthKeysEnding(monthKeyFor(now), 13), today: now });
     const base = baseSalary(paychecks, now);
     const takeHome = commissionTakeHome(paychecks, payouts, now);
     const schedule = paySchedule({ base, paychecks, expected: expectedPayouts(commissions, now), takeHome, today: now });
-    return { base, schedule, takeHome };
+    return { base, schedule, takeHome, paychecks };
   }, [transactions, incomeCategories, commissions, payouts]);
   const byMonth = useMemo(() => earnedByMonth(commissions), [commissions]);
   // The last 12 months that have ended, oldest first.
@@ -450,7 +564,7 @@ export function CommissionsPage() {
 
       <BaseSalaryCard base={pay.base} />
       {pay.schedule.length > 0 && <PayScheduleCard schedule={pay.schedule} takeHome={pay.takeHome} />}
-      <CommissionChartCard commissions={commissions} takeHome={pay.takeHome} />
+      <CommissionChartCard commissions={commissions} takeHome={pay.takeHome} paychecks={pay.paychecks} />
 
       <div className={styles.controls}>
         <div className={styles.segment} role="group" aria-label="Which commissions">
