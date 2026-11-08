@@ -65,6 +65,11 @@ export const SEED_PROMOS = [
  *  one-time benefit (which has no window — once used, it stays used). */
 export function periodWindowStart(period, asOf = new Date()) {
   const now = asOf instanceof Date ? asOf : new Date(asOf);
+  if (period === 'weekly') {
+    // Weeks start on Monday — getDay() is 0 for Sunday, so Sunday steps back six.
+    const back = (now.getDay() + 6) % 7;
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate() - back);
+  }
   if (period === 'monthly') return new Date(now.getFullYear(), now.getMonth(), 1);
   if (period === 'quarterly') {
     const q = Math.floor(now.getMonth() / 3);
@@ -97,11 +102,22 @@ export function isPromoCompleted(p, asOf = new Date()) {
   return d ? d >= start : true;
 }
 
+/** The cadences a benefit can renew on. Anything else is treated as one-time. */
+export const PROMO_PERIODS = ['weekly', 'monthly', 'quarterly', 'annual', 'one-time'];
+
+export function isRecurringPeriod(period) {
+  return period === 'weekly' || period === 'monthly' || period === 'quarterly' || period === 'annual';
+}
+
 /** Add one period to a date, clamping the day so a cycle anchored on the 31st
  *  lands on the 30th (or the 28th) rather than skidding into the next month —
  *  Jan 31 + 1 month is Feb 28, not Mar 3. */
 function addPeriod(date, period) {
   const d = new Date(date);
+  if (period === 'weekly') {
+    d.setDate(d.getDate() + 7);
+    return d;
+  }
   const day = d.getDate();
   const months = period === 'monthly' ? 1 : period === 'quarterly' ? 3 : 12;
   d.setDate(1);
@@ -133,7 +149,7 @@ function startOfDay(v) {
 export function nextResetDate(promo, asOf = new Date()) {
   const period = (promo && promo.period) || 'one-time';
   const anchor = parseISODate(promo && promo.renewsOn);
-  if (period !== 'monthly' && period !== 'quarterly' && period !== 'annual') {
+  if (!isRecurringPeriod(period)) {
     // A one-time benefit never refills, so there is no cycle to derive from —
     // but a date set by hand still answers "when is the next one": Global Entry
     // comes round every four years, which is no period this app models. Shown
@@ -143,6 +159,11 @@ export function nextResetDate(promo, asOf = new Date()) {
   const today = startOfDay(asOf);
   if (anchor) {
     let d = anchor;
+    if (period === 'weekly' && d < today) {
+      // Jump straight to the right week instead of stepping one at a time.
+      const weeks = Math.ceil(Math.round((today - d) / 86400000) / 7);
+      d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + weeks * 7);
+    }
     // A far-past anniversary would otherwise spin here; 600 periods is longer
     // than any real card has existed.
     for (let i = 0; i < 600 && d < today; i++) d = addPeriod(d, period);

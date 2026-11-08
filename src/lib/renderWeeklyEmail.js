@@ -538,7 +538,7 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
      hits this month is exactly when the previous month's date is worth seeing —
      and marks anything older than the cycle so the two can't be confused. */
   parts.cardPromos = (cardPromos && cardPromos.items && cardPromos.items.length) ? (() => {
-    const cycleWord = p => (p === 'monthly' ? 'month' : p === 'quarterly' ? 'quarter' : 'year');
+    const cycleWord = p => (p === 'weekly' ? 'week' : p === 'monthly' ? 'month' : p === 'quarterly' ? 'quarter' : 'year');
 
     const promoRows = cardPromos.items.map(item => {
       const capped = Math.min(item.used, item.value);

@@ -62,6 +62,13 @@ describe('periodWindowStart', () => {
     expect(periodWindowStart('annual', NOW)).toEqual(new Date(2026, 0, 1));
   });
 
+  it('starts weekly on the Monday of the current week', () => {
+    // 2026-08-13 is a Thursday; a Sunday belongs to the week that began six days earlier.
+    expect(periodWindowStart('weekly', new Date(2026, 7, 13, 12))).toEqual(new Date(2026, 7, 10));
+    expect(periodWindowStart('weekly', new Date(2026, 7, 16, 12))).toEqual(new Date(2026, 7, 10));
+    expect(periodWindowStart('weekly', new Date(2026, 7, 10, 0))).toEqual(new Date(2026, 7, 10));
+  });
+
   it('has no window for a one-time benefit', () => {
     expect(periodWindowStart('one-time', NOW)).toBeNull();
   });
@@ -282,6 +289,16 @@ describe('promo tags', () => {
 });
 
 describe('nextResetDate', () => {
+  it('rolls a weekly credit to next Monday', () => {
+    expect(nextResetDate({ period: 'weekly' }, new Date(2026, 7, 13, 12))).toEqual(new Date(2026, 7, 17));
+  });
+
+  it('rolls a weekly anchor forward in whole weeks', () => {
+    // Anchored on a Friday long ago: next Friday on or after today.
+    expect(nextResetDate({ period: 'weekly', renewsOn: '2020-01-03' }, new Date(2026, 7, 13, 12))).toEqual(new Date(2026, 7, 14));
+    expect(nextResetDate({ period: 'weekly', renewsOn: '2026-08-07' }, new Date(2026, 7, 14, 12))).toEqual(new Date(2026, 7, 14));
+  });
+
   it('rolls a monthly credit to the first of next month', () => {
     expect(nextResetDate({ period: 'monthly' }, NOW)).toEqual(new Date(2026, 8, 1));
   });
