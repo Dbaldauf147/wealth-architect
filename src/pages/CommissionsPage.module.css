@@ -1,0 +1,170 @@
+/* Commissions page extras: base salary, pay schedule, the filterable chart.
+   Shared layout (hero, card, table, segment) comes from IncomePage.module.css. */
+
+.salaryRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px 32px;
+}
+
+.salaryValue {
+  font-family: var(--font-headline);
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.salaryLabel {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+}
+
+.history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.historyItem {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-surface-alt);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.historyItem b {
+  color: var(--color-text-primary);
+  margin-left: 4px;
+}
+
+.kindMid,
+.kindEnd {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.kindMid { background: #2a78d6; }
+.kindEnd { background: #eb6834; }
+
+.statusExpected { color: var(--color-text-tertiary); }
+.statusReceived { color: #16a34a; font-weight: 600; }
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-bottom: 14px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-ghost, rgba(0, 0, 0, 0.12));
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chip i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.chipOff {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.select {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border-ghost, rgba(0, 0, 0, 0.12));
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  max-width: 100%;
+}
+
+.exportBtn {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--color-secondary, #2a78d6);
+  background: transparent;
+  color: var(--color-secondary, #2a78d6);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.exportBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.bar {
+  cursor: pointer;
+}
+
+.bar:focus {
+  outline: none;
+}
+
+.bar:focus-visible rect:last-child {
+  stroke: var(--color-text-primary);
+  stroke-width: 2;
+}
+
+.detail {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-surface-alt);
+}
+
+.detailHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 8px;
+}
+
+.detailTitle {
+  font-family: var(--font-headline);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.detailActions {
+  display: flex;
+  gap: 8px;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-top: 8px;
+}
