@@ -5,6 +5,8 @@ import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { buildWeeklySummary, lastCompletedWeek } from '../src/lib/weeklySummary.js';
 import { renderWeeklyEmailHtml } from '../src/lib/renderWeeklyEmail.js';
+import { upcomingCardPayments, findPayingAccount } from '../src/lib/paymentReminder.js';
+import { summarizeNextCardBill } from '../src/lib/nextCardBill.js';
 import {
   applyRulesToTransactions,
   applySubcategoryRulesToTransactions,
@@ -103,6 +105,62 @@ async function fetchTransactionsFromSheet() {
   }).filter(t => t.date && t.description);
 }
 
+function parseMoney(str) {
+  if (!str) return 0;
+  return parseFloat(String(str).replace(/[$,]/g, '')) || 0;
+}
+
+// Same Balances-tab parse as api/payment-reminder.js (which mirrors the
+// client's fetchBalances), so the card list and checking balance match it.
+async function fetchBalancesFromSheet() {
+  const apiKey = process.env.SHEETS_API_KEY;
+  const sheetId = process.env.SHEETS_SHEET_ID;
+  if (!apiKey || !sheetId) throw new Error('Missing SHEETS_API_KEY or SHEETS_SHEET_ID env var');
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent('Balances')}!A1:H50?key=${apiKey}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Sheets API error: ${res.status}`);
+  const rows = (await res.json()).values || [];
+  const assets = [], liabilities = [];
+  let section = null;
+  for (const row of rows) {
+    const colB = (row[1] || '').trim();
+    const colC = (row[2] || '').trim();
+    const colD = (row[3] || '').trim();
+    const colF = (row[5] || '').trim();
+    const colG = (row[6] || '').trim();
+    const colH = (row[7] || '').trim();
+    if (colB === 'UNGROUPED ASSET') { section = 'assets'; continue; }
+    if (section === 'assets') {
+      if (colB && colC && colD) assets.push({ name: colB, updated: colC, balance: parseMoney(colD) });
+      if (colF && colG) liabilities.push({ name: colF, updated: colG, balance: parseMoney(colH) });
+    }
+  }
+  return { assets, liabilities };
+}
+
+// The next card bill and what checking holds after it. Never allowed to cost
+// the weekly email itself: any failure just leaves the block out.
+async function buildNextCardBill(transactions, config, tz) {
+  try {
+    const balances = await fetchBalancesFromSheet();
+    const prefs = (config && config.paymentReminderPrefs) || {};
+    const last4 = process.env.PAYMENT_REMINDER_ACCOUNT_LAST4 || prefs.payingAccountLast4 || '1118';
+    const asOf = new Date();
+    const payments = upcomingCardPayments({
+      transactions,
+      balances,
+      hiddenCards: (config && Array.isArray(config.hiddenCards)) ? config.hiddenCards : [],
+      nicknames: { ...((config && config.accountNicknames) || {}), ...((config && config.accountGroups) || {}) },
+      closeDays: (config && config.statementCloseDays) || {},
+      asOf,
+    });
+    return summarizeNextCardBill({ payments, payingAccount: findPayingAccount(balances, last4), asOf, tz });
+  } catch (err) {
+    console.warn('Next card bill skipped:', err.message);
+    return null;
+  }
+}
+
 function inTodayInZone(zone = 'America/New_York') {
   // Returns the local weekday (0=Sun..6=Sat) in the given TZ
   const f = new Intl.DateTimeFormat('en-US', { timeZone: zone, weekday: 'short' });
@@ -168,6 +226,8 @@ export default async function handler(req, res) {
       cardPromos: (config && config.cardPromos) || null,
       promoTags: (config && config.promoTags) || null,
     });
+
+    summary.nextCardBill = await buildNextCardBill(transactions, config, process.env.WEEKLY_EMAIL_TZ || 'America/New_York');
 
     // Render charts to PNG and attach them inline (cid:) — Gmail and others
     // strip inline <svg>. If rasterizing a chart fails for any reason, fall

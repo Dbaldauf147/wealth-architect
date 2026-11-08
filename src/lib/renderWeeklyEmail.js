@@ -243,6 +243,75 @@ function renderRangeSparklineSvg(item) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="display:block;">${band}${avgLine}${spend}${dots}</svg>`;
 }
 
+/* "Next credit card bill" — the block at the very top of the email. `bill` is
+   summarizeNextCardBill() output (src/lib/nextCardBill.js), or null. */
+function renderNextCardBill(bill) {
+  if (!bill || !bill.cards || !bill.cards.length) return '';
+  const when = bill.daysAway === 0 ? 'today' : bill.daysAway === 1 ? 'tomorrow' : `in ${bill.daysAway} days`;
+  const dueDate = emailDate(bill.dateKey);
+  const dueLong = dueDate
+    ? dueDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+    : bill.dateKey;
+  const label = 'font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;';
+  const big = 'font-size:26px;font-weight:800;color:#111;font-variant-numeric:tabular-nums;line-height:1.2;';
+  const sub = 'font-size:12px;color:#64748b;margin-top:4px;';
+
+  const cardLines = bill.cards.map(c => {
+    const note = c.statementClosed
+      ? 'statement closed, so this is the amount due'
+      : `statement still open${c.statementCloseKey ? ` until ${dayMonth(c.statementCloseKey)}` : ''}, so it may still grow`;
+    const amount = bill.cards.length > 1 ? ` <strong style="color:#111;">${money(c.amount)}</strong>` : '';
+    return `<div style="${sub}"><strong style="color:#334155;">${escapeHtml(c.name)}</strong>${amount} · ${note}</div>`;
+  }).join('');
+
+  const hasChecking = bill.checking && bill.leftAfter != null;
+  const leftColor = !hasChecking ? '#111' : bill.leftAfter < 0 ? '#b91c1c' : '#16a34a';
+  const checkingCells = hasChecking ? `
+              <td width="33%" valign="top" style="padding:0 8px;">
+                <div style="${label}">Checking now</div>
+                <div style="${big}">${money(bill.checking.balance)}</div>
+                <div style="${sub}">${escapeHtml(bill.checking.name)}${bill.checking.updated ? ` · as of ${escapeHtml(bill.checking.updated)}` : ''}</div>
+              </td>
+              <td width="33%" valign="top" style="padding-left:8px;">
+                <div style="${label}">Left after payment</div>
+                <div style="${big}color:${leftColor};">${money(bill.leftAfter)}</div>
+                <div style="${sub}">${bill.leftAfter < 0 ? `Short by ${money(-bill.leftAfter)}` : 'Not counting paychecks that land before then'}</div>
+              </td>` : `
+              <td width="66%" valign="top" style="padding-left:8px;">
+                <div style="${sub}">The checking account wasn't found in the Balances sheet, so the amount left can't be shown.</div>
+              </td>`;
+
+  const laterRows = (bill.later || []).map(p => `
+            <tr>
+              <td style="padding:5px 0;font-size:12px;color:#64748b;white-space:nowrap;">${dayMonth(p.dateKey)}</td>
+              <td style="padding:5px 8px;font-size:13px;color:#111;">${escapeHtml(p.name)}${p.statementClosed ? '' : ' <span style="color:#94a3b8;">(estimate)</span>'}</td>
+              <td style="padding:5px 0;font-size:13px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;">${money(p.amount)}</td>
+              ${hasChecking ? `<td style="padding:5px 0 5px 12px;font-size:12px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;color:${p.leftAfter < 0 ? '#b91c1c' : '#64748b'};">${money(p.leftAfter)} left</td>` : ''}
+            </tr>`).join('');
+  const later = laterRows ? `
+          <div style="${label}margin-top:16px;margin-bottom:4px;">Then</div>
+          <table role="presentation" width="100%" style="border-collapse:collapse;">${laterRows}
+          </table>` : '';
+
+  return `
+    <tr>
+      <td style="padding:0 28px 20px;">
+        <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
+          <table role="presentation" width="100%" style="border-collapse:collapse;">
+            <tr>
+              <td width="34%" valign="top" style="padding-right:8px;">
+                <div style="${label}">Next card bill</div>
+                <div style="${big}">${money(bill.total)}</div>
+                <div style="${sub}"><strong style="color:#334155;">Due ${escapeHtml(dueLong)}</strong> · ${when}</div>
+                ${cardLines}
+              </td>${checkingCells}
+            </tr>
+          </table>${later}
+        </div>
+      </td>
+    </tr>`;
+}
+
 // Canonical list of reorderable / toggleable weekly-email sections. The header
 // (total + WoW) and footer are fixed and not part of this list. `id` is the
 // stable key persisted in config; `label` is what the Settings UI shows.
@@ -674,6 +743,9 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
     </tr>`;
 
   const enabled = sections.filter(s => s.enabled).map(s => parts[s.id]).filter(Boolean);
+  // The next card bill sits above everything, outside the reorderable list.
+  const billBlock = renderNextCardBill(summary.nextCardBill);
+  if (billBlock) enabled.unshift(billBlock);
   // The fixed header block is intentionally omitted, so strip the first visible
   // section's top divider (otherwise a stray rule sits flush at the card's top
   // edge) and give it a little breathing room instead.
