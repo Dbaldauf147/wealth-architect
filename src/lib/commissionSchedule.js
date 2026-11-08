@@ -299,3 +299,99 @@ export function expectedVsActualSheetRows(points) {
   }
   return out;
 }
+
+/**
+ * Total pay by month, take-home: base salary from both paychecks with the
+ * commission on top. Paychecks that have landed count as actual (their base
+ * and the commission they carried); the ones still to come are expected (the
+ * usual base, and the tracker's commission at the take-home rate).
+ *
+ * @param rows       commissionRows()
+ * @param paychecks  computeIncome().paychecks
+ * @param base       baseSalary() output (for the expected base), or null
+ * @returns [{ payMonth, payDate, base: { actual, expected }, commission: { actual, expected },
+ *             total, commissionShare, landed: [{ date, kind, deposit, base, commission }],
+ *             expectedSlots, expectedPreTax, rows }]
+ */
+export function payByMonth({ rows, paychecks, base, takeHome, range = 'around', today = new Date() }) {
+  const rate = takeHome ?? DEFAULT_TAKE_HOME;
+  const t0 = startOfDay(today);
+  const nowKey = keyOf(t0);
+  const points = chartPoints({ rows, range, today });
+  const byMonth = new Map();
+  for (const p of paychecks || []) {
+    const k = keyOf(p.date);
+    if (!byMonth.has(k)) byMonth.set(k, []);
+    byMonth.get(k).push(p);
+  }
+  return points.map(pt => {
+    const landed = (byMonth.get(pt.payMonth) || []).sort((a, b) => a.date - b.date).map(p => ({
+      date: p.date, kind: isMid(p) ? 'mid' : 'end', deposit: round2(p.amount),
+      base: round2(p.base ?? p.amount), commission: round2(p.commission || 0),
+    }));
+    const has = kind => landed.some(l => l.kind === kind);
+    // Paydays still to come: the current month's that haven't landed, and every one after.
+    let expectedSlots = 0;
+    if (base && pt.payMonth >= nowKey) {
+      const [y, m] = pt.payMonth.split('-').map(Number);
+      const midDate = businessDayOnOrBefore(new Date(y, m - 1, Math.min(base.day, new Date(y, m, 0).getDate())));
+      const endDate = businessDayOnOrBefore(new Date(y, m, 0));
+      if (!has('mid') && midDate >= t0) expectedSlots++;
+      if (!has('end') && endDate >= t0) expectedSlots++;
+    }
+    const endPending = pt.payMonth >= nowKey && !has('end');
+    const baseActual = round2(landed.reduce((s, l) => s + l.base, 0));
+    const baseExpected = round2(expectedSlots * (base ? base.amount : 0));
+    const commActual = round2(landed.reduce((s, l) => s + l.commission, 0));
+    const commExpected = endPending ? round2(pt.amount * rate) : 0;
+    const total = round2(baseActual + baseExpected + commActual + commExpected);
+    return {
+      payMonth: pt.payMonth,
+      payDate: pt.payDate,
+      earnedMonth: pt.earnedMonth,
+      base: { actual: baseActual, expected: baseExpected },
+      commission: { actual: commActual, expected: commExpected },
+      total,
+      commissionShare: total > 0 ? round2((commActual + commExpected) / total) : 0,
+      landed,
+      expectedSlots,
+      expectedPreTax: endPending ? pt.amount : 0,
+      rows: pt.rows,
+    };
+  });
+}
+
+/** Total pay as spreadsheet rows, one per month. */
+export function payByMonthSheetRows(points) {
+  const out = [['Pay month', 'Base (received)', 'Base (expected)', 'Commission (received)', 'Commission (expected)', 'Total pay', 'Commission share', 'Paychecks received', 'Paychecks expected']
+    .map((h, i) => ({ v: h, s: i >= 1 ? 'headerRight' : 'header' }))];
+  for (const p of points) {
+    out.push([p.payMonth,
+      { v: p.base.actual, s: 'money' }, { v: p.base.expected, s: 'money' },
+      { v: p.commission.actual, s: 'money' }, { v: p.commission.expected, s: 'money' },
+      { v: p.total, s: 'moneyBold' }, { v: p.commissionShare, s: 'pct' },
+      p.landed.length, p.expectedSlots]);
+  }
+  return out;
+}
+
+/** Every paycheck behind the bars, received and expected, for the raw export. */
+export function payByMonthPaycheckRows(points, base) {
+  const out = [['Pay month', 'Date', 'Paycheck', 'Status', 'Deposit', 'Base', 'Commission']
+    .map((h, i) => ({ v: h, s: i >= 4 ? 'headerRight' : 'header' }))];
+  for (const p of points) {
+    for (const l of p.landed) {
+      out.push([p.payMonth, ymd(l.date), l.kind === 'mid' ? 'Mid-month' : 'Month-end', 'Received',
+        { v: l.deposit, s: 'money' }, { v: l.base, s: 'money' }, { v: l.commission, s: 'money' }]);
+    }
+    if (p.expectedSlots) {
+      const each = base ? base.amount : 0;
+      const kinds = p.expectedSlots === 2 ? ['Mid-month', 'Month-end'] : [p.landed.some(l => l.kind === 'mid') ? 'Month-end' : 'Mid-month'];
+      for (const k of kinds) {
+        const comm = k === 'Month-end' ? p.commission.expected : 0;
+        out.push([p.payMonth, '', k, 'Expected', { v: round2(each + comm), s: 'money' }, { v: each, s: 'money' }, { v: comm, s: 'money' }]);
+      }
+    }
+  }
+  return out;
+}
