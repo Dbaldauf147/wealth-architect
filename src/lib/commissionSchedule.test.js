@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { baseSalary, paySchedule, commissionRows, chartPoints, rawSheetRows, chartSheetRows, addMonths, expectedVsActual, expectedVsActualTotals, expectedVsActualSheetRows } from './commissionSchedule.js';
+import { baseSalary, paySchedule, commissionRows, chartPoints, rawSheetRows, chartSheetRows, addMonths, expectedVsActual, expectedVsActualTotals, expectedVsActualSheetRows, payByMonth, payByMonthSheetRows, payByMonthPaycheckRows } from './commissionSchedule.js';
 
 const today = new Date(2026, 10, 8); // Sun Nov 8, 2026
 const pc = (y, m, d, amount) => ({ date: new Date(y, m - 1, d), amount });
@@ -127,5 +127,38 @@ describe('expectedVsActual', () => {
     const oct = sheet.find(r => r[1] === '2026-10');
     expect([oct[4].v, oct[5].v, oct[7].v, oct[8].v]).toEqual([500, 3480, 480, -20]);
     expect(sheet.find(r => r[1] === '2026-12')[5]).toBe('not paid yet');
+  });
+});
+
+describe('payByMonth', () => {
+  const rows = commissionRows(commissions, today);
+  const base = { amount: 3000, day: 15 };
+  const split = [
+    { date: new Date(2026, 9, 15), amount: 3000, base: 3000, commission: 0 },
+    { date: new Date(2026, 9, 30), amount: 3480, base: 3000, commission: 480 },
+  ];
+  const pts = payByMonth({ rows, paychecks: split, base, takeHome: 0.5, range: 'around', today });
+  const at = k => pts.find(p => p.payMonth === k);
+
+  it('uses what landed for a past month', () => {
+    expect(at('2026-10')).toMatchObject({ base: { actual: 6000, expected: 0 }, commission: { actual: 480, expected: 0 }, total: 6480 });
+  });
+  it('expects two paychecks and the tracker commission for a future month', () => {
+    // November: the 13th and the 30th are both still ahead of Nov 8; October's 1200 at 50%.
+    expect(at('2026-11')).toMatchObject({ base: { actual: 0, expected: 6000 }, commission: { actual: 0, expected: 600 }, total: 6600, expectedSlots: 2 });
+    expect(at('2026-11').commissionShare).toBeCloseTo(0.09, 2);
+  });
+  it('mixes received and expected inside the current month', () => {
+    const mid = [...split, { date: new Date(2026, 10, 13), amount: 3000, base: 3000, commission: 0 }];
+    const nov = payByMonth({ rows, paychecks: mid, base, takeHome: 0.5, range: 'ahead', today: new Date(2026, 10, 16) }).find(p => p.payMonth === '2026-11');
+    expect(nov).toMatchObject({ base: { actual: 3000, expected: 3000 }, commission: { expected: 600 }, expectedSlots: 1 });
+  });
+  it('exports a month row and each paycheck', () => {
+    expect(payByMonthSheetRows(pts)).toHaveLength(pts.length + 1);
+    const pay = payByMonthPaycheckRows([at('2026-10'), at('2026-11')], base);
+    expect(pay.slice(1).map(r => `${r[0]} ${r[2]} ${r[3]}`)).toEqual([
+      '2026-10 Mid-month Received', '2026-10 Month-end Received', '2026-11 Mid-month Expected', '2026-11 Month-end Expected',
+    ]);
+    expect(pay[4][6].v).toBe(600);
   });
 });
