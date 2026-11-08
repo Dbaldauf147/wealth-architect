@@ -163,7 +163,6 @@ const NAV_ITEMS = [
   { id: 'home', label: 'Buying a Home', icon: 'home_work' },
   { id: 'assets', label: 'Assets & Liabilities', icon: 'account_balance' },
   { id: 'cards', label: 'Cards Overview', icon: 'credit_card' },
-  { id: 'benefits', label: 'CSR Benefits', icon: 'workspace_premium' },
   { id: 'promos', label: 'Card Promotions', icon: 'redeem' },
   { id: 'splitwise', label: 'Splitwise', icon: 'group' },
   { id: 'loan', label: 'Short-Term Loan', icon: 'request_quote' },
@@ -308,6 +307,9 @@ export function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
+  // CSR Benefits is a tab of Card Promotions, so its link lights up that item.
+  const navActive = view === 'benefits' ? 'promos' : view;
+
   function navigate(id) {
     window.location.hash = id;
     setView(id);
@@ -357,7 +359,7 @@ export function App() {
           {NAV_ITEMS.map((item) => (
             <div
               key={item.id}
-              className={`${styles.navItem} ${view === item.id ? styles.navItemActive : ''}`}
+              className={`${styles.navItem} ${navActive === item.id ? styles.navItemActive : ''}`}
               onClick={() => navigate(item.id)}
             >
               <span className="material-symbols-outlined">{item.icon}</span>

@@ -126,7 +126,7 @@ function relativeDayLabel(days) {
   return `${Math.round(ago / 365)} yr ago`;
 }
 
-/** One component, two pages: `mode="csr"` is the CSR Benefits page (the
+/** One page, two tabs: `mode="csr"` is the CSR Benefits tab (the
  *  Sapphire table plus its usage history), `mode="promos"` is every other card
  *  plus the cross-card comparisons. */
 export function CardPromosPage({ mode = 'promos' }) {
@@ -368,6 +368,30 @@ export function CardPromosPage({ mode = 'promos' }) {
         </div>
       </div>
 
+      {/* Sub-tabs: CSR Benefits sits inside Card Promotions. Each has its own
+          hash (#promos / #benefits) so either can be linked to directly. */}
+      <div role="tablist" aria-label="Card Promotions sections" style={{ display: 'inline-flex', alignSelf: 'flex-start', gap: 4, padding: 4, borderRadius: 10, background: 'var(--color-surface-alt)', maxWidth: '100%', flexWrap: 'wrap' }}>
+        {[{ id: 'promos', hash: 'promos', label: 'Card Promotions' }, { id: 'csr', hash: 'benefits', label: `CSR Benefits${csrCount ? ` (${csrCount})` : ''}` }].map(t => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={view === t.id}
+            data-testid={`promos-tab-${t.id}`}
+            onClick={() => { if (view !== t.id) window.location.hash = t.hash; }}
+            style={{
+              border: 'none', cursor: 'pointer', font: 'inherit', fontSize: 13, fontWeight: 700,
+              padding: '7px 14px', borderRadius: 7,
+              background: view === t.id ? 'var(--color-surface)' : 'transparent',
+              color: view === t.id ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+              boxShadow: view === t.id ? 'var(--shadow-xs)' : 'none',
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       {/* Totals */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16 }}>
         <StatCard label="Total Value" value={fmt(totals.totalValue)} color="#0058be" icon="redeem" />
@@ -393,7 +417,7 @@ export function CardPromosPage({ mode = 'promos' }) {
           {view === 'csr'
             ? 'No Chase Sapphire Reserve benefits yet. Click "Add Promo" to get started.'
             : csrCount > 0
-              ? 'No promos on other cards yet. Click "Add Promo" to add one — Sapphire Reserve benefits live on the CSR Benefits page.'
+              ? 'No promos on other cards yet. Click "Add Promo" to add one — Sapphire Reserve benefits live on the CSR Benefits tab.'
               : 'No promos yet. Click "Add Promo" to get started.'}
         </div>
       )}
