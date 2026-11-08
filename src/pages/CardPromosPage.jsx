@@ -9,6 +9,7 @@ import {
 import {
   SEED_PROMOS, isPromoCompleted, promoHasAutoMatch, promoIsTracked, autoUsedForPromo,
   matchingTransactions, periodWindowStart, nextResetDate, lastUsedFor,
+  PROMO_PERIODS, isRecurringPeriod,
   markPromoDone, reopenPromo, syncCompletionLog, removeUsageEntry, promoUsageHistory,
 } from '../lib/cardPromos';
 import CardChoiceModal from '../components/CardChoiceModal';
@@ -271,6 +272,10 @@ export function CardPromosPage({ mode = 'promos' }) {
     setPromos(prev => prev.map(p => p.id === id ? { ...p, renewsOn: value } : p));
   }
 
+  function setPeriod(id, value) {
+    setPromos(prev => prev.map(p => p.id === id ? { ...p, period: value } : p));
+  }
+
   function startEdit(promo) {
     setEditingId(promo.id);
     setEditDraft(promo);
@@ -465,10 +470,7 @@ export function CardPromosPage({ mode = 'promos' }) {
                                 <div>
                                   <div style={labelStyle}>Period</div>
                                   <select value={editDraft.period || 'annual'} onChange={e => setEditDraft({ ...editDraft, period: e.target.value })} style={inputStyle}>
-                                    <option value="annual">Annual</option>
-                                    <option value="monthly">Monthly</option>
-                                    <option value="quarterly">Quarterly</option>
-                                    <option value="one-time">One-time</option>
+                                    {PROMO_PERIODS.map(v => <option key={v} value={v}>{PERIOD_LABELS[v]}</option>)}
                                   </select>
                                 </div>
                                 <LabeledInput label="Renews on" type="date" value={editDraft.renewsOn} onChange={v => setEditDraft({ ...editDraft, renewsOn: v })} />
@@ -532,7 +534,16 @@ export function CardPromosPage({ mode = 'promos' }) {
                           <td style={{ ...promoTdStyle, verticalAlign: 'top', minWidth: 240 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               <span style={{ fontFamily: 'var(--font-headline)', fontSize: 13.5, fontWeight: 700, textDecoration: isDone ? 'line-through' : 'none', textDecorationColor: 'rgba(22,163,74,0.5)' }}>{p.name}</span>
-                              <span style={badgeStyle('var(--color-surface-alt)', 'var(--color-text-tertiary)')}>{p.period}</span>
+                              {/* Renewal cadence — pick it right on the row. */}
+                              <select
+                                data-testid="promo-period"
+                                value={isRecurringPeriod(p.period) ? p.period : 'one-time'}
+                                onChange={e => setPeriod(p.id, e.target.value)}
+                                title="How often this benefit renews"
+                                style={{ ...badgeStyle('var(--color-surface-alt)', 'var(--color-text-tertiary)'), border: '1px solid var(--border-ghost)', cursor: 'pointer', fontFamily: 'inherit' }}
+                              >
+                                {PROMO_PERIODS.map(v => <option key={v} value={v}>{PERIOD_LABELS[v]}</option>)}
+                              </select>
                               {isDone && (
                                 <span style={badgeStyle('rgba(22,163,74,0.12)', '#16a34a')}>
                                   <span className="material-symbols-outlined" style={{ fontSize: 12 }}>task_alt</span>
@@ -1222,6 +1233,10 @@ function LabeledInput({ label, value, onChange, type = 'text' }) {
 const promoThStyle = { padding: '8px 10px', textAlign: 'left', fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', borderBottom: '1px solid var(--border-ghost)', whiteSpace: 'nowrap' };
 const promoTdStyle = { padding: '10px', fontSize: 12.5, borderBottom: '1px solid var(--border-ghost)' };
 const srOnlyStyle = { position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0 };
+
+const PERIOD_LABELS = {
+  weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly', annual: 'Annually', 'one-time': 'One-time',
+};
 
 function badgeStyle(bg, color) {
   return {
