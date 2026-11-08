@@ -233,3 +233,69 @@ export function chartSheetRows(points, takeHome) {
   return out;
 }
 
+
+/**
+ * Expected vs actual, one point per pay month. Expected is what the tracker
+ * says the month-end paycheck carries (recorded or projected), pre-tax and at
+ * the take-home rate. Actual is what that paycheck really carried above base
+ * salary (computeIncome().paychecks: `commission` = deposit − usual base).
+ * Actual is null for a paycheck that hasn't landed (or wasn't found).
+ * Account filtering doesn't apply: a paycheck can't be split by account.
+ *
+ * @param rows       commissionRows()
+ * @param paychecks  computeIncome().paychecks
+ * @returns [{ payMonth, payDate, earnedMonth, expectedPreTax, expectedTakeHome,
+ *             actual: { date, deposit, base, commission } | null, diff, rows }]
+ */
+export function expectedVsActual({ rows, paychecks, takeHome, range = 'around', today = new Date() }) {
+  const rate = takeHome ?? DEFAULT_TAKE_HOME;
+  const points = chartPoints({ rows, range, today });
+  const ends = new Map();
+  for (const p of paychecks || []) {
+    if (isMid(p)) continue;
+    const k = keyOf(p.date);
+    const prev = ends.get(k);
+    // Two month-end deposits in a month (a correction, a bonus run): add them up.
+    ends.set(k, prev
+      ? { date: p.date > prev.date ? p.date : prev.date, deposit: round2(prev.deposit + p.amount), base: prev.base, commission: round2(prev.commission + (p.commission || 0)) }
+      : { date: p.date, deposit: round2(p.amount), base: round2(p.base ?? p.amount), commission: round2(p.commission || 0) });
+  }
+  return points.map(p => {
+    const actual = ends.get(p.payMonth) || null;
+    const expectedTakeHome = round2(p.amount * rate);
+    return {
+      payMonth: p.payMonth,
+      payDate: actual ? ymd(actual.date) : p.payDate,
+      earnedMonth: p.earnedMonth,
+      expectedPreTax: p.amount,
+      expectedTakeHome,
+      actual,
+      diff: actual ? round2(actual.commission - expectedTakeHome) : null,
+      rows: p.rows,
+    };
+  });
+}
+
+/** Totals over the months that have both sides. */
+export function expectedVsActualTotals(points) {
+  const both = (points || []).filter(p => p.actual);
+  const expected = round2(both.reduce((s, p) => s + p.expectedTakeHome, 0));
+  const actual = round2(both.reduce((s, p) => s + p.actual.commission, 0));
+  return { months: both.length, expected, actual, diff: round2(actual - expected) };
+}
+
+/** Expected vs actual as spreadsheet rows, one per pay month. */
+export function expectedVsActualSheetRows(points) {
+  const out = [['Pay date', 'Pay month', 'Earned month', 'Expected (pre-tax)', 'Expected take-home', 'Month-end deposit', 'Base salary', 'Actual commission (take-home)', 'Difference', 'Deals']
+    .map((h, i) => ({ v: h, s: i >= 3 ? 'headerRight' : 'header' }))];
+  for (const p of points) {
+    out.push([p.payDate, p.payMonth, p.earnedMonth,
+      { v: p.expectedPreTax, s: 'money' }, { v: p.expectedTakeHome, s: 'money' },
+      p.actual ? { v: p.actual.deposit, s: 'money' } : 'not paid yet',
+      p.actual ? { v: p.actual.base, s: 'money' } : '',
+      p.actual ? { v: p.actual.commission, s: 'moneyBold' } : '',
+      p.diff == null ? '' : { v: p.diff, s: 'money' },
+      p.rows.length]);
+  }
+  return out;
+}
