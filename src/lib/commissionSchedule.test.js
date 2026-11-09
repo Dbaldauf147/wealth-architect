@@ -155,10 +155,30 @@ describe('payByMonth', () => {
   });
   it('exports a month row and each paycheck', () => {
     expect(payByMonthSheetRows(pts)).toHaveLength(pts.length + 1);
-    const pay = payByMonthPaycheckRows([at('2026-10'), at('2026-11')], base);
+    const pay = payByMonthPaycheckRows([at('2026-10'), at('2026-11')]);
     expect(pay.slice(1).map(r => `${r[0]} ${r[2]} ${r[3]}`)).toEqual([
       '2026-10 Mid-month Received', '2026-10 Month-end Received', '2026-11 Mid-month Expected', '2026-11 Month-end Expected',
     ]);
-    expect(pay[4][6].v).toBe(600);
+    expect(pay[4][5].v).toBe(600);
+    expect(pay[4][7]).toBe('');
+    // October's month-end: expected 3000 + 1000 × 50%, landed 3480.
+    expect(pay[2][6].v).toBe(3500);
+    expect(pay[2][10].v).toBe(-20);
+  });
+  it('splits each month into its two paychecks, expected beside actual', () => {
+    const oct = at('2026-10');
+    expect(oct.slots.map(s => s.id)).toEqual(['2026-10-mid', '2026-10-end']);
+    expect(oct.slots[0]).toMatchObject({ kind: 'mid', status: 'received', expected: { base: 3000, commission: 0 }, actual: { base: 3000, commission: 0 }, diff: 0 });
+    // Earned September (1000 pre-tax) at 50%.
+    expect(oct.slots[1]).toMatchObject({ kind: 'end', status: 'received', expected: { base: 3000, commission: 500 }, actual: { deposit: 3480, commission: 480 }, diff: -20 });
+    expect(oct.planned).toEqual({ base: 6000, commission: 500 });
+    const nov = at('2026-11');
+    expect(nov.slots.map(s => s.status)).toEqual(['expected', 'expected']);
+    expect(nov.slots[1]).toMatchObject({ expected: { base: 3000, commission: 600 }, actual: null, diff: null });
+  });
+  it('leaves paydays before the paycheck history without an expected side', () => {
+    const jul = at('2026-07');
+    expect(jul.slots.map(s => s.status)).toEqual(['no-data', 'no-data']);
+    expect(jul.planned).toBeNull();
   });
 });
