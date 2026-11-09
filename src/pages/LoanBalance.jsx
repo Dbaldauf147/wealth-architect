@@ -256,7 +256,8 @@ function Tooltip({ x, y, children }) {
 }
 
 /* Two lines on one dollar scale: what the interest charges imply was owed
-   (an estimate, dashed) and what the loans and payments add up to. Balances
+   (an estimate, dashed, each point at the start of the period the charge
+   covers) and what the loans and payments add up to. Balances
    typed in from a statement sit on top as hollow markers. Hovering a date
    shows every series that has a value there. */
 const SERIES = [
@@ -325,7 +326,9 @@ function BalanceChart({ series }) {
                 <svg width="10" height="10" aria-hidden="true" style={{ flex: 'none' }}>
                   <circle cx="5" cy="5" r="4" fill={r.id === 'entered' ? 'var(--color-surface)' : r.color} stroke={r.color} strokeWidth="2" />
                 </svg>
-                <b>{money(r.pt.balance)}</b> <span className={styles.vizTipSub}>{r.label}</span>
+                <b>{money(r.pt.balance)}</b> <span className={styles.vizTipSub}>
+                  {r.id === 'implied' && r.pt.paidOn ? `Implied by interest paid ${shortDate(r.pt.paidOn)}` : r.label}
+                </span>
               </div>
             ))}
           </Tooltip>

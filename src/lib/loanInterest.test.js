@@ -342,13 +342,25 @@ describe('balanceSeries', () => {
 
   it('keeps the interest estimate, the transactions and entered balances apart', () => {
     const { implied, ledger, entered } = balanceSeries(loan);
-    expect(implied.map(p => [p.date, Math.round(p.balance)])).toEqual([['2026-09-01', 10000], ['2026-10-01', 8000]]);
+    // The Oct 1 charge covers Sep 1 – Oct 1, so its $8,000 is dated Sep 1.
+    expect(implied.map(p => [p.date, Math.round(p.balance), p.paidOn])).toEqual([['2026-09-01', 8000, '2026-10-01']]);
     expect(ledger).toEqual([
       { date: '2026-09-01', balance: 10000 },
       { date: '2026-09-20', balance: 12500 },
       { date: '2026-10-05', balance: 8500 }, // same-day payments collapse to one point
     ]);
     expect(entered).toEqual([{ date: '2026-10-10', balance: 8400 }]);
+  });
+
+  it('dates each implied balance at the start of the month it was charged over', () => {
+    const { implied } = balanceSeries({
+      principal: 10000, rate: 0.1, rateType: 'daily', startDate: '2026-06-10',
+      payments: [{ id: 'a', date: '2026-07-10', amount: 300 }, { id: 'b', date: '2026-08-09', amount: 150 }],
+    });
+    expect(implied.map(p => [p.date, Math.round(p.balance), p.paidOn])).toEqual([
+      ['2026-06-10', 10000, '2026-07-10'],
+      ['2026-07-10', 5000, '2026-08-09'],
+    ]);
   });
 
   it('copes with no loan', () => {
