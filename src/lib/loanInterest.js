@@ -372,3 +372,41 @@ export function withLinkedTransactions(loan, transactions) {
   if (!entries.length) return loan;
   return { ...loan, ledger: [...(loan.ledger || []).filter(e => !e.linked), ...entries] };
 }
+
+/**
+ * The balance over time as separate series, so the chart can draw the
+ * estimate from interest and the count from transactions as their own lines
+ * rather than one line hopping between them.
+ *
+ * @returns {
+ *   implied  [{ date, balance, interest, days }] — the starting principal,
+ *            then what each interest payment implies (impliedBalances)
+ *   ledger   [{ date, balance }] — owed after each day's loans and payments
+ *            (loanLedger), one point per date
+ *   entered  [{ date, balance }] — balances typed in from a statement
+ * }
+ */
+export function balanceSeries(loan) {
+  const principal = Number(loan?.principal) || 0;
+  const start = loan?.startDate || '';
+
+  const implied = [];
+  if (principal > 0 && start) implied.push({ date: start, balance: principal, start: true });
+  for (const p of impliedBalances(loan).periods) {
+    if (p.balance == null || !p.date) continue;
+    if (implied.length && implied[implied.length - 1].date === p.date) implied.pop();
+    implied.push({ date: p.date, balance: p.balance, interest: p.interest, days: p.days });
+  }
+  implied.sort((a, b) => a.date.localeCompare(b.date));
+
+  const byDate = new Map();
+  for (const r of loanLedger(loan).rows) if (r.date) byDate.set(r.date, r.balance);
+  const ledger = [...byDate.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, balance]) => ({ date, balance }));
+
+  const entered = (loan?.balanceHistory || [])
+    .map(e => ({ date: e?.date, balance: Number(e?.amount) }))
+    .filter(e => e.date && Number.isFinite(e.balance) && e.balance >= 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  return { implied, ledger, entered };
+}

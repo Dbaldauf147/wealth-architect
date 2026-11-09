@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isInterestCharge, toISODate, paymentFromTransaction, loanInterestQueue, txnKey, mergeLoan, impliedBalances, balanceTimeline, interestPaidSeries, withBalanceEntry, loanLedger, loanLinkType, linkedLoanTransactions, withLinkedTransactions } from './loanInterest.js';
+import { isInterestCharge, toISODate, paymentFromTransaction, loanInterestQueue, txnKey, mergeLoan, impliedBalances, balanceTimeline, interestPaidSeries, withBalanceEntry, loanLedger, balanceSeries, loanLinkType, linkedLoanTransactions, withLinkedTransactions } from './loanInterest.js';
 
 const txn = (over = {}) => ({
   transactionId: 'a', date: '9/20/2026', description: 'Ring Loan Interest', amount: -42.5,
@@ -325,5 +325,33 @@ describe('loans linked by subcategory', () => {
   it('leaves a loan with nothing to link as it was', () => {
     expect(withLinkedTransactions(loan, [txns[4]])).toBe(loan);
     expect(withLinkedTransactions(null, txns)).toBeNull();
+  });
+});
+
+describe('balanceSeries', () => {
+  const loan = {
+    principal: 10000, rate: 0.1, rateType: 'daily', startDate: '2026-09-01',
+    payments: [{ id: '1', date: '2026-10-01', amount: 240 }], // 30 days → $8,000
+    ledger: [
+      { id: 'l', type: 'loan', date: '2026-09-20', amount: 2500 },
+      { id: 'p1', type: 'payment', date: '2026-10-05', amount: 3000 },
+      { id: 'p2', type: 'payment', date: '2026-10-05', amount: 1000 },
+    ],
+    balanceHistory: [{ date: '2026-10-10', amount: 8400 }],
+  };
+
+  it('keeps the interest estimate, the transactions and entered balances apart', () => {
+    const { implied, ledger, entered } = balanceSeries(loan);
+    expect(implied.map(p => [p.date, Math.round(p.balance)])).toEqual([['2026-09-01', 10000], ['2026-10-01', 8000]]);
+    expect(ledger).toEqual([
+      { date: '2026-09-01', balance: 10000 },
+      { date: '2026-09-20', balance: 12500 },
+      { date: '2026-10-05', balance: 8500 }, // same-day payments collapse to one point
+    ]);
+    expect(entered).toEqual([{ date: '2026-10-10', balance: 8400 }]);
+  });
+
+  it('copes with no loan', () => {
+    expect(balanceSeries(null)).toEqual({ implied: [], ledger: [], entered: [] });
   });
 });
