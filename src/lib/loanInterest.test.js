@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isInterestCharge, toISODate, paymentFromTransaction, loanInterestQueue, txnKey, mergeLoan } from './loanInterest.js';
+import { isInterestCharge, toISODate, paymentFromTransaction, loanInterestQueue, txnKey, mergeLoan, impliedBalances } from './loanInterest.js';
 
 const txn = (over = {}) => ({
   transactionId: 'a', date: '9/20/2026', description: 'Ring Loan Interest', amount: -42.5,
@@ -112,5 +112,59 @@ describe('mergeLoan', () => {
     expect(mergeLoan(null, l)).toBe(l);
     expect(mergeLoan(l, null)).toBe(l);
     expect(mergeLoan(null, null)).toBeNull();
+  });
+});
+
+describe('impliedBalances', () => {
+  const loan = (payments, over = {}) => ({
+    principal: 10000, rate: 0.1, rateType: 'daily', startDate: '2026-09-01', payments, ...over,
+  });
+
+  it('turns each payment back into the balance it was charged on', () => {
+    // $10 a day on $10,000 at 0.1%/day; 30 days → $300.
+    const { periods, remaining, paidDown } = impliedBalances(loan([
+      { id: '1', date: '2026-10-01', amount: 300 },
+      { id: '2', date: '2026-10-31', amount: 240 }, // 30 days on $8,000
+    ]));
+    expect(periods.map(p => [p.from, p.days])).toEqual([['2026-09-01', 30], ['2026-10-01', 30]]);
+    expect(periods[0].balance).toBeCloseTo(10000);
+    expect(remaining).toBeCloseTo(8000);
+    expect(paidDown).toBeCloseTo(2000);
+  });
+
+  it('reads an APR as APR ÷ 365', () => {
+    const { remaining } = impliedBalances(loan(
+      [{ id: '1', date: '2026-09-11', amount: 10 }], // 10 days × $1/day at 0.01%/day
+      { rate: 3.65, rateType: 'apr' },
+    ));
+    expect(remaining).toBeCloseTo(10000);
+  });
+
+  it('sums same-day payments and orders by date, not by log order', () => {
+    const { periods, remaining } = impliedBalances(loan([
+      { id: '3', date: '2026-10-11', amount: 50 },
+      { id: '1', date: '2026-09-11', amount: 60 },
+      { id: '2', date: '2026-09-11', amount: 40 }, // with #1: $100 over 10 days → $10,000
+    ]));
+    expect(periods.map(p => p.date)).toEqual(['2026-09-11', '2026-10-11']);
+    expect(periods[0].balance).toBeCloseTo(10000);
+    expect(remaining).toBeCloseTo(5000 / 3); // $50 over 30 days
+  });
+
+  it('implies nothing without days or a rate', () => {
+    expect(impliedBalances(loan([{ id: '1', date: '2026-09-01', amount: 10 }])).remaining).toBeNull();
+    expect(impliedBalances(loan([{ id: '1', date: '2026-09-11', amount: 10 }], { rate: 0 })).remaining).toBeNull();
+    expect(impliedBalances(loan([])).remaining).toBeNull();
+    expect(impliedBalances(null).periods).toEqual([]);
+  });
+
+  it('measures a payment from the one before it, even one dated before the start', () => {
+    const { periods, remaining } = impliedBalances(loan([
+      { id: '1', date: '2026-09-11', amount: 100 },
+      { id: '2', date: '2026-08-01', amount: 5 }, // before the start: no days of its own
+    ]));
+    expect(periods[0]).toMatchObject({ date: '2026-08-01', balance: null });
+    expect(periods[1]).toMatchObject({ from: '2026-08-01', days: 41 });
+    expect(remaining).toBeCloseTo(100 / (0.001 * 41));
   });
 });

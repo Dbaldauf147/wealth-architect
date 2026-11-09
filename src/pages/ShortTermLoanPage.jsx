@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
-import { loanInterestQueue } from '../lib/loanInterest';
+import { loanInterestQueue, impliedBalances } from '../lib/loanInterest';
 import styles from './ShortTermLoanPage.module.css';
 
 // Currency with cents — interest amounts are small, so cents matter.
@@ -117,6 +117,12 @@ export function ShortTermLoanPage() {
     const outstanding = accrued - paid;
     const effDailyRate = (Number(loan.principal) || 0) > 0 ? daily / (Number(loan.principal) || 1) : 0;
     return { daily, days, accrued, paid, outstanding, effDailyRate };
+  }, [loan]);
+
+  // What's left on the loan, worked back from the interest it's charging.
+  const balance = useMemo(() => {
+    const b = impliedBalances(loan);
+    return { ...b, byDate: new Map(b.periods.map(p => [p.date, p])) };
   }, [loan]);
 
   const sortedPayments = useMemo(() => {
@@ -239,6 +245,8 @@ export function ShortTermLoanPage() {
         </div>
       </div>
 
+      <RemainingBalance loan={loan} balance={balance} />
+
       {loan.note && <div className={styles.noteBar}>{loan.note}</div>}
 
       {/* Log a payment */}
@@ -272,6 +280,7 @@ export function ShortTermLoanPage() {
               <tr>
                 <th>Date</th>
                 <th className={styles.numCol}>Amount</th>
+                <th className={styles.numCol} title="Balance this payment implies: amount ÷ (daily rate × days since the previous payment)">Implied balance</th>
                 <th>Note</th>
                 <th aria-label="Actions" />
               </tr>
@@ -281,6 +290,14 @@ export function ShortTermLoanPage() {
                 <tr key={p.id}>
                   <td>{fmtDate(p.date)}</td>
                   <td className={styles.numCol}>{fmt(Number(p.amount) || 0)}</td>
+                  <td className={`${styles.numCol} ${styles.noteCell}`}>
+                    {(() => {
+                      const period = balance.byDate.get(p.date);
+                      return period?.balance != null
+                        ? <span title={`${fmt(period.interest)} over ${period.days} day${period.days === 1 ? '' : 's'}`}>{fmt(period.balance)}</span>
+                        : '—';
+                    })()}
+                  </td>
                   <td className={styles.noteCell}>
                     {p.transactionId && (
                       <span
@@ -303,7 +320,7 @@ export function ShortTermLoanPage() {
               <tr>
                 <td className={styles.totalLabel}>Total paid</td>
                 <td className={styles.numCol}><strong>{fmt(stats.paid)}</strong></td>
-                <td colSpan={2} />
+                <td colSpan={3} />
               </tr>
             </tfoot>
           </table>
@@ -317,6 +334,44 @@ export function ShortTermLoanPage() {
         onTag={tagLoanTransactions}
         onIgnore={setLoanTransactionsIgnored}
       />
+    </div>
+  );
+}
+
+/* The loan's remaining balance, implied by the latest interest payment:
+   interest ÷ (daily rate × days it covers). */
+function RemainingBalance({ loan, balance }) {
+  const principal = Number(loan.principal) || 0;
+  const { latest, remaining, paidDown } = balance;
+  return (
+    <div className={styles.card} data-testid="remaining-balance">
+      <div className={styles.balanceRow}>
+        <div>
+          <div className={styles.statLabel}>Remaining loan balance</div>
+          <div className={styles.balanceValue}>{remaining == null ? '—' : fmt(remaining)}</div>
+          <div className={styles.statSub}>
+            {latest
+              ? <>Implied by the {fmt(latest.interest)} paid {fmtDate(latest.date)}, covering {latest.days} day{latest.days === 1 ? '' : 's'} since {fmtDate(latest.from)}</>
+              : (Number(loan.rate) || 0) > 0
+                ? 'Log or tag an interest payment to work out what\'s left.'
+                : 'Set an interest rate to work out what\'s left.'}
+          </div>
+        </div>
+        {remaining != null && principal > 0 && (
+          <div className={styles.balanceSide}>
+            <div className={styles.statLabel}>{paidDown >= 0 ? 'Paid down' : 'Above principal'}</div>
+            <div className={styles.statValue}>{fmt(Math.abs(paidDown))}</div>
+            <div className={styles.statSub}>
+              {paidDown >= 0 ? `${Math.round((paidDown / principal) * 100)}% of ${fmt(principal)}` : `vs ${fmt(principal)} principal`}
+            </div>
+          </div>
+        )}
+      </div>
+      {remaining != null && (
+        <div className={styles.formHint} style={{ marginTop: 12 }}>
+          Balance = interest paid ÷ (daily rate × days since the previous payment). Same-day payments are combined.
+        </div>
+      )}
     </div>
   );
 }

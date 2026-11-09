@@ -118,3 +118,65 @@ export function mergeLoan(local, remote) {
   if (ignored.length || newer.ignoredTransactionIds || older.ignoredTransactionIds) out.ignoredTransactionIds = ignored;
   return out;
 }
+
+/** Whole days from one 'YYYY-MM-DD' to another, counted in UTC so a DST
+ *  change never turns a day into 23 or 25 hours. NaN if either is bad. */
+function isoDayDiff(fromISO, toISO) {
+  const parse = s => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || '');
+    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : NaN;
+  };
+  return Math.round((parse(toISO) - parse(fromISO)) / 86400000);
+}
+
+/** The loan's daily rate as a fraction (1% per day → 0.01). */
+export function dailyRateOf(loan) {
+  const pct = Number(loan?.rate) || 0;
+  return loan?.rateType === 'apr' ? pct / 100 / 365 : pct / 100;
+}
+
+/**
+ * The balance each interest payment implies, and so what's left on the loan.
+ *
+ * Interest for a period is balance × daily rate × days, so a payment that
+ * covers the days since the one before it (or since the loan started, for
+ * the first) gives back the balance it was charged on:
+ *
+ *     balance = interest ÷ (daily rate × days)
+ *
+ * As principal is paid down the charges shrink, and the latest one says what
+ * is still owed. Payments on the same day are one charge split in pieces, so
+ * they're summed. A period with no days (or no rate) can't imply anything and
+ * carries `balance: null`; the next payment measures from its date anyway.
+ *
+ * @returns {
+ *   periods   [{ date, from, days, interest, balance }] oldest first
+ *   latest    the newest period with a balance, or null
+ *   remaining latest.balance, or null when nothing implies one yet
+ *   paidDown  principal − remaining, or null
+ * }
+ */
+export function impliedBalances(loan) {
+  const rate = dailyRateOf(loan);
+  const principal = Number(loan?.principal) || 0;
+
+  const byDate = new Map();
+  for (const p of loan?.payments || []) {
+    if (!p?.date) continue;
+    byDate.set(p.date, (byDate.get(p.date) || 0) + (Number(p.amount) || 0));
+  }
+
+  const periods = [];
+  let from = loan?.startDate || '';
+  for (const date of [...byDate.keys()].sort()) {
+    const interest = byDate.get(date);
+    const days = from ? isoDayDiff(from, date) : NaN;
+    const balance = rate > 0 && days > 0 && interest > 0 ? interest / (rate * days) : null;
+    periods.push({ date, from, days: Number.isFinite(days) ? days : null, interest, balance });
+    from = date;
+  }
+
+  const latest = [...periods].reverse().find(p => p.balance != null) || null;
+  const remaining = latest ? latest.balance : null;
+  return { periods, latest, remaining, paidDown: remaining == null ? null : principal - remaining };
+}
