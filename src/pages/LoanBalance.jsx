@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { balanceTimeline, interestPaidSeries } from '../lib/loanInterest';
+import { balanceTimeline, balanceSeries, interestPaidSeries } from '../lib/loanInterest';
 import styles from './ShortTermLoanPage.module.css';
 
 /* The loan's balance card: what's left, what's been paid down, what interest
@@ -43,6 +43,7 @@ const SOURCE_LABEL = { start: 'Starting principal', payment: 'Implied by interes
 export function LoanBalance({ loan, readOnly, onRecordBalance }) {
   const timeline = useMemo(() => balanceTimeline(loan), [loan]);
   const interest = useMemo(() => interestPaidSeries(loan), [loan]);
+  const series = useMemo(() => balanceSeries(loan), [loan]);
   const { current, paidDown, borrowed } = timeline;
   const interestTotal = interest.length ? interest[interest.length - 1].total : 0;
 
@@ -82,7 +83,7 @@ export function LoanBalance({ loan, readOnly, onRecordBalance }) {
 
       {(timeline.points.length > 1 || interest.length > 0) && (
         <div className={styles.chartPair}>
-          <BalanceChart points={timeline.points} />
+          <BalanceChart series={series} />
           <InterestChart series={interest} />
         </div>
       )}
@@ -254,54 +255,95 @@ function Tooltip({ x, y, children }) {
   );
 }
 
-function BalanceChart({ points }) {
-  const dates = useMemo(() => points.map(p => p.date), [points]);
+/* Two lines on one dollar scale: what the interest charges imply was owed
+   (an estimate, dashed) and what the loans and payments add up to. Balances
+   typed in from a statement sit on top as hollow markers. Hovering a date
+   shows every series that has a value there. */
+const SERIES = [
+  { id: 'ledger', label: 'From transactions', color: 'var(--viz-left)', dash: null },
+  { id: 'implied', label: 'Implied by interest paid', color: 'var(--viz-interest)', dash: '6 4' },
+];
+
+function BalanceChart({ series }) {
+  const dates = useMemo(() => {
+    const all = new Set();
+    for (const k of ['implied', 'ledger', 'entered']) for (const p of series[k]) all.add(p.date);
+    return [...all].sort();
+  }, [series]);
   const x = useXScale(dates);
-  const ticks = niceTicks(Math.max(...points.map(p => p.balance), 1));
+  const all = [...series.implied, ...series.ledger, ...series.entered];
+  const ticks = niceTicks(Math.max(...all.map(p => p.balance), 1));
   const yMax = ticks[ticks.length - 1];
   const y = v => PH - (v / yMax) * PH;
   const [hi, setHi] = useState(null);
-  const path = points.map((p, i) => `${i ? 'L' : 'M'}${x(p.date)},${y(p.balance)}`).join('');
-  const area = points.length > 1 ? `${path}L${x(points[points.length - 1].date)},${PH}L${x(points[0].date)},${PH}Z` : '';
-  const p = hi != null ? points[hi] : null;
+  const hiDate = hi != null ? dates[hi] : null;
+  const at = k => (hiDate ? series[k].find(p => p.date === hiDate) : null);
+  const tipRows = hiDate ? [
+    ...SERIES.map(s => ({ ...s, pt: at(s.id) })),
+    { id: 'entered', label: 'Entered by you', color: 'var(--viz-left)', pt: at('entered') },
+  ].filter(r => r.pt) : [];
+  const tipY = tipRows.length ? Math.min(...tipRows.map(r => y(r.pt.balance))) : 0;
+  const pathOf = pts => pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.date)},${y(p.balance)}`).join('');
+  const last = pts => pts[pts.length - 1];
 
   return (
     <figure className={styles.chart} data-testid="balance-chart">
       <figcaption className={styles.chartTitle}>Balance over time</figcaption>
       <div className={styles.chartBox}>
         <svg viewBox={`0 0 ${W} ${H}`} className={styles.chartSvg} role="img"
-          aria-label={`Loan balance from ${money(points[0]?.balance)} to ${money(points[points.length - 1]?.balance)}`}>
+          aria-label={SERIES.map(s => series[s.id].length ? `${s.label}: ${money(series[s.id][0].balance)} to ${money(last(series[s.id]).balance)}` : '').filter(Boolean).join('; ') || 'Loan balance'}>
           <g transform={`translate(${M.left},${M.top})`}>
             <Axes ticks={ticks} y={y} dates={dates} x={x} />
-            {area && <path d={area} fill="var(--viz-left)" opacity={0.08} />}
-            <path d={path} fill="none" stroke="var(--viz-left)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-            {p && <line x1={x(p.date)} x2={x(p.date)} y1={0} y2={PH} stroke="var(--viz-axis)" strokeDasharray="3 3" />}
-            {points.map((pt, i) => (
-              <circle key={pt.date} cx={x(pt.date)} cy={y(pt.balance)} r={hi === i ? 6 : 4.5}
-                fill={pt.source === 'entered' ? 'var(--color-surface)' : 'var(--viz-left)'}
-                stroke={pt.source === 'entered' ? 'var(--viz-left)' : 'var(--color-surface)'} strokeWidth={2} />
+            {hiDate && <line x1={x(hiDate)} x2={x(hiDate)} y1={0} y2={PH} stroke="var(--viz-axis)" strokeDasharray="3 3" />}
+            {SERIES.map(s => series[s.id].length > 1 && (
+              <path key={s.id} data-series={s.id} d={pathOf(series[s.id])} fill="none" stroke={s.color} strokeWidth={2}
+                strokeDasharray={s.dash || undefined} strokeLinejoin="round" strokeLinecap="round" />
             ))}
-            {/* Hit targets: a column per point, wider than the marker. */}
-            {points.map((pt, i) => {
-              const cx = x(pt.date);
-              const prev = i ? (x(points[i - 1].date) + cx) / 2 : 0;
-              const next = i < points.length - 1 ? (x(points[i + 1].date) + cx) / 2 : PW;
-              return <rect key={pt.date} x={prev} y={0} width={Math.max(next - prev, 1)} height={PH} fill="transparent"
+            {SERIES.map(s => series[s.id].map(pt => (
+              <circle key={`${s.id}-${pt.date}`} cx={x(pt.date)} cy={y(pt.balance)} r={hiDate === pt.date ? 5.5 : 4}
+                fill={s.color} stroke="var(--color-surface)" strokeWidth={2} />
+            )))}
+            {series.entered.map(pt => (
+              <circle key={`entered-${pt.date}`} cx={x(pt.date)} cy={y(pt.balance)} r={hiDate === pt.date ? 6 : 4.5}
+                fill="var(--color-surface)" stroke="var(--viz-left)" strokeWidth={2} />
+            ))}
+            {/* Hit targets: a column per date, wider than the markers. */}
+            {dates.map((d, i) => {
+              const cx = x(d);
+              const prev = i ? (x(dates[i - 1]) + cx) / 2 : 0;
+              const next = i < dates.length - 1 ? (x(dates[i + 1]) + cx) / 2 : PW;
+              return <rect key={d} x={prev} y={0} width={Math.max(next - prev, 1)} height={PH} fill="transparent"
                 onMouseEnter={() => setHi(i)} onMouseLeave={() => setHi(null)} />;
             })}
           </g>
         </svg>
-        {p && (
-          <Tooltip x={x(p.date)} y={y(p.balance)}>
-            <div className={styles.vizTipTitle}>{longDate(p.date)}</div>
-            <div><b>{money(p.balance)}</b></div>
-            <div className={styles.vizTipSub}>{SOURCE_LABEL[p.source]}</div>
+        {tipRows.length > 0 && (
+          <Tooltip x={x(hiDate)} y={tipY}>
+            <div className={styles.vizTipTitle}>{longDate(hiDate)}</div>
+            {tipRows.map(r => (
+              <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+                <svg width="10" height="10" aria-hidden="true" style={{ flex: 'none' }}>
+                  <circle cx="5" cy="5" r="4" fill={r.id === 'entered' ? 'var(--color-surface)' : r.color} stroke={r.color} strokeWidth="2" />
+                </svg>
+                <b>{money(r.pt.balance)}</b> <span className={styles.vizTipSub}>{r.label}</span>
+              </div>
+            ))}
           </Tooltip>
         )}
       </div>
       <div className={styles.chartKey}>
-        <span><svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4" fill="var(--viz-left)" /></svg> From loans, payments &amp; interest paid</span>
-        <span><svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4" fill="var(--color-surface)" stroke="var(--viz-left)" strokeWidth="2" /></svg> Entered by you</span>
+        {SERIES.map(s => (
+          <span key={s.id}>
+            <svg width="22" height="12" aria-hidden="true">
+              <line x1="1" x2="21" y1="6" y2="6" stroke={s.color} strokeWidth="2" strokeDasharray={s.dash || undefined} />
+              <circle cx="11" cy="6" r="3.5" fill={s.color} />
+            </svg>
+            {s.label}
+          </span>
+        ))}
+        {series.entered.length > 0 && (
+          <span><svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4" fill="var(--color-surface)" stroke="var(--viz-left)" strokeWidth="2" /></svg> Entered by you</span>
+        )}
       </div>
     </figure>
   );
