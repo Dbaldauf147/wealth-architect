@@ -114,7 +114,11 @@ export function mergeLoan(local, remote) {
   // A charge tagged on either side isn't ignored, whatever the other side says.
   const ignored = [...new Set([...(newer.ignoredTransactionIds || []), ...(older.ignoredTransactionIds || [])])]
     .filter(id => !txns.has(id));
+  // Balances typed in on either side are kept, the newer side winning a date.
+  const balances = new Map();
+  for (const e of [...(older.balanceHistory || []), ...(newer.balanceHistory || [])]) if (e?.date) balances.set(e.date, e);
   const out = { ...older, ...newer, payments };
+  if (balances.size) out.balanceHistory = [...balances.values()].sort((x, y) => x.date.localeCompare(y.date));
   if (ignored.length || newer.ignoredTransactionIds || older.ignoredTransactionIds) out.ignoredTransactionIds = ignored;
   return out;
 }
@@ -179,4 +183,65 @@ export function impliedBalances(loan) {
   const latest = [...periods].reverse().find(p => p.balance != null) || null;
   const remaining = latest ? latest.balance : null;
   return { periods, latest, remaining, paidDown: remaining == null ? null : principal - remaining };
+}
+
+/**
+ * Every known balance on the loan, oldest first, and so what's left now.
+ *
+ * Three sources, each a point { date, balance, source }:
+ *   'start'   the principal on the start date
+ *   'payment' the balance an interest payment implies (see impliedBalances)
+ *   'entered' a balance the user typed in from a statement (loan.balanceHistory)
+ *
+ * On the same date an entered balance beats an implied one — it's the
+ * lender's number, not an estimate — and both beat the start.
+ *
+ * @returns { points, current, paidDown }
+ *   current   the newest point, or null
+ *   paidDown  principal − current.balance, or null
+ */
+export function balanceTimeline(loan) {
+  const rank = { start: 0, payment: 1, entered: 2 };
+  const byDate = new Map();
+  const put = pt => {
+    if (!pt.date || !Number.isFinite(pt.balance)) return;
+    const had = byDate.get(pt.date);
+    if (!had || rank[pt.source] >= rank[had.source]) byDate.set(pt.date, pt);
+  };
+
+  const principal = Number(loan?.principal) || 0;
+  if (principal > 0 && loan?.startDate) put({ date: loan.startDate, balance: principal, source: 'start' });
+  for (const p of impliedBalances(loan).periods) {
+    if (p.balance != null) put({ date: p.date, balance: p.balance, source: 'payment', interest: p.interest, days: p.days, from: p.from });
+  }
+  for (const e of loan?.balanceHistory || []) {
+    const amt = Number(e?.amount);
+    if (e?.date && Number.isFinite(amt) && amt >= 0) put({ date: e.date, balance: amt, source: 'entered' });
+  }
+
+  const points = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const current = points.length ? points[points.length - 1] : null;
+  return { points, current, paidDown: current && principal > 0 ? principal - current.balance : null };
+}
+
+/** Interest paid by date, oldest first, with a running total. */
+export function interestPaidSeries(loan) {
+  const byDate = new Map();
+  for (const p of loan?.payments || []) {
+    if (!p?.date) continue;
+    byDate.set(p.date, (byDate.get(p.date) || 0) + (Number(p.amount) || 0));
+  }
+  let total = 0;
+  return [...byDate.keys()].sort().map(date => {
+    total += byDate.get(date);
+    return { date, amount: byDate.get(date), total };
+  });
+}
+
+/** balanceHistory with one entry set for its date (replacing any there), or
+ *  removed when amount is null. Newest first isn't assumed — it's sorted. */
+export function withBalanceEntry(history, date, amount) {
+  const rest = (history || []).filter(e => e.date !== date);
+  if (amount != null) rest.push({ date, amount: Number(amount) });
+  return rest.sort((a, b) => a.date.localeCompare(b.date));
 }
