@@ -6,7 +6,7 @@ import { computeIncome, commissionTakeHome, monthKeysEnding, monthKeyFor } from 
 import {
   baseSalary, paySchedule, commissionRows, chartPoints, rawSheetRows, chartSheetRows,
   expectedVsActual, expectedVsActualTotals, expectedVsActualSheetRows,
-  payByMonth, payByMonthSheetRows, payByMonthPaycheckRows, dealHistory, dealHistorySheetRows, addMonths,
+  payByMonth, payByMonthSheetRows, payByMonthPaycheckRows, dealHistory, dealHistorySheetRows, addMonths, gapReasonSheetRows,
   CHART_RANGES, STATUSES,
 } from '../lib/commissionSchedule';
 import { downloadXlsx } from '../lib/xlsx';
@@ -429,6 +429,12 @@ function loadColPrefs() {
 function saveColPrefs(p) {
   try { localStorage.setItem(COL_PREF_KEY, JSON.stringify(p)); } catch { /* private mode */ }
 }
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+// "6 payments · 4 paid, 2 projected" for a deal's header.
+const paymentsLine = p => {
+  const parts = [p.paid ? `${p.paid} paid` : '', p.recorded ? `${p.recorded} recorded` : '', p.projected ? `${p.projected} projected` : ''].filter(Boolean);
+  return `${plural(p.total, 'payment')}${parts.length ? ` · ${parts.join(', ')}` : ''}`;
+};
 const MIN_COL = 60;
 const MAX_COL = 600;
 const clampW = w => Math.max(MIN_COL, Math.min(MAX_COL, Math.round(w)));
@@ -487,8 +493,8 @@ function DealHistoryTable({ history, point }) {
   };
   const foot = c => {
     if (c.id === 'month') return '24 months';
-    if (c.deal) return cents(c.deal.total);
-    if (c.id === 'total') return cents(history.total);
+    if (c.deal) return <>{cents(c.deal.total)}<div className={own.payCount}>{plural(c.deal.payments.total, 'payment')}</div></>;
+    if (c.id === 'total') return <>{cents(history.total)}<div className={own.payCount}>{plural(history.payments, 'month')} with a payment</div></>;
     if (c.id === 'takeHome') return cents(history.takeHome);
     return '';
   };
@@ -533,6 +539,7 @@ function DealHistoryTable({ history, point }) {
                 <th key={c.id} className={cls(c)} title={c.label} data-col={c.id}>
                   <div className={own.thInner}>
                     {c.label}
+                    {c.deal && <div className={own.payCount} data-testid="deal-payments">{paymentsLine(c.deal.payments)}</div>}
                     {c.review && (
                       <div>
                         <button type="button" className={own.figureBtn} aria-pressed={isFig(c)} data-testid="figure-btn"
@@ -563,6 +570,9 @@ function DealHistoryTable({ history, point }) {
     </>
   );
 }
+
+// Column widths for the "Why the gap" export sheet.
+const GAP_COLS = [10, 12, 12, 14, 14, 12, 90];
 
 // One colour per deal in the popup (the app's categorical dataviz slots).
 const DEAL_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#8b5cf6', '#e0a40b', '#e0457b', '#0ea5b7', '#6b7280'];
@@ -603,6 +613,7 @@ function PaycheckDealsModal({ slot, point, rows, takeHome, onClose }) {
   const ahead = history.deals.reduce((s, d) => s + d.ahead, 0);
   const exportIt = () => downloadXlsx([
     { name: '24 months', rows: [[{ v: `Commissions in the ${monthLabel(point.payMonth)} month-end paycheck, by pay month`, s: 'title' }], [{ v: `Pre-tax; take-home at ${Math.round(rate * 100)}%`, s: 'muted' }], [], ...dealHistorySheetRows(history)], cols: [12, ...history.deals.map(() => 22), 16, 14, 18] },
+    { name: 'Why the gap', rows: [[{ v: `${monthLabel(point.payMonth)} paychecks: expected vs actual, and why`, s: 'title' }], [{ v: `Expected = usual base + the tracker's commission at ${Math.round(rate * 100)}% take-home. Reasons are best guesses from the deposits and the tracker, most likely first.`, s: 'muted' }], [], ...gapReasonSheetRows([point])], cols: GAP_COLS },
   ], `commissions-${point.payMonth}-deals-24-months`);
 
   return (
@@ -621,6 +632,12 @@ function PaycheckDealsModal({ slot, point, rows, takeHome, onClose }) {
                 : <>The commissions in this paycheck ({cents(point.trackerPreTax)} pre-tax), each deal’s payouts across 24 pay months.</>}
               {history.deals.length > 0 && <> Take-home at {Math.round(rate * 100)}%: {money(past * rate)} paid so far, {money(ahead * rate)} still expected in these months.</>}
             </div>
+            {slot.actual && slot.why?.length > 0 && (
+              <div className={own.why} data-testid="gap-why">
+                <b>{slot.diff != null && Math.abs(slot.diff) >= 1 ? 'Why the gap' : 'Check'}</b>
+                <ul>{slot.why.map(w => <li key={w}>{w}</li>)}</ul>
+              </div>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
             <button type="button" className={own.exportBtn} onClick={exportIt} disabled={!history.deals.length} data-testid="export-deal-history">Export</button>
@@ -754,10 +771,11 @@ function CommissionChartCard({ commissions, takeHome, paychecks, base }) {
   const today = new Date().toISOString().slice(0, 10);
   const rateNote = `Take-home at ${Math.round(rate * 100)}% of pre-tax, the share past month-end paychecks carried`;
   const PAY_COLS = [10, 16, 16, 20, 20, 14, 16, 18, 18];
-  const PAYCHECK_COLS = [10, 12, 12, 14, 14, 16, 14, 14, 14, 14, 12];
+  const PAYCHECK_COLS = [10, 12, 12, 14, 14, 16, 14, 14, 14, 14, 12, 80];
   const exportChart = () => downloadXlsx(isPay ? [
     { name: 'Total pay', rows: [[{ v: 'Total pay: base salary + commission (take-home)', s: 'title' }], [{ v: `${CHART_RANGES.find(r => r.id === range)?.label} · received = what landed; expected = usual base + ${rateNote.toLowerCase()}`, s: 'muted' }], [], ...payByMonthSheetRows(points)], cols: PAY_COLS },
     { name: 'Paychecks', rows: payByMonthPaycheckRows(points), cols: PAYCHECK_COLS },
+    { name: 'Why the gap', rows: gapReasonSheetRows(points), cols: GAP_COLS },
     { name: 'Deals', rows: rawSheetRows(points, takeHome), cols: [12, 10, 12, 28, 28, 20, 20, 14] },
   ] : eva ? [
     { name: 'Expected vs actual', rows: [[{ v: 'Commission: expected vs actual', s: 'title' }], [{ v: `${CHART_RANGES.find(r => r.id === range)?.label} · ${rateNote}. Actual = month-end deposit minus base salary.`, s: 'muted' }], [], ...expectedVsActualSheetRows(points)], cols: [12, 10, 12, 16, 16, 16, 14, 22, 12, 8] },
@@ -770,6 +788,7 @@ function CommissionChartCard({ commissions, takeHome, paychecks, base }) {
     ...(isPay ? [
       { name: 'Total pay', rows: payByMonthSheetRows([sel]), cols: PAY_COLS },
       { name: 'Paychecks', rows: payByMonthPaycheckRows([sel]), cols: PAYCHECK_COLS },
+      { name: 'Why the gap', rows: [[{ v: `${monthLabel(sel.payMonth)} paychecks: expected vs actual, and why`, s: 'title' }], [{ v: 'Reasons are best guesses from the deposits and the tracker, most likely first.', s: 'muted' }], [], ...gapReasonSheetRows([sel])], cols: GAP_COLS },
     ] : []),
     ...(eva ? [{ name: 'Expected vs actual', rows: expectedVsActualSheetRows([sel]), cols: [12, 10, 12, 16, 16, 16, 14, 22, 12, 8] }] : []),
     { name: wholePaycheck ? 'Deals' : monthLabel(sel.payMonth, { month: 'short', year: 'numeric' }), rows: rawSheetRows([sel], takeHome), cols: [12, 10, 12, 28, 28, 20, 20, 14] },
