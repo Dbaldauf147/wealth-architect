@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isInterestCharge, toISODate, paymentFromTransaction, loanInterestQueue, txnKey, mergeLoan, impliedBalances, balanceTimeline, interestPaidSeries, withBalanceEntry, loanLedger } from './loanInterest.js';
+import { isInterestCharge, toISODate, paymentFromTransaction, loanInterestQueue, txnKey, mergeLoan, impliedBalances, balanceTimeline, interestPaidSeries, withBalanceEntry, loanLedger, loanLinkType, linkedLoanTransactions, withLinkedTransactions } from './loanInterest.js';
 
 const txn = (over = {}) => ({
   transactionId: 'a', date: '9/20/2026', description: 'Ring Loan Interest', amount: -42.5,
@@ -277,5 +277,53 @@ describe('loanLedger', () => {
       { payments: [], ledger: [{ id: 'b', date: '2026-10-02', type: 'payment', amount: 1 }] },
     );
     expect(merged.ledger.map(e => e.id).sort()).toEqual(['a', 'b']);
+  });
+});
+
+describe('loans linked by subcategory', () => {
+  const loan = { principal: 10000, rate: 0.1, rateType: 'daily', startDate: '2026-09-01' };
+  const txns = [
+    { transactionId: 'a', date: '9/1/2026', description: 'Bridge loan', amount: 10000, category: 'Transfer', subcategory: 'Loan Taken' },
+    { transactionId: 'b', date: '9/20/2026', description: 'Second draw', amount: 2500, category: 'Transfer', subcategory: 'loan taken' },
+    { transactionId: 'c', date: '10/5/2026', description: 'Paydown', amount: -4000, category: 'Transfer', subcategory: 'Loan Payment', account: 'Checking' },
+    { transactionId: 'd', date: '8/1/2026', description: 'Old loan', amount: -500, category: 'Transfer', subcategory: 'Loan Payment' },
+    { transactionId: 'e', date: '10/6/2026', description: 'Card', amount: -900, category: 'Transfer', subcategory: 'Credit Card Payment' },
+  ];
+
+  it('reads the type from the subcategory, whatever the case', () => {
+    expect(loanLinkType({ subcategory: 'Loan Taken' })).toBe('loan');
+    expect(loanLinkType({ subcategory: ' loan  payment ' })).toBe('payment');
+    expect(loanLinkType({ subcategory: 'Student Loans' })).toBeNull();
+    expect(loanLinkType({})).toBeNull();
+  });
+
+  it('links draws and payments since the start, treating the start-day draw as the original loan', () => {
+    const { entries, original, earlierCount } = linkedLoanTransactions({ transactions: txns, loan });
+    expect(entries.map(e => [e.transactionId, e.type, e.amount, e.date])).toEqual([
+      ['b', 'loan', 2500, '2026-09-20'],
+      ['c', 'payment', 4000, '2026-10-05'],
+    ]);
+    expect(original.transactionId).toBe('a');
+    expect(earlierCount).toBe(1);
+  });
+
+  it('feeds the ledger and the balance', () => {
+    const view = withLinkedTransactions(loan, txns);
+    expect(loanLedger(view)).toMatchObject({ borrowed: 12500, repaid: 4000, owed: 8500 });
+    expect(balanceTimeline(view).current).toMatchObject({ date: '2026-10-05', balance: 8500, source: 'ledger' });
+    // Folding in twice doesn't double up.
+    expect(loanLedger(withLinkedTransactions(view, txns)).owed).toBe(8500);
+  });
+
+  it('leaves out what was unlinked, and what a hand-typed entry already covers', () => {
+    const view = withLinkedTransactions({ ...loan, ignoredTransactionIds: ['c'], ledger: [{ id: 'm', type: 'loan', date: '2026-09-20', amount: 2500, transactionId: 'b' }] }, txns);
+    expect(loanLedger(view)).toMatchObject({ borrowed: 12500, repaid: 0 });
+    const { unlinked } = linkedLoanTransactions({ transactions: txns, loan: view });
+    expect(unlinked.map(u => u.transactionId)).toEqual(['c']);
+  });
+
+  it('leaves a loan with nothing to link as it was', () => {
+    expect(withLinkedTransactions(loan, [txns[4]])).toBe(loan);
+    expect(withLinkedTransactions(null, txns)).toBeNull();
   });
 });

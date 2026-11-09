@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
-import { loanInterestQueue, impliedBalances } from '../lib/loanInterest';
+import { loanInterestQueue, impliedBalances, withLinkedTransactions } from '../lib/loanInterest';
 import { LoanBalance } from './LoanBalance';
 import { LoanLedger } from './LoanLedger';
 import styles from './ShortTermLoanPage.module.css';
@@ -48,7 +48,9 @@ export function ShortTermLoanPage() {
   const { shortTermLoan, transactions, privacyMode } = useData();
   const { saveLoanDetails, clearLoan, addLoanPayment, removeLoanPayment, recordLoanBalance, addLoanLedgerEntry, removeLoanLedgerEntry, tagLoanTransactions, setLoanTransactionsIgnored } = useDataActions();
 
-  const loan = shortTermLoan || null;
+  // Transactions subcategorized "Loan Taken" / "Loan Payment" join the
+  // ledger on their own, so every figure on the page counts them.
+  const loan = useMemo(() => withLinkedTransactions(shortTermLoan || null, transactions), [shortTermLoan, transactions]);
   const [editing, setEditing] = useState(false);
   const [tab, setTab] = useState(() => {
     try { return localStorage.getItem('loanPageTab') === 'ledger' ? 'ledger' : 'overview'; } catch { return 'overview'; }
@@ -234,7 +236,7 @@ export function ShortTermLoanPage() {
       </div>
 
       {tab === 'ledger' ? (
-        <LoanLedger loan={loan} readOnly={privacyMode} onAdd={addLoanLedgerEntry} onRemove={removeLoanLedgerEntry} onEditLoan={openEditor} />
+        <LoanLedger loan={loan} transactions={transactions} readOnly={privacyMode} onAdd={addLoanLedgerEntry} onRemove={removeLoanLedgerEntry} onUnlink={setLoanTransactionsIgnored} onEditLoan={openEditor} />
       ) : (<>
       {/* Headline: daily interest */}
       <div className={styles.heroCard}>
