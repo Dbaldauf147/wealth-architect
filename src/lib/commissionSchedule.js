@@ -434,3 +434,70 @@ export function payByMonthPaycheckRows(points) {
   }
   return out;
 }
+
+/**
+ * The deals behind one paycheck, over a run of pay months: what each paid
+ * (or is projected to pay) in every month, so a paycheck's commission can be
+ * read against its own past and future. Deals are matched by account and
+ * project; amounts are pre-tax, with the take-home at the given rate.
+ *
+ * @param rows      commissionRows()
+ * @param deals     the paycheck's rows ([{ account, project }]) — duplicates are fine
+ * @param from      first pay month ("YYYY-MM")
+ * @param months    how many pay months (default 24)
+ * @returns { deals: [{ key, account, project, total, past, ahead }],
+ *            points: [{ payMonth, byDeal: { [key]: { amount, status } }, amount, takeHome,
+ *                       status: 'paid' | 'recorded' | 'projected' | null }],
+ *            total, takeHome }
+ */
+export function dealHistory({ rows, deals, takeHome, from, months = 24, today = new Date() }) {
+  const rate = takeHome ?? DEFAULT_TAKE_HOME;
+  const nowKey = keyOf(today);
+  const keyFor = r => `${r.account || ''}\u0000${r.project || ''}`;
+  const list = [];
+  const seen = new Set();
+  for (const d of deals || []) {
+    const k = keyFor(d);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    list.push({ key: k, account: d.account || '', project: d.project || '', total: 0, past: 0, ahead: 0 });
+  }
+  const byKey = new Map(list.map(d => [d.key, d]));
+  const to = addMonths(from, months - 1);
+  const points = [];
+  for (let k = from; k <= to; k = addMonths(k, 1)) points.push({ payMonth: k, byDeal: {}, amount: 0, takeHome: 0, status: null });
+  const at = new Map(points.map(p => [p.payMonth, p]));
+  // Status rank: a month is only as firm as its least-firm deal.
+  const RANK = { paid: 0, recorded: 1, projected: 2 };
+  for (const r of rows || []) {
+    const d = byKey.get(keyFor(r));
+    const p = at.get(r.payMonth);
+    if (!d || !p) continue;
+    const prev = p.byDeal[d.key];
+    p.byDeal[d.key] = {
+      amount: round2((prev ? prev.amount : 0) + r.amount),
+      status: prev && RANK[prev.status] > RANK[r.status] ? prev.status : r.status,
+    };
+    p.amount = round2(p.amount + r.amount);
+    if (!p.status || RANK[r.status] > RANK[p.status]) p.status = r.status;
+    d.total = round2(d.total + r.amount);
+    if (r.payMonth <= nowKey && r.status !== 'projected') d.past = round2(d.past + r.amount);
+    else d.ahead = round2(d.ahead + r.amount);
+  }
+  for (const p of points) p.takeHome = round2(p.amount * rate);
+  const total = round2(points.reduce((s, p) => s + p.amount, 0));
+  return { deals: list, points, total, takeHome: round2(total * rate) };
+}
+
+/** dealHistory() as spreadsheet rows: one per pay month, a column per deal. */
+export function dealHistorySheetRows(history) {
+  const label = d => [d.account, d.project].filter(Boolean).join(' · ') || '—';
+  const out = [['Pay month', ...history.deals.map(label), 'Total (pre-tax)', 'Est. take-home', 'Status']
+    .map((h, i) => ({ v: h, s: i >= 1 ? 'headerRight' : 'header' }))];
+  for (const p of history.points) {
+    out.push([p.payMonth,
+      ...history.deals.map(d => (p.byDeal[d.key] ? { v: p.byDeal[d.key].amount, s: 'money' } : '')),
+      { v: p.amount, s: 'moneyBold' }, { v: p.takeHome, s: 'money' }, p.status ? STATUS_LABEL[p.status] : '']);
+  }
+  return out;
+}

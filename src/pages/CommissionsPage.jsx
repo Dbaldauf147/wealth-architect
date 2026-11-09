@@ -6,12 +6,13 @@ import { computeIncome, commissionTakeHome, monthKeysEnding, monthKeyFor } from 
 import {
   baseSalary, paySchedule, commissionRows, chartPoints, rawSheetRows, chartSheetRows,
   expectedVsActual, expectedVsActualTotals, expectedVsActualSheetRows,
-  payByMonth, payByMonthSheetRows, payByMonthPaycheckRows,
+  payByMonth, payByMonthSheetRows, payByMonthPaycheckRows, dealHistory, dealHistorySheetRows, addMonths,
   CHART_RANGES, STATUSES,
 } from '../lib/commissionSchedule';
 import { downloadXlsx } from '../lib/xlsx';
 import styles from './IncomePage.module.css';
 import own from './CommissionsPage.module.css';
+import modal from '../components/CategoryDrilldownModal.module.css';
 
 /* The Prospect Tracker's Commissions table, read-only. It's edited in the
    tracker; this page reads it live through /api/commissions (lib/commissions
@@ -313,9 +314,9 @@ const EVA = { expected: '#eb6834', actual: '#2a78d6' };
 // same colour, faded and dashed.
 const PAY = { base: '#2a78d6', commission: '#eb6834' };
 const CHART_VIEWS = [
+  { id: 'pay', label: 'Total pay' },
   { id: 'status', label: 'By status' },
   { id: 'eva', label: 'Expected vs actual' },
-  { id: 'pay', label: 'Total pay' },
 ];
 const pctOf = n => `${Math.round(n * 100)}%`;
 
@@ -380,10 +381,10 @@ function TotalPayChart({ slots, selected, onSelect, perPaycheck }) {
           const label = `${sl.label}: ${sl.expected ? `expected ${cents(sumOf(sl.expected))}` : 'no expected figure'}, ${sl.actual ? `actual ${cents(sumOf(sl.actual))}` : sl.status === 'expected' ? 'still to come' : 'nothing landed'}`;
           return (
             <g key={sl.id} className={own.bar} data-month={sl.payMonth} data-slot={sl.id} tabIndex={sl.expected || sl.actual ? 0 : -1} role="button" aria-pressed={isSel} aria-label={label}
-              onClick={() => onSelect(isSel ? null : sl.payMonth)}
-              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(isSel ? null : sl.payMonth); } }}
+              onClick={() => onSelect(sl.payMonth, sl)}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(sl.payMonth, sl); } }}
               opacity={dim ? 0.35 : 1}>
-              <title>{`${label} · click for details`}</title>
+              <title>{`${label} · click for its commissions over 24 months`}</title>
               {stack(cx - barW - gap / 2, sl.expected, true, 'exp')}
               {stack(cx + gap / 2, sl.actual, false, 'act')}
               <rect x={pad.left + step * i} y={pad.top} width={step} height={innerH} fill="transparent" />
@@ -410,11 +411,167 @@ const PAY_GRAINS = [
   { id: 'month', label: 'Per month' },
 ];
 const STATUS_TEXT = { received: 'Received', expected: 'Expected', missed: 'Not found', 'no-data': 'Before history' };
+// One colour per deal in the popup (the app's categorical dataviz slots).
+const DEAL_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#8b5cf6', '#e0a40b', '#e0457b', '#0ea5b7', '#6b7280'];
+
+/* Click a paycheck: the commissions it carries (for a mid-month paycheck, the
+   ones in that month's month-end paycheck), each deal's payouts across 24 pay
+   months — the last 12 and the next 12, or around the paycheck if it's further
+   out — so the paycheck can be read against its deals' past and future. */
+function PaycheckDealsModal({ slot, point, rows, takeHome, onClose }) {
+  const [ref, width] = useMeasuredWidth();
+  const rate = takeHome ?? 0.6;
+  const nowKey = monthKeyFor(new Date());
+  const from = useMemo(() => {
+    const start = addMonths(nowKey, -12);
+    return slot.payMonth >= start && slot.payMonth <= addMonths(start, 23) ? start : addMonths(slot.payMonth, -12);
+  }, [slot.payMonth, nowKey]);
+  const history = useMemo(() => dealHistory({ rows, deals: point.rows, takeHome, from, months: 24 }), [rows, point.rows, takeHome, from]);
+  const colorOf = Object.fromEntries(history.deals.map((d, i) => [d.key, DEAL_COLORS[i % DEAL_COLORS.length]]));
+  const dealLabel = d => [d.account, d.project].filter(Boolean).join(' · ') || '—';
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const H = 220;
+  const pad = { top: 12, right: 8, bottom: 26, left: 52 };
+  const innerW = width - pad.left - pad.right;
+  const innerH = H - pad.top - pad.bottom;
+  const max = niceMax(Math.max(1, ...history.points.map(p => p.takeHome)));
+  const step = innerW / history.points.length;
+  const barW = Math.max(4, Math.min(26, step * 0.62));
+  const y = v => pad.top + innerH - (v / max) * innerH;
+  const labelEvery = Math.max(1, Math.ceil(history.points.length / Math.max(1, Math.floor(innerW / 52))));
+  const when = slot.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const isMidSlot = slot.kind === 'mid';
+  const past = history.deals.reduce((s, d) => s + d.past, 0);
+  const ahead = history.deals.reduce((s, d) => s + d.ahead, 0);
+  const exportIt = () => downloadXlsx([
+    { name: '24 months', rows: [[{ v: `Commissions in the ${monthLabel(point.payMonth)} month-end paycheck, by pay month`, s: 'title' }], [{ v: `Pre-tax; take-home at ${Math.round(rate * 100)}%`, s: 'muted' }], [], ...dealHistorySheetRows(history)], cols: [12, ...history.deals.map(() => 22), 16, 14, 18] },
+  ], `commissions-${point.payMonth}-deals-24-months`);
+
+  return (
+    <div className={modal.overlay} onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className={modal.dialog} style={{ width: 'min(1040px, 100%)' }} role="dialog" aria-modal="true" aria-labelledby="paycheck-deals-title" data-testid="paycheck-deals-modal">
+        <div className={modal.head}>
+          <div>
+            <div className={modal.eyebrow}>{when} · {isMidSlot ? 'Mid-month' : 'Month-end'} paycheck</div>
+            <h2 id="paycheck-deals-title" className={modal.title}>
+              {slot.expected ? <>Expected {cents(sumOf(slot.expected))}</> : 'No expected figure'}
+              {slot.actual ? <>, received {cents(sumOf(slot.actual))}{slot.diff != null && <span style={{ color: diffColor(slot.diff) }}> ({signed(slot.diff)})</span>}</> : slot.status === 'expected' ? ', still to come' : ''}
+            </h2>
+            <div className={modal.sub}>
+              {isMidSlot
+                ? <>A mid-month paycheck is base salary only. Below are the commissions in {monthLabel(point.payMonth)}’s month-end paycheck instead.</>
+                : <>The commissions in this paycheck ({cents(point.trackerPreTax)} pre-tax), each deal’s payouts across 24 pay months.</>}
+              {history.deals.length > 0 && <> Take-home at {Math.round(rate * 100)}%: {money(past * rate)} paid so far, {money(ahead * rate)} still expected in these months.</>}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <button type="button" className={own.exportBtn} onClick={exportIt} disabled={!history.deals.length} data-testid="export-deal-history">Export</button>
+            <button type="button" className={modal.close} onClick={onClose} aria-label="Close" data-testid="close-deal-history">
+              <span className="material-symbols-outlined">close</span>
+            </button>
+          </div>
+        </div>
+
+        {!history.deals.length ? (
+          <div className={styles.muted}>The tracker has no commission in {monthLabel(point.payMonth)}’s month-end paycheck.</div>
+        ) : (
+          <>
+            <div className={own.filters} style={{ marginBottom: 4 }}>
+              {history.deals.map(d => (
+                <span key={d.key} className={own.chip} style={{ cursor: 'default' }}><i style={{ background: colorOf[d.key] }} />{dealLabel(d)}</span>
+              ))}
+              <span className={own.chip} style={{ cursor: 'default' }}><i style={{ background: 'transparent', border: '1.5px dashed var(--color-text-secondary)' }} />Projected</span>
+            </div>
+            <div ref={ref} className={styles.chartWrap} data-testid="deal-history-chart">
+              <svg width={width} height={H} role="img" aria-label="Take-home commission from these deals by pay month">
+                {[0, 0.25, 0.5, 0.75, 1].map(f => f * max).map(t => (
+                  <g key={t}>
+                    <line x1={pad.left} x2={width - pad.right} y1={y(t)} y2={y(t)} stroke="var(--color-surface-alt)" />
+                    <text x={pad.left - 8} y={y(t) + 4} textAnchor="end" className={styles.axisText}>{axis(t)}</text>
+                  </g>
+                ))}
+                {history.points.map((p, i) => {
+                  const x0 = pad.left + step * i + step / 2 - barW / 2;
+                  const isThis = p.payMonth === point.payMonth;
+                  let acc = 0;
+                  return (
+                    <g key={p.payMonth} data-month={p.payMonth}>
+                      <title>{`${monthLabel(p.payMonth)} month-end: ${cents(p.takeHome)} take-home (${cents(p.amount)} pre-tax)${p.status === 'projected' ? ', projected' : ''}`}</title>
+                      {isThis && <rect x={pad.left + step * i} y={pad.top} width={step} height={innerH} fill="var(--color-surface-alt)" />}
+                      {history.deals.map(d => {
+                        const v = p.byDeal[d.key];
+                        if (!v || !(v.amount > 0)) return null;
+                        const amt = v.amount * rate;
+                        const top = y(acc + amt);
+                        const h = y(acc) - top;
+                        acc += amt;
+                        const faded = v.status === 'projected';
+                        return <rect key={d.key} x={x0} y={top} width={barW} height={Math.max(0, h - 1)} rx={2} fill={colorOf[d.key]} fillOpacity={faded ? 0.28 : 1} stroke={faded ? colorOf[d.key] : 'none'} strokeDasharray={faded ? '3 2' : undefined} />;
+                      })}
+                      <rect x={pad.left + step * i} y={pad.top} width={step} height={innerH} fill="transparent" />
+                    </g>
+                  );
+                })}
+                {history.points.map((p, i) => i % labelEvery === 0 && (
+                  <text key={p.payMonth} x={pad.left + step * i + step / 2} y={H - 8} textAnchor="middle" className={styles.axisText}
+                    fontWeight={p.payMonth === point.payMonth || p.payMonth === nowKey ? 700 : undefined}>
+                    {shortKey(p.payMonth)}
+                  </text>
+                ))}
+                <line x1={pad.left} x2={width - pad.right} y1={y(0)} y2={y(0)} stroke="var(--color-text-muted)" />
+              </svg>
+            </div>
+            <div className={styles.tableWrap} style={{ marginTop: 12 }}>
+              <table className={styles.table} data-testid="deal-history-table">
+                <thead>
+                  <tr>
+                    <th>Pay month</th>
+                    {history.deals.map(d => <th key={d.key} className={styles.num}>{dealLabel(d)}</th>)}
+                    <th className={styles.num}>Total pre-tax</th>
+                    <th className={styles.num}>Est. take-home</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.points.map(p => (
+                    <tr key={p.payMonth} style={p.payMonth === point.payMonth ? { background: 'var(--color-surface-alt)', fontWeight: 700 } : undefined}>
+                      <td className={styles.nowrap}>{monthLabel(p.payMonth, { month: 'short', year: 'numeric' })}{p.payMonth === point.payMonth && <span className={styles.muted}> · this paycheck</span>}</td>
+                      {history.deals.map(d => <td key={d.key} className={styles.num}>{p.byDeal[d.key] ? cents(p.byDeal[d.key].amount) : <span className={styles.muted}>—</span>}</td>)}
+                      <td className={styles.num}>{p.amount ? cents(p.amount) : <span className={styles.muted}>—</span>}</td>
+                      <td className={styles.num}>{p.amount ? cents(p.takeHome) : <span className={styles.muted}>—</span>}</td>
+                      <td className={styles.nowrap}>{p.status ? STATUSES.find(st => st.id === p.status)?.label : <span className={styles.muted}>—</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td><b>24 months</b></td>
+                    {history.deals.map(d => <td key={d.key} className={styles.num}><b>{cents(d.total)}</b></td>)}
+                    <td className={styles.num}><b>{cents(history.total)}</b></td>
+                    <td className={styles.num}><b>{cents(history.takeHome)}</b></td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const signed = n => `${n > 0 ? '+' : n < 0 ? '−' : ''}${cents(Math.abs(n))}`;
 const diffColor = n => (n < -0.5 ? '#b91c1c' : n > 0.5 ? '#16a34a' : 'var(--color-text-secondary)');
 
 function CommissionChartCard({ commissions, takeHome, paychecks, base }) {
-  const [chartView, setChartView] = useState('status');
+  const [chartView, setChartView] = useState('pay');
+  const [popup, setPopup] = useState(null);
   const [payGrain, setPayGrain] = useState('paycheck');
   const [range, setRange] = useState('around');
   const [account, setAccount] = useState('');
@@ -496,7 +653,7 @@ function CommissionChartCard({ commissions, takeHome, paychecks, base }) {
     ...(eva ? [{ name: 'Expected vs actual', rows: expectedVsActualSheetRows([sel]), cols: [12, 10, 12, 16, 16, 16, 14, 22, 12, 8] }] : []),
     { name: wholePaycheck ? 'Deals' : monthLabel(sel.payMonth, { month: 'short', year: 'numeric' }), rows: rawSheetRows([sel], takeHome), cols: [12, 10, 12, 28, 28, 20, 20, 14] },
   ], `commissions-${sel.payMonth}${isPay ? '-total-pay' : eva ? '-paycheck-expected-vs-actual' : '-paycheck'}`);
-  const switchView = id => { setChartView(id); setSelected(null); };
+  const switchView = id => { setChartView(id); setSelected(null); setPopup(null); };
 
   return (
     <section className={styles.card} data-testid="commissions-chart-card">
@@ -584,7 +741,7 @@ function CommissionChartCard({ commissions, takeHome, paychecks, base }) {
       {!points.length ? (
         <div className={styles.muted}>Nothing matches these filters.</div>
       ) : isPay ? (
-        <TotalPayChart slots={paySlots} selected={selected} onSelect={setSelected} perPaycheck={perPaycheck} />
+        <TotalPayChart slots={paySlots} selected={selected} onSelect={(month, slot) => { setSelected(month); setPopup(slot); }} perPaycheck={perPaycheck} />
       ) : eva ? (
         <ExpectedVsActualChart points={points} selected={selected} onSelect={setSelected} />
       ) : (
@@ -678,7 +835,13 @@ function CommissionChartCard({ commissions, takeHome, paychecks, base }) {
             <div className={styles.muted}>{wholePaycheck ? 'The tracker expected no commission in this paycheck.' : 'No commission in this paycheck with the current filters.'}</div>
           )}
         </div>
-      ) : points.length > 0 && <div className={own.hint}>Tip: click any bar to see {isPay ? 'its paychecks and deals and export them.' : eva ? 'how the paycheck compares and export its deals.' : 'and export its deals.'}</div>}
+      ) : points.length > 0 && <div className={own.hint}>Tip: click any bar to see {isPay ? 'the commissions in that paycheck across 24 months, past and projected.' : eva ? 'how the paycheck compares and export its deals.' : 'and export its deals.'}</div>}
+      {isPay && popup && (() => {
+        const point = payPoints.find(p => p.payMonth === popup.payMonth);
+        // Per month, a click means the month: show it through its month-end paycheck.
+        const slot = popup.kind ? popup : point?.slots[1];
+        return point && slot ? <PaycheckDealsModal slot={slot} point={point} rows={rows} takeHome={takeHome} onClose={() => setPopup(null)} /> : null;
+      })()}
     </section>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { baseSalary, paySchedule, commissionRows, chartPoints, rawSheetRows, chartSheetRows, addMonths, expectedVsActual, expectedVsActualTotals, expectedVsActualSheetRows, payByMonth, payByMonthSheetRows, payByMonthPaycheckRows } from './commissionSchedule.js';
+import { baseSalary, paySchedule, commissionRows, chartPoints, rawSheetRows, chartSheetRows, addMonths, expectedVsActual, expectedVsActualTotals, expectedVsActualSheetRows, payByMonth, payByMonthSheetRows, payByMonthPaycheckRows, dealHistory, dealHistorySheetRows } from './commissionSchedule.js';
 
 const today = new Date(2026, 10, 8); // Sun Nov 8, 2026
 const pc = (y, m, d, amount) => ({ date: new Date(y, m - 1, d), amount });
@@ -182,3 +182,31 @@ describe('payByMonth', () => {
     expect(jul.planned).toBeNull();
   });
 });
+
+describe('dealHistory', () => {
+  const rows = commissionRows(commissions, today);
+  const h = dealHistory({ rows, deals: [{ account: 'Acme', project: 'HVAC' }, { account: 'Acme', project: 'HVAC' }], takeHome: 0.5, from: '2026-07', months: 12, today });
+  const at = k => h.points.find(p => p.payMonth === k);
+
+  it('covers the asked months for just the deals given', () => {
+    expect(h.points).toHaveLength(12);
+    expect(h.points[0].payMonth).toBe('2026-07');
+    expect(h.deals).toHaveLength(1);
+    // Beta's August money isn't one of these deals.
+    expect(at('2026-09').amount).toBe(0);
+  });
+  it('splits past from projected and keeps the status', () => {
+    expect(at('2026-10')).toMatchObject({ amount: 1000, takeHome: 500, status: 'paid' });
+    expect(at('2026-12').status).toBe('projected');
+    const d = h.deals[0];
+    expect(d.past).toBe(1000 + (at('2026-11').status === 'projected' ? 0 : at('2026-11').amount));
+    expect(round(d.past + d.ahead)).toBe(d.total);
+    expect(d.total).toBe(h.total);
+  });
+  it('exports a row per month with a column per deal', () => {
+    const sheet = dealHistorySheetRows(h);
+    expect(sheet).toHaveLength(13);
+    expect(sheet[0].map(c => c.v)).toEqual(['Pay month', 'Acme · HVAC', 'Total (pre-tax)', 'Est. take-home', 'Status']);
+  });
+});
+const round = n => Math.round(n * 100) / 100;
