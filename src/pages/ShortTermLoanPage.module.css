@@ -285,6 +285,89 @@
   .balanceForm { grid-template-columns: 1fr; }
 }
 
+/* ── Sub-tabs ── */
+.tabBar {
+  display: flex;
+  gap: 4px;
+  border-bottom: var(--border-subtle);
+  overflow-x: auto;
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  margin-bottom: -1px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  font-family: var(--font-headline);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab:hover { color: var(--color-text-secondary); }
+.tabActive { color: var(--color-text-primary); border-bottom-color: var(--color-secondary); }
+
+/* ── Loans & payments ledger ── */
+.typeToggle {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--color-surface-alt);
+  margin-bottom: 14px;
+}
+.typeOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.typeOptionActive {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .1);
+}
+.ledgerFormGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.3fr 1.6fr auto;
+  gap: 12px;
+  align-items: end;
+}
+.typeChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px 2px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+}
+.typeChipLoan { background: rgba(235, 104, 52, .12); }
+.typeChipLoan .material-symbols-outlined { color: #eb6834; }
+.typeChipPayment { background: rgba(27, 175, 122, .12); }
+.typeChipPayment .material-symbols-outlined { color: #1baf7a; }
+
+@media (max-width: 900px) {
+  .ledgerFormGrid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 560px) {
+  .ledgerFormGrid { grid-template-columns: 1fr; }
+}
+
 /* ── Note bar ── */
 .noteBar {
   background: var(--color-surface-alt);

@@ -1912,6 +1912,36 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  // The loan ledger: new loans taken out and payments toward the balance
+  // (see loanLedger in lib/loanInterest). Interest stays in `payments`.
+  const addLoanLedgerEntry = useCallback(({ date, type, amount, label, note } = {}) => {
+    if (!(Number(amount) > 0) || (type !== 'loan' && type !== 'payment')) return;
+    setShortTermLoan(prev => {
+      if (!prev) return prev;
+      const entry = {
+        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        date: date || new Date().toISOString().slice(0, 10),
+        type,
+        amount: Number(amount),
+        label: (label || '').trim(),
+        note: (note || '').trim(),
+      };
+      const next = { ...prev, ledger: [...(prev.ledger || []), entry], updatedAt: new Date().toISOString() };
+      saveShortTermLoan(next);
+      return next;
+    });
+  }, []);
+
+  const removeLoanLedgerEntry = useCallback((id) => {
+    if (!id) return;
+    setShortTermLoan(prev => {
+      if (!prev) return prev;
+      const next = { ...prev, ledger: (prev.ledger || []).filter(e => e.id !== id), updatedAt: new Date().toISOString() };
+      saveShortTermLoan(next);
+      return next;
+    });
+  }, []);
+
   const removeLoanPayment = useCallback((id) => {
     if (!id) return;
     setShortTermLoan(prev => {
@@ -2583,6 +2613,8 @@ export function DataProvider({ children }) {
     addLoanPayment,
     removeLoanPayment,
     recordLoanBalance,
+    addLoanLedgerEntry,
+    removeLoanLedgerEntry,
     tagLoanTransactions,
     setLoanTransactionsIgnored,
     setRobinhoodTrades,
@@ -2661,6 +2693,8 @@ export function DataProvider({ children }) {
     addLoanPayment,
     removeLoanPayment,
     recordLoanBalance,
+    addLoanLedgerEntry,
+    removeLoanLedgerEntry,
     tagLoanTransactions,
     setLoanTransactionsIgnored,
     setRobinhoodTrades,
