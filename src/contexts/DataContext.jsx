@@ -202,6 +202,12 @@ const loadSplitwisePrefs = () => {
   return { ...DEFAULT_SPLITWISE_PREFS, ...(stored || {}) };
 };
 const saveSplitwisePrefs = (v) => saveJSON('splitwisePrefs', v);
+// Commissions page: which deal columns have been checked off ("figured out")
+// in the paycheck popup. { figured: { [dealKey]: 'YYYY-MM-DD' | null } } —
+// unmarking stores null rather than deleting, so a device that still has the
+// mark can't merge it back in.
+const loadCommissionReview = () => loadJSON('commissionReview', null) || {};
+const saveCommissionReview = (v) => saveJSON('commissionReview', v);
 // Weekly-email section order + visibility — synced via Firestore so the server
 // cron renders sections in the user's chosen order. Stored as [{id, enabled}];
 // normalizeEmailSections fills in defaults / drops unknown ids.
@@ -513,6 +519,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.paymentReminderPrefs, remote.paymentReminderPrefs],
     [merged.calendarSyncPrefs, remote.calendarSyncPrefs],
     [merged.splitwisePrefs, remote.splitwisePrefs],
+    [merged.commissionReview, remote.commissionReview],
     [merged.savedTxnViews, remote.savedTxnViews],
     [merged.txnColumnWidths, remote.txnColumnWidths],
     [merged.categoryColors, remote.categoryColors],
@@ -578,7 +585,7 @@ const EMPTY_LOCALS = {
   dateOverrides: {}, transactionNotes: {}, splitTags: {}, accountNicknames: {}, accountGroups: {},
   assetClasses: {}, netWorthCategories: {}, netWorthLiquidCategories: {}, netWorthPrefs: null,
   customAssets: [], customLiabilities: [], customAssetClasses: [],
-  hiddenCards: [], paymentReminderPrefs: {}, calendarSyncPrefs: {}, splitwisePrefs: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
+  hiddenCards: [], paymentReminderPrefs: {}, calendarSyncPrefs: {}, splitwisePrefs: {}, commissionReview: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
   cardPromos: null, cardPromosUpdatedAt: null, promoTags: {}, vendorAlerts: [], vendorAlertsUpdatedAt: null,
   hiddenCategories: new Set(), rangeExcludedCategories: [], rangeExcludedSeeded: false, shortTermLoan: null, robinhoodTrades: null,
   organizedCategories: new Set(), incomeCategories: new Set(), savedTxnViews: {},
@@ -620,6 +627,7 @@ function readLocalConfig() {
     paymentReminderPrefs: loadPaymentReminderPrefs(),
     calendarSyncPrefs: loadCalendarSyncPrefs(),
     splitwisePrefs: loadSplitwisePrefs(),
+    commissionReview: loadCommissionReview(),
     weeklyEmailSections: loadJSON('weeklyEmailSections', null),
     weeklyEmailDay: loadJSON('weeklyEmailDay', null),
     customCategories: loadCustomCategories(),
@@ -697,6 +705,9 @@ function mergeConfig(remote, locals) {
     paymentReminderPrefs: { ...DEFAULT_PAYMENT_REMINDER_PREFS, ...(remote.paymentReminderPrefs || {}), ...(locals.paymentReminderPrefs || {}) },
     calendarSyncPrefs: { ...DEFAULT_CALENDAR_SYNC_PREFS, ...(remote.calendarSyncPrefs || {}), ...(locals.calendarSyncPrefs || {}) },
     splitwisePrefs: { ...DEFAULT_SPLITWISE_PREFS, ...(remote.splitwisePrefs || {}), ...(locals.splitwisePrefs || {}) },
+    commissionReview: {
+      figured: { ...(remote.commissionReview?.figured || {}), ...(locals.commissionReview?.figured || {}) },
+    },
     weeklyEmailSections: normalizeEmailSections(locals.weeklyEmailSections || remote.weeklyEmailSections),
     weeklyEmailDay: locals.weeklyEmailDay || remote.weeklyEmailDay || null,
     customCategories: unionStringArray(locals.customCategories, remote.customCategories),
@@ -763,6 +774,7 @@ function buildSyncPayload(v) {
     paymentReminderPrefs: v.paymentReminderPrefs,
     calendarSyncPrefs: v.calendarSyncPrefs,
     splitwisePrefs: v.splitwisePrefs,
+    commissionReview: v.commissionReview || {},
     weeklyEmailSections: v.weeklyEmailSections,
     weeklyEmailDay: v.weeklyEmailDay ?? null,
     customCategories: v.customCategories,
@@ -877,6 +889,7 @@ export function DataProvider({ children }) {
   const [paymentReminderPrefs, setPaymentReminderPrefs] = useState(loadPaymentReminderPrefs);
   const [calendarSyncPrefs, setCalendarSyncPrefs] = useState(loadCalendarSyncPrefs);
   const [splitwisePrefs, setSplitwisePrefs] = useState(loadSplitwisePrefs);
+  const [commissionReview, setCommissionReview] = useState(loadCommissionReview);
   // Live Splitwise data. Deliberately not persisted anywhere: a balance is
   // only worth showing if it is current.
   const [splitwiseRaw, setSplitwiseRaw] = useState(null);
@@ -952,6 +965,7 @@ export function DataProvider({ children }) {
     setPaymentReminderPrefs(m.paymentReminderPrefs); savePaymentReminderPrefs(m.paymentReminderPrefs);
     setCalendarSyncPrefs(m.calendarSyncPrefs); saveCalendarSyncPrefs(m.calendarSyncPrefs);
     setSplitwisePrefs(m.splitwisePrefs); saveSplitwisePrefs(m.splitwisePrefs);
+    setCommissionReview(m.commissionReview); saveCommissionReview(m.commissionReview);
     setWeeklyEmailSections(m.weeklyEmailSections); saveWeeklyEmailSections(m.weeklyEmailSections);
     setWeeklyEmailDay(m.weeklyEmailDay); saveWeeklyEmailDay(m.weeklyEmailDay);
     setCustomCategories(m.customCategories); saveCustomCategories(m.customCategories);
@@ -1090,7 +1104,7 @@ export function DataProvider({ children }) {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
       transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, statementCloseDays, placeLinks, placeRules, cardPromos, cardPromosUpdatedAt, promoTags, vendorAlerts, vendorAlertsUpdatedAt, assetClasses,
       netWorthCategories, netWorthLiquidCategories, netWorthPrefs, customAssets,
-      customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, splitwisePrefs, weeklyEmailSections, weeklyEmailDay,
+      customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, splitwisePrefs, commissionReview, weeklyEmailSections, weeklyEmailDay,
       customCategories, hiddenCategories, rangeExcludedCategories, rangeExcludedSeeded, shortTermLoan, robinhoodTrades, organizedCategories,
       incomeCategories, savedTxnViews, chartHiddenCats, chartHiddenSubs, txnColumnWidths: columnWidths,
       categoryColors, visibleColumns, activeTxnView, showAccounts, pareto8020View,
@@ -1146,6 +1160,7 @@ export function DataProvider({ children }) {
     paymentReminderPrefs,
     calendarSyncPrefs,
     splitwisePrefs,
+    commissionReview,
     weeklyEmailSections,
     weeklyEmailDay,
     customCategories,
@@ -1772,6 +1787,15 @@ export function DataProvider({ children }) {
     setCalendarSyncPrefs(prev => {
       const next = { ...prev, ...(patch || {}) };
       saveCalendarSyncPrefs(next);
+      return next;
+    });
+  }, []);
+
+  // Mark (or unmark) a commission deal as figured out on the Commissions page.
+  const setCommissionFigured = useCallback((key, on) => {
+    setCommissionReview(prev => {
+      const next = { ...prev, figured: { ...(prev?.figured || {}), [key]: on ? new Date().toISOString().slice(0, 10) : null } };
+      saveCommissionReview(next);
       return next;
     });
   }, []);
@@ -2559,6 +2583,7 @@ export function DataProvider({ children }) {
     updatePaymentReminderPrefs,
     updateCalendarSyncPrefs,
     updateSplitwisePrefs,
+    setCommissionFigured,
     updateWeeklyEmailSections,
     updateWeeklyEmailDay,
     renameGroup,
@@ -2635,6 +2660,7 @@ export function DataProvider({ children }) {
     updatePaymentReminderPrefs,
     updateCalendarSyncPrefs,
     updateSplitwisePrefs,
+    setCommissionFigured,
     updateWeeklyEmailSections,
     updateWeeklyEmailDay,
     renameGroup,
@@ -2703,6 +2729,7 @@ export function DataProvider({ children }) {
     paymentReminderPrefs: shownPaymentPrefs,
     calendarSyncPrefs,
     splitwisePrefs,
+    commissionReview,
     splitwise,
     weeklyEmailSections,
     weeklyEmailDay,
@@ -2748,6 +2775,7 @@ export function DataProvider({ children }) {
     netWorthPrefs,
     calendarSyncPrefs,
     splitwisePrefs,
+    commissionReview,
     splitwise,
     weeklyEmailSections,
     weeklyEmailDay,
