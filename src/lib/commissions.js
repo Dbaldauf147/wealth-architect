@@ -249,3 +249,39 @@ function startOfDay(d) {
 function ymdOf(d) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
+
+const squash = t => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+const RECURRING = /^(non[\s-]?)?recurring$/i;
+// Contract references carry digits ("DB-060425 Amend1", "MSA KTM-32426",
+// "CA 8/6/26"); the scope code doesn't ("BECS", "SUSUP").
+const isRef = t => /\d/.test(t);
+
+/**
+ * A deal as people say it: the company and the scope of the engagement,
+ * instead of the tracker's full project title. Project titles read
+ * "<legal entity>_<contract ref>_<scope code> <Recurring|NonRecurring>",
+ * e.g. "Berkeley Partners_DB-060425 Amend1_BECS NonRecurring" →
+ * { company: 'Berkeley Partners', scope: 'BECS · one-time' }. A project that
+ * just repeats the company name has no scope; any other plain title is kept
+ * as the scope.
+ * @returns { company, scope, label, full }  (label = "company · scope", full = the original)
+ */
+export function dealDisplay({ account, project } = {}) {
+  const company = String(account || '').trim();
+  const title = String(project || '').trim();
+  const full = [company, title].filter(Boolean).join(' · ') || '—';
+  const words = title.split('_').flatMap(p => p.trim().split(/\s+(?=(?:non[\s-]?)?recurring$)/i)).map(t => t.trim()).filter(Boolean);
+  let scope = '';
+  if (words.length > 1) {
+    const flag = words.slice(1).find(w => RECURRING.test(w));
+    const codes = words.slice(1).filter(w => w !== flag && !isRef(w));
+    const kind = flag ? (/^non/i.test(flag) ? 'one-time' : 'recurring') : '';
+    scope = [codes.join(' · '), kind].filter(Boolean).join(' · ');
+  } else if (title) {
+    const a = squash(company);
+    const t = squash(title);
+    scope = a && t && (a.includes(t) || t.includes(a)) ? '' : title;
+  }
+  const name = company || (words[0] || title) || '—';
+  return { company: name, scope, label: scope ? `${name} · ${scope}` : name, full };
+}

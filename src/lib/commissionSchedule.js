@@ -13,7 +13,7 @@
 
    Pure: no React, no DOM. */
 
-import { payouts, expectedPayouts, monthEnd } from './commissions.js';
+import { payouts, expectedPayouts, monthEnd, dealDisplay } from './commissions.js';
 import { businessDayOnOrBefore } from './upcomingCash.js';
 import { DEFAULT_TAKE_HOME } from './income.js';
 
@@ -408,7 +408,7 @@ export function payByMonth({ rows, paychecks, base, takeHome, range = 'around', 
 const usd = n => `$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const sgn = n => `${n < 0 ? '−' : '+'}${usd(n)}`;
 const pctTxt = r => `${Math.round(r * 1000) / 10}%`;
-const dealName = r => [r.account, r.project].filter(Boolean).join(' · ') || 'a deal';
+const dealName = r => dealDisplay(r).label;
 const commGap = sl => (sl && sl.actual && sl.expected ? round2(sl.actual.commission - sl.expected.commission) : null);
 const monthName = key => { const [y, m] = key.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); };
 
@@ -605,7 +605,7 @@ export function dealHistory({ rows, deals, takeHome, from, months = 24, today = 
 
 /** dealHistory() as spreadsheet rows: one per pay month, a column per deal. */
 export function dealHistorySheetRows(history) {
-  const label = d => [d.account, d.project].filter(Boolean).join(' · ') || '—';
+  const label = d => dealDisplay(d).label;
   const out = [['Pay month', ...history.deals.map(label), 'Total (pre-tax)', 'Est. take-home', 'Status']
     .map((h, i) => ({ v: h, s: i >= 1 ? 'headerRight' : 'header' }))];
   for (const p of history.points) {

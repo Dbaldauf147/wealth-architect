@@ -331,3 +331,12 @@ th.figured .payCount { color: #00684a; }
 }
 .why ul { list-style: disc; margin: 4px 0 0 18px; }
 .why li + li { margin-top: 2px; }
+
+.scope {
+  margin-top: 2px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: none;
+  letter-spacing: 0;
+}
+th.figured .scope { color: #00684a; }

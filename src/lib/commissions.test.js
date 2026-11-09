@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  parseMoney, parseRate, yearForMonth, payMonthOf, parseCommissionRows, earnedByMonth, payouts, payoutFor, paychecksIn, expectedPayouts,
+  parseMoney, parseRate, yearForMonth, payMonthOf, parseCommissionRows, earnedByMonth, payouts, payoutFor, paychecksIn, expectedPayouts, dealDisplay,
 } from './commissions.js';
 
 const d = s => { const [y, m, day] = s.split('-').map(Number); return new Date(y, m - 1, day); };
@@ -110,5 +110,24 @@ describe('expectedPayouts', () => {
 
   it('drops a contract that stopped being entered long ago, whatever its window', () => {
     expect(expectedPayouts([row('Old', '2027-12-31', { '2026-03': 500 })], now)).toEqual([]);
+  });
+});
+
+describe('dealDisplay', () => {
+  const d = (account, project) => dealDisplay({ account, project });
+  it('keeps the company and the scope code, drops the contract reference', () => {
+    expect(d('Berkeley Partners', 'Berkeley Partners_DB-060425 Amend1_BECS NonRecurring')).toMatchObject({ company: 'Berkeley Partners', scope: 'BECS · one-time', label: 'Berkeley Partners · BECS · one-time' });
+    expect(d('BlackRock', 'Blackrock, Inc._MSA KTM-32426_SUSUP_Recurring').label).toBe('BlackRock · SUSUP · recurring');
+    expect(d('DivCore Capital (a Blue Owl co.)', 'Divco West Acquisitions, LLC_CA 8/6/26_SUECO_Non-Recurring').scope).toBe('SUECO · one-time');
+  });
+  it('drops a project that only repeats the company', () => {
+    expect(d('Strategic Hotels & Resorts', 'Strategic Hotels')).toMatchObject({ scope: '', label: 'Strategic Hotels & Resorts' });
+  });
+  it('keeps a plain project title as the scope', () => {
+    expect(d('Griffis', 'Benchmarking').label).toBe('Griffis · Benchmarking');
+  });
+  it('keeps the full title for tooltips and copes with blanks', () => {
+    expect(d('BlackRock', 'Blackrock, Inc._MSA KTM-32426_SUSUP_Recurring').full).toBe('BlackRock · Blackrock, Inc._MSA KTM-32426_SUSUP_Recurring');
+    expect(d('', '').label).toBe('—');
   });
 });
