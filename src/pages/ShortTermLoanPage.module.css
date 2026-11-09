@@ -118,6 +118,30 @@
 
 .statGood .statValue { color: var(--color-success); }
 
+/* ── Remaining balance ── */
+.balanceRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.balanceValue {
+  font-family: var(--font-headline);
+  font-size: 32px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+  margin: 4px 0;
+}
+
+.balanceSide { text-align: right; }
+
+@media (max-width: 560px) {
+  .balanceSide { text-align: left; }
+}
+
 /* ── Note bar ── */
 .noteBar {
   background: var(--color-surface-alt);
