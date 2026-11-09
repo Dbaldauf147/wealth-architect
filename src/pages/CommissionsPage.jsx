@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCommissions } from '../hooks/useCommissions';
 import { useData, useDataActions } from '../contexts/DataContext';
-import { earnedByMonth, monthLabel, payMonthOf, ymKey, expectedPayouts } from '../lib/commissions';
+import { earnedByMonth, monthLabel, payMonthOf, ymKey, expectedPayouts, dealDisplay } from '../lib/commissions';
 import { computeIncome, commissionTakeHome, monthKeysEnding, monthKeyFor } from '../lib/income';
 import {
   baseSalary, paySchedule, commissionRows, chartPoints, rawSheetRows, chartSheetRows,
@@ -411,7 +411,7 @@ const PAY_GRAINS = [
   { id: 'month', label: 'Per month' },
 ];
 const STATUS_TEXT = { received: 'Received', expected: 'Expected', missed: 'Not found', 'no-data': 'Before history' };
-const dealLabel = d => [d.account, d.project].filter(Boolean).join(' · ') || '—';
+const dealLabel = d => dealDisplay(d).label;
 // The deal's key in the synced "figured out" marks: readable, and free of the
 // control characters dealHistory uses internally.
 const reviewKey = d => `${d.account || ''}|${d.project || ''}`;
@@ -454,7 +454,7 @@ function DealHistoryTable({ history, point }) {
 
   const cols = useMemo(() => [
     { id: 'month', label: 'Pay month', w: 175, locked: true },
-    ...history.deals.map(d => ({ id: `deal:${reviewKey(d)}`, label: dealLabel(d), w: 180, deal: d, review: reviewKey(d) })),
+    ...history.deals.map(d => ({ id: `deal:${reviewKey(d)}`, label: dealLabel(d), name: dealDisplay(d), w: 180, deal: d, review: reviewKey(d) })),
     { id: 'total', label: 'Total pre-tax', w: 130, num: true },
     { id: 'takeHome', label: 'Est. take-home', w: 130, num: true },
     { id: 'status', label: 'Status', w: 170 },
@@ -536,9 +536,9 @@ function DealHistoryTable({ history, point }) {
           <thead>
             <tr>
               {shown.map(c => (
-                <th key={c.id} className={cls(c)} title={c.label} data-col={c.id}>
+                <th key={c.id} className={cls(c)} title={c.name ? c.name.full : c.label} data-col={c.id}>
                   <div className={own.thInner}>
-                    {c.label}
+                    {c.name ? <>{c.name.company}{c.name.scope && <div className={own.scope}>{c.name.scope}</div>}</> : c.label}
                     {c.deal && <div className={own.payCount} data-testid="deal-payments">{paymentsLine(c.deal.payments)}</div>}
                     {c.review && (
                       <div>
@@ -653,7 +653,7 @@ function PaycheckDealsModal({ slot, point, rows, takeHome, onClose }) {
           <>
             <div className={own.filters} style={{ marginBottom: 4 }}>
               {history.deals.map(d => (
-                <span key={d.key} className={own.chip} style={{ cursor: 'default', ...(figured[reviewKey(d)] ? { color: '#00684a', fontWeight: 700 } : null) }}><i style={{ background: colorOf[d.key] }} />{figured[reviewKey(d)] ? '✓ ' : ''}{dealLabel(d)}</span>
+                <span key={d.key} className={own.chip} style={{ cursor: 'default', ...(figured[reviewKey(d)] ? { color: '#00684a', fontWeight: 700 } : null) }}><i style={{ background: colorOf[d.key] }} /><span title={dealDisplay(d).full}>{figured[reviewKey(d)] ? '✓ ' : ''}{dealLabel(d)}</span></span>
               ))}
               <span className={own.chip} style={{ cursor: 'default' }}><i style={{ background: 'transparent', border: '1.5px dashed var(--color-text-secondary)' }} />Projected</span>
             </div>
