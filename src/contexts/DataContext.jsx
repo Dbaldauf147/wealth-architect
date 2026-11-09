@@ -16,7 +16,7 @@ import {
 import { normalizeEmailSections } from '../lib/renderWeeklyEmail';
 import { SEED_PROMOS } from '../lib/cardPromos';
 import { keepRentDismissals } from '../lib/rentDuplicates';
-import { paymentFromTransaction, mergeLoan } from '../lib/loanInterest';
+import { paymentFromTransaction, mergeLoan, withBalanceEntry } from '../lib/loanInterest';
 import { mergePromos, mergeTrades } from '../lib/syncMerge';
 import {
   normalizeExpenses as normalizeSplitwiseExpenses,
@@ -1893,6 +1893,25 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  // Record the loan's balance on a date (from a statement), replacing any
+  // already entered for that date; amount null removes it. A rate passed
+  // along updates the loan's terms too.
+  const recordLoanBalance = useCallback(({ date, amount, rate, rateType } = {}) => {
+    if (!date) return;
+    setShortTermLoan(prev => {
+      if (!prev) return prev;
+      const next = {
+        ...prev,
+        balanceHistory: withBalanceEntry(prev.balanceHistory, date, amount == null ? null : Number(amount) || 0),
+        updatedAt: new Date().toISOString(),
+      };
+      if (rate != null && rate !== '') next.rate = Number(rate) || 0;
+      if (rateType) next.rateType = rateType === 'apr' ? 'apr' : 'daily';
+      saveShortTermLoan(next);
+      return next;
+    });
+  }, []);
+
   const removeLoanPayment = useCallback((id) => {
     if (!id) return;
     setShortTermLoan(prev => {
@@ -2563,6 +2582,7 @@ export function DataProvider({ children }) {
     clearLoan,
     addLoanPayment,
     removeLoanPayment,
+    recordLoanBalance,
     tagLoanTransactions,
     setLoanTransactionsIgnored,
     setRobinhoodTrades,
@@ -2640,6 +2660,7 @@ export function DataProvider({ children }) {
     clearLoan,
     addLoanPayment,
     removeLoanPayment,
+    recordLoanBalance,
     tagLoanTransactions,
     setLoanTransactionsIgnored,
     setRobinhoodTrades,
