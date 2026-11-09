@@ -296,3 +296,79 @@ export function loanLedger(loan) {
   }
   return { rows, borrowed, repaid, owed: borrowed - repaid };
 }
+
+/* ── Transactions that link to the loan on their own ──────────────────────
+   A transaction whose subcategory is "Loan Taken" or "Loan Payment" belongs
+   on the ledger without anyone tagging it: "Loan Taken" is a new loan, "Loan
+   Payment" a payment toward the balance. They're derived from the ledger of
+   transactions each render rather than copied onto the loan, so recategorizing
+   one moves it on or off the page by itself. Unlinking one adds its key to
+   loan.ignoredTransactionIds (the same set the interest queue uses), which
+   already syncs with the loan. */
+
+/** 'loan' | 'payment' for a transaction that links by subcategory, else null. */
+export function loanLinkType(t) {
+  const sub = String(t?.subcategory || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (sub === 'loan taken' || sub === 'loans taken') return 'loan';
+  if (sub === 'loan payment' || sub === 'loan payments') return 'payment';
+  return null;
+}
+
+/**
+ * The transactions that link to the loan by subcategory.
+ *
+ * Only those dated on or after the loan's start count — earlier ones are
+ * counted but not linked, since they'd be a different loan. A "Loan Taken" on
+ * the start date for the principal is the original loan itself, so it's
+ * reported as `original` instead of being added a second time.
+ *
+ * @returns {
+ *   entries    ledger entries, { id, date, type, amount, label, note, transactionId, linked: true }
+ *   unlinked   matching transactions the user unlinked, so they can be restored
+ *   original   the transaction behind the original loan, or null
+ *   earlierCount matching transactions before the start date
+ * }
+ */
+export function linkedLoanTransactions({ transactions, loan }) {
+  const out = { entries: [], unlinked: [], original: null, earlierCount: 0 };
+  if (!loan) return out;
+  const ignoredIds = new Set(loan.ignoredTransactionIds || []);
+  // Entries typed in by hand that name a transaction win over linking it
+  // again; linked entries already folded in (withLinkedTransactions) don't count.
+  const manual = new Set((loan.ledger || []).filter(e => !e.linked).map(e => e.transactionId).filter(Boolean));
+  const start = loan.startDate || '';
+  const principal = Number(loan.principal) || 0;
+
+  for (const t of transactions || []) {
+    const type = loanLinkType(t);
+    if (!type) continue;
+    const amount = Math.abs(Number(t.amount) || 0);
+    if (!(amount > 0)) continue;
+    const key = txnKey(t);
+    if (manual.has(key)) continue;
+    const date = toISODate(t.date);
+    const row = {
+      id: `txn:${key}`, date, type, amount,
+      label: t.account || '', note: t.description || '',
+      transactionId: key, linked: true,
+    };
+    if (ignoredIds.has(key)) { out.unlinked.push(row); continue; }
+    if (start && date && date < start) { out.earlierCount += 1; continue; }
+    if (!out.original && type === 'loan' && date === start && Math.abs(amount - principal) < 0.005) {
+      out.original = row;
+      continue;
+    }
+    out.entries.push(row);
+  }
+  out.unlinked.sort((a, b) => b.date.localeCompare(a.date));
+  return out;
+}
+
+/** The loan with its linked transactions folded into the ledger — what the
+ *  page shows and every balance figure is worked out from. */
+export function withLinkedTransactions(loan, transactions) {
+  if (!loan) return loan;
+  const { entries } = linkedLoanTransactions({ transactions, loan });
+  if (!entries.length) return loan;
+  return { ...loan, ledger: [...(loan.ledger || []).filter(e => !e.linked), ...entries] };
+}

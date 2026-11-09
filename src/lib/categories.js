@@ -22,7 +22,7 @@ export const SUBCATEGORIES = {
   'Transportation': ['Gas & Fuel', 'Parking', 'Tolls', 'Public Transit', 'Ride Share', 'Car Payment', 'Car Insurance', 'Auto Maintenance'],
   'Health & Wellness': ['Doctor', 'Pharmacy', 'Gym & Fitness', 'Mental Health', 'Dental', 'Vision'],
   'Income': ['Salary', 'Freelance', 'Interest', 'Dividends', 'Refund', 'Bonus', 'Other Income'],
-  'Transfer': ['Account Transfer', 'Credit Card Payment', 'Loan Payment', 'Investment Transfer'],
+  'Transfer': ['Account Transfer', 'Credit Card Payment', 'Loan Payment', 'Loan Taken', 'Investment Transfer'],
   'Education': ['Tuition', 'Books & Supplies', 'Courses', 'Student Loans'],
   'Personal Care': ['Haircut', 'Skincare', 'Spa', 'Cosmetics'],
   'Gifts & Donations': ['Gifts', 'Charity', 'Religious'],

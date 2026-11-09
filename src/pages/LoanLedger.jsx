@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
-import { loanLedger, interestPaidSeries } from '../lib/loanInterest';
+import { loanLedger, interestPaidSeries, linkedLoanTransactions } from '../lib/loanInterest';
 import styles from './ShortTermLoanPage.module.css';
 
 /* "Loans & payments": every amount borrowed — the original loan and any new
    loans taken out since — and every payment toward the balance, with what
-   was owed after each. Interest payments stay on the overview's log. */
+   was owed after each. Interest payments stay on the overview's log.
+   Transactions subcategorized "Loan Taken" or "Loan Payment" show up here on
+   their own (see linkedLoanTransactions) and can be unlinked. */
 
 const money = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
 function longDate(iso) {
@@ -21,8 +23,11 @@ const TYPE = {
   payment: { label: 'Payment', icon: 'payments' },
 };
 
-export function LoanLedger({ loan, readOnly, onAdd, onRemove, onEditLoan }) {
+export function LoanLedger({ loan, transactions, readOnly, onAdd, onRemove, onUnlink, onEditLoan }) {
   const { rows, borrowed, repaid, owed } = useMemo(() => loanLedger(loan), [loan]);
+  const linked = useMemo(() => linkedLoanTransactions({ transactions, loan }), [transactions, loan]);
+  const linkedCount = rows.filter(r => r.linked).length;
+  const [showUnlinked, setShowUnlinked] = useState(false);
   const interestPaid = useMemo(() => interestPaidSeries(loan).reduce((s, d) => s + d.amount, 0), [loan]);
   const newLoans = rows.filter(r => r.type === 'loan' && !r.original).length;
   const payments = rows.filter(r => r.type === 'payment').length;
@@ -102,7 +107,12 @@ export function LoanLedger({ loan, readOnly, onAdd, onRemove, onEditLoan }) {
       </form>
 
       <div className={styles.card} data-testid="ledger-table">
-        <div className={styles.cardTitle}>Loans &amp; payments</div>
+        <div className={styles.cardTitle} style={{ marginBottom: 4 }}>Loans &amp; payments</div>
+        <div className={styles.queueSub} data-testid="ledger-link-note">
+          Transactions subcategorized <b>Loan Taken</b> or <b>Loan Payment</b> are added here automatically
+          {linkedCount ? ` — ${linkedCount} linked` : ''}{linked.original ? ', plus the one behind the original loan' : ''}.
+          {linked.earlierCount > 0 && ` ${linked.earlierCount} dated before ${longDate(loan.startDate)} ${linked.earlierCount === 1 ? "isn't" : "aren't"} counted.`}
+        </div>
         {rows.length === 0 ? (
           <div className={styles.emptyRow}>Nothing here yet — add the loans you&apos;ve taken out and what you&apos;ve paid toward them.</div>
         ) : (
@@ -129,6 +139,10 @@ export function LoanLedger({ loan, readOnly, onAdd, onRemove, onEditLoan }) {
                       </span>
                     </td>
                     <td className={styles.noteCell}>
+                      {(r.linked || (r.original && linked.original)) && (
+                        <span className="material-symbols-outlined" title="Linked from a transaction by its subcategory"
+                          style={{ fontSize: 15, verticalAlign: -3, marginRight: 4, color: 'var(--color-text-tertiary)' }}>link</span>
+                      )}
                       {[r.original ? (loan.lender || r.label) : r.label, r.note].filter(Boolean).join(' · ') || '—'}
                     </td>
                     <td className={styles.numCol}>{r.type === 'loan' ? '+' : '−'}{money(r.amount)}</td>
@@ -137,6 +151,11 @@ export function LoanLedger({ loan, readOnly, onAdd, onRemove, onEditLoan }) {
                       {r.original ? (
                         <button className={styles.iconBtn} title="Edit the original loan" aria-label="Edit the original loan" onClick={onEditLoan}>
                           <span className="material-symbols-outlined" style={{ fontSize: 18 }}>edit</span>
+                        </button>
+                      ) : r.linked ? (
+                        <button className={styles.iconBtn} title="Unlink this transaction from the loan" aria-label={`Unlink ${r.note || TYPE[r.type].label.toLowerCase()} on ${longDate(r.date)}`}
+                          disabled={readOnly} onClick={() => onUnlink([r.transactionId], true)}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>link_off</span>
                         </button>
                       ) : (
                         <button className={styles.iconBtn} title="Delete" aria-label={`Delete ${TYPE[r.type].label.toLowerCase()} on ${longDate(r.date)}`}
@@ -157,6 +176,35 @@ export function LoanLedger({ loan, readOnly, onAdd, onRemove, onEditLoan }) {
                 </tr>
               </tfoot>
             </table>
+          </div>
+        )}
+
+        {linked.unlinked.length > 0 && (
+          <div className={styles.ignoredBlock} data-testid="ledger-unlinked">
+            <button type="button" className={styles.linkBtn} onClick={() => setShowUnlinked(v => !v)}>
+              <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{showUnlinked ? 'expand_less' : 'expand_more'}</span>
+              Unlinked ({linked.unlinked.length})
+            </button>
+            {showUnlinked && (
+              <div className={styles.tableScroll}>
+                <table className={styles.table}>
+                  <tbody>
+                    {linked.unlinked.map(r => (
+                      <tr key={r.id} className={styles.ignoredRow}>
+                        <td className={styles.nowrap}>{longDate(r.date)}</td>
+                        <td>{TYPE[r.type].label}</td>
+                        <td>{r.note || '—'}</td>
+                        <td className={styles.noteCell}>{r.label || '—'}</td>
+                        <td className={styles.numCol}>{money(r.amount)}</td>
+                        <td className={styles.rowActions}>
+                          <button type="button" className={styles.linkBtn} disabled={readOnly} onClick={() => onUnlink([r.transactionId], false)}>Link again</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>
