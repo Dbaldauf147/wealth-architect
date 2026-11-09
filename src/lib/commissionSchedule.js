@@ -311,13 +311,18 @@ export function expectedVsActualSheetRows(points) {
  * @param base       baseSalary() output (for the expected base), or null
  * @returns [{ payMonth, payDate, base: { actual, expected }, commission: { actual, expected },
  *             total, commissionShare, landed: [{ date, kind, deposit, base, commission }],
- *             expectedSlots, expectedPreTax, rows }]
+ *             expectedSlots, expectedPreTax, trackerPreTax,
+ *             planned: { base, commission } | null  (what both paychecks were expected to carry),
+ *             slots: [{ id, payMonth, kind, date, status, expected: { base, commission } | null,
+ *                       actual: { deposit, base, commission } | null, diff }],  (mid, then end)
+ *             rows }]
  */
 export function payByMonth({ rows, paychecks, base, takeHome, range = 'around', today = new Date() }) {
   const rate = takeHome ?? DEFAULT_TAKE_HOME;
   const t0 = startOfDay(today);
   const nowKey = keyOf(t0);
   const points = chartPoints({ rows, range, today });
+  const firstPaycheck = (paychecks || []).reduce((min, p) => (!min || p.date < min ? startOfDay(p.date) : min), null);
   const byMonth = new Map();
   for (const p of paychecks || []) {
     const k = keyOf(p.date);
@@ -345,6 +350,40 @@ export function payByMonth({ rows, paychecks, base, takeHome, range = 'around', 
     const commActual = round2(landed.reduce((s, l) => s + l.commission, 0));
     const commExpected = endPending ? round2(pt.amount * rate) : 0;
     const total = round2(baseActual + baseExpected + commActual + commExpected);
+    // Each paycheck on its own, with what it was expected to carry beside what
+    // it did: the usual base, plus the tracker's commission (take-home) on the
+    // month-end one. Paydays from before the paycheck history starts have no
+    // expected side, so an old month doesn't read as two missed paychecks.
+    const [y, m] = pt.payMonth.split('-').map(Number);
+    const slots = ['mid', 'end'].map(kind => {
+      const mine = landed.filter(l => l.kind === kind);
+      const scheduled = kind === 'mid'
+        ? businessDayOnOrBefore(new Date(y, m - 1, Math.min(base ? base.day : 15, new Date(y, m, 0).getDate())))
+        : businessDayOnOrBefore(new Date(y, m, 0));
+      const date = mine.length ? mine[mine.length - 1].date : scheduled;
+      const actual = mine.length ? {
+        deposit: round2(mine.reduce((s, l) => s + l.deposit, 0)),
+        base: round2(mine.reduce((s, l) => s + l.base, 0)),
+        commission: round2(mine.reduce((s, l) => s + l.commission, 0)),
+      } : null;
+      const known = actual || (firstPaycheck && date >= firstPaycheck) || pt.payMonth >= nowKey;
+      const expected = known ? {
+        base: base ? base.amount : 0,
+        commission: kind === 'end' ? round2(pt.amount * rate) : 0,
+      } : null;
+      return {
+        id: `${pt.payMonth}-${kind}`,
+        payMonth: pt.payMonth,
+        kind,
+        date,
+        status: actual ? 'received' : date >= t0 ? 'expected' : known ? 'missed' : 'no-data',
+        expected,
+        actual,
+        diff: actual && expected ? round2((actual.base + actual.commission) - (expected.base + expected.commission)) : null,
+      };
+    });
+    const sum = (part, key) => round2(slots.reduce((s, sl) => s + (sl[part] ? sl[part][key] : 0), 0));
+    const planned = slots.some(sl => sl.expected) ? { base: sum('expected', 'base'), commission: sum('expected', 'commission') } : null;
     return {
       payMonth: pt.payMonth,
       payDate: pt.payDate,
@@ -356,6 +395,9 @@ export function payByMonth({ rows, paychecks, base, takeHome, range = 'around', 
       landed,
       expectedSlots,
       expectedPreTax: endPending ? pt.amount : 0,
+      trackerPreTax: pt.amount,
+      planned,
+      slots,
       rows: pt.rows,
     };
   });
@@ -375,22 +417,19 @@ export function payByMonthSheetRows(points) {
   return out;
 }
 
-/** Every paycheck behind the bars, received and expected, for the raw export. */
-export function payByMonthPaycheckRows(points, base) {
-  const out = [['Pay month', 'Date', 'Paycheck', 'Status', 'Deposit', 'Base', 'Commission']
+/** Every paycheck behind the bars, expected beside actual, for the raw export. */
+export function payByMonthPaycheckRows(points) {
+  const out = [['Pay month', 'Date', 'Paycheck', 'Status', 'Expected base', 'Expected commission', 'Expected total', 'Deposit', 'Base', 'Commission', 'Difference']
     .map((h, i) => ({ v: h, s: i >= 4 ? 'headerRight' : 'header' }))];
+  const STATUS = { received: 'Received', expected: 'Expected', missed: 'Not found', 'no-data': 'Before history' };
+  const money = v => (v == null ? '' : { v, s: 'money' });
   for (const p of points) {
-    for (const l of p.landed) {
-      out.push([p.payMonth, ymd(l.date), l.kind === 'mid' ? 'Mid-month' : 'Month-end', 'Received',
-        { v: l.deposit, s: 'money' }, { v: l.base, s: 'money' }, { v: l.commission, s: 'money' }]);
-    }
-    if (p.expectedSlots) {
-      const each = base ? base.amount : 0;
-      const kinds = p.expectedSlots === 2 ? ['Mid-month', 'Month-end'] : [p.landed.some(l => l.kind === 'mid') ? 'Month-end' : 'Mid-month'];
-      for (const k of kinds) {
-        const comm = k === 'Month-end' ? p.commission.expected : 0;
-        out.push([p.payMonth, '', k, 'Expected', { v: round2(each + comm), s: 'money' }, { v: each, s: 'money' }, { v: comm, s: 'money' }]);
-      }
+    for (const sl of p.slots) {
+      const e = sl.expected;
+      const a = sl.actual;
+      out.push([p.payMonth, ymd(sl.date), sl.kind === 'mid' ? 'Mid-month' : 'Month-end', STATUS[sl.status],
+        money(e?.base), money(e?.commission), e ? { v: round2(e.base + e.commission), s: 'moneyBold' } : '',
+        money(a?.deposit), money(a?.base), money(a?.commission), money(sl.diff)]);
     }
   }
   return out;
