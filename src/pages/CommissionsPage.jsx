@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCommissions } from '../hooks/useCommissions';
-import { useData } from '../contexts/DataContext';
+import { useData, useDataActions } from '../contexts/DataContext';
 import { earnedByMonth, monthLabel, payMonthOf, ymKey, expectedPayouts } from '../lib/commissions';
 import { computeIncome, commissionTakeHome, monthKeysEnding, monthKeyFor } from '../lib/income';
 import {
@@ -411,6 +411,159 @@ const PAY_GRAINS = [
   { id: 'month', label: 'Per month' },
 ];
 const STATUS_TEXT = { received: 'Received', expected: 'Expected', missed: 'Not found', 'no-data': 'Before history' };
+const dealLabel = d => [d.account, d.project].filter(Boolean).join(' · ') || '—';
+// The deal's key in the synced "figured out" marks: readable, and free of the
+// control characters dealHistory uses internally.
+const reviewKey = d => `${d.account || ''}|${d.project || ''}`;
+
+// Which popup columns are shown and how wide: a view preference, kept in this
+// browser only.
+const COL_PREF_KEY = 'wa-commission-deal-columns';
+function loadColPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem(COL_PREF_KEY) || 'null');
+    if (p && typeof p === 'object') return { hidden: p.hidden || {}, widths: p.widths || {} };
+  } catch { /* private mode */ }
+  return { hidden: {}, widths: {} };
+}
+function saveColPrefs(p) {
+  try { localStorage.setItem(COL_PREF_KEY, JSON.stringify(p)); } catch { /* private mode */ }
+}
+const MIN_COL = 60;
+const MAX_COL = 600;
+const clampW = w => Math.max(MIN_COL, Math.min(MAX_COL, Math.round(w)));
+
+/* The popup's month-by-month table: gridded, columns that can be hidden and
+   resized (drag a header's right edge, or set a width under Columns), and a
+   "Figured out" toggle on every deal column that turns the column green. The
+   marks sync across devices; widths and hidden columns stay in this browser. */
+function DealHistoryTable({ history, point }) {
+  const { commissionReview } = useData();
+  const { setCommissionFigured } = useDataActions();
+  const figured = commissionReview?.figured || {};
+  const [prefs, setPrefs] = useState(loadColPrefs);
+  const [panel, setPanel] = useState(false);
+  const [dragging, setDragging] = useState(null);
+  const update = fn => setPrefs(prev => { const next = fn(prev); saveColPrefs(next); return next; });
+
+  const cols = useMemo(() => [
+    { id: 'month', label: 'Pay month', w: 175, locked: true },
+    ...history.deals.map(d => ({ id: `deal:${reviewKey(d)}`, label: dealLabel(d), w: 180, deal: d, review: reviewKey(d) })),
+    { id: 'total', label: 'Total pre-tax', w: 130, num: true },
+    { id: 'takeHome', label: 'Est. take-home', w: 130, num: true },
+    { id: 'status', label: 'Status', w: 170 },
+  ], [history.deals]);
+  const widthOf = c => prefs.widths[c.id] || c.w;
+  const shown = cols.filter(c => c.locked || !prefs.hidden[c.id]);
+  const isFig = c => !!(c.review && figured[c.review]);
+  const doneCount = cols.filter(isFig).length;
+  const dealCount = history.deals.length;
+
+  const setWidth = (id, w) => update(p => ({ ...p, widths: { ...p.widths, [id]: clampW(w) } }));
+  const toggleHidden = id => update(p => ({ ...p, hidden: { ...p.hidden, [id]: !p.hidden[id] } }));
+  const startResize = (e, c) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = widthOf(c);
+    setDragging(c.id);
+    const move = ev => setPrefs(p => ({ ...p, widths: { ...p.widths, [c.id]: clampW(startW + ev.clientX - startX) } }));
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      setDragging(null);
+      setPrefs(p => { saveColPrefs(p); return p; });
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  const cell = (c, p) => {
+    if (c.id === 'month') return <>{monthLabel(p.payMonth, { month: 'short', year: 'numeric' })}{p.payMonth === point.payMonth && <span className={styles.muted}> · this paycheck</span>}</>;
+    if (c.deal) return p.byDeal[c.deal.key] ? cents(p.byDeal[c.deal.key].amount) : <span className={styles.muted}>—</span>;
+    if (c.id === 'total') return p.amount ? cents(p.amount) : <span className={styles.muted}>—</span>;
+    if (c.id === 'takeHome') return p.amount ? cents(p.takeHome) : <span className={styles.muted}>—</span>;
+    return p.status ? STATUSES.find(st => st.id === p.status)?.label : <span className={styles.muted}>—</span>;
+  };
+  const foot = c => {
+    if (c.id === 'month') return '24 months';
+    if (c.deal) return cents(c.deal.total);
+    if (c.id === 'total') return cents(history.total);
+    if (c.id === 'takeHome') return cents(history.takeHome);
+    return '';
+  };
+  const cls = c => [c.num || c.deal ? own.num : '', isFig(c) ? own.figured : ''].filter(Boolean).join(' ') || undefined;
+
+  return (
+    <>
+      <div className={own.tableTools}>
+        <span data-testid="figured-count">
+          {doneCount} of {dealCount} deal{dealCount === 1 ? '' : 's'} figured out
+          {cols.length - shown.length > 0 && <> · {cols.length - shown.length} column{cols.length - shown.length === 1 ? '' : 's'} hidden</>}
+        </span>
+        <button type="button" className={own.exportBtn} onClick={() => setPanel(v => !v)} aria-expanded={panel} data-testid="columns-toggle">
+          {panel ? 'Done' : 'Columns'}
+        </button>
+      </div>
+      {panel && (
+        <div className={own.colPanel} data-testid="columns-panel">
+          {cols.map(c => (
+            <label key={c.id} className={own.colRow} title={c.label}>
+              <input type="checkbox" checked={c.locked || !prefs.hidden[c.id]} disabled={c.locked} onChange={() => toggleHidden(c.id)} aria-label={`Show ${c.label}`} />
+              <span style={isFig(c) ? { color: '#00684a', fontWeight: 700 } : undefined}>{isFig(c) ? '✓ ' : ''}{c.label}</span>
+              <input type="number" min={MIN_COL} max={MAX_COL} step={10} value={widthOf(c)} aria-label={`${c.label} width in pixels`}
+                onChange={e => { const v = Number(e.target.value); if (v) setWidth(c.id, v); }} />
+              <span className={styles.muted}>px</span>
+            </label>
+          ))}
+          <div className={own.colPanelFoot}>
+            <button type="button" className={styles.linkBtn} style={{ marginTop: 0 }} onClick={() => update(p => ({ ...p, hidden: {} }))}>Show all</button>
+            <button type="button" className={styles.linkBtn} style={{ marginTop: 0 }} onClick={() => update(p => ({ ...p, hidden: Object.fromEntries(cols.filter(isFig).map(c => [c.id, true])) }))}>Hide figured out</button>
+            <button type="button" className={styles.linkBtn} style={{ marginTop: 0 }} onClick={() => update(p => ({ ...p, widths: {} }))}>Reset widths</button>
+            <span>Totals always count every deal, shown or not. Drag a header’s right edge to resize.</span>
+          </div>
+        </div>
+      )}
+      <div className={own.dealTableWrap}>
+        <table className={own.dealTable} style={{ width: shown.reduce((s, c) => s + widthOf(c), 0) }} data-testid="deal-history-table">
+          <colgroup>{shown.map(c => <col key={c.id} style={{ width: widthOf(c) }} />)}</colgroup>
+          <thead>
+            <tr>
+              {shown.map(c => (
+                <th key={c.id} className={cls(c)} title={c.label} data-col={c.id}>
+                  <div className={own.thInner}>
+                    {c.label}
+                    {c.review && (
+                      <div>
+                        <button type="button" className={own.figureBtn} aria-pressed={isFig(c)} data-testid="figure-btn"
+                          title={isFig(c) ? `Figured out ${figured[c.review]} · click to unmark` : 'Mark this deal as figured out'}
+                          onClick={() => setCommissionFigured(c.review, !isFig(c))}>
+                          {isFig(c) ? '✓ Figured out' : 'Mark figured out'}
+                        </button>
+                      </div>
+                    )}
+                    <span className={own.resize} data-active={dragging === c.id} onPointerDown={e => startResize(e, c)} aria-hidden="true" />
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {history.points.map(p => (
+              <tr key={p.payMonth} className={p.payMonth === point.payMonth ? own.thisRow : undefined}>
+                {shown.map(c => <td key={c.id} className={cls(c)}>{cell(c, p)}</td>)}
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>{shown.map(c => <td key={c.id} className={cls(c)}>{foot(c)}</td>)}</tr>
+          </tfoot>
+        </table>
+      </div>
+    </>
+  );
+}
+
 // One colour per deal in the popup (the app's categorical dataviz slots).
 const DEAL_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#8b5cf6', '#e0a40b', '#e0457b', '#0ea5b7', '#6b7280'];
 
@@ -428,7 +581,7 @@ function PaycheckDealsModal({ slot, point, rows, takeHome, onClose }) {
   }, [slot.payMonth, nowKey]);
   const history = useMemo(() => dealHistory({ rows, deals: point.rows, takeHome, from, months: 24 }), [rows, point.rows, takeHome, from]);
   const colorOf = Object.fromEntries(history.deals.map((d, i) => [d.key, DEAL_COLORS[i % DEAL_COLORS.length]]));
-  const dealLabel = d => [d.account, d.project].filter(Boolean).join(' · ') || '—';
+  const figured = useData().commissionReview?.figured || {};
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -454,7 +607,7 @@ function PaycheckDealsModal({ slot, point, rows, takeHome, onClose }) {
 
   return (
     <div className={modal.overlay} onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className={modal.dialog} style={{ width: 'min(1040px, 100%)' }} role="dialog" aria-modal="true" aria-labelledby="paycheck-deals-title" data-testid="paycheck-deals-modal">
+      <div className={modal.dialog} style={{ width: 'min(1560px, 100%)', height: 'calc(100vh - 32px)' }} role="dialog" aria-modal="true" aria-labelledby="paycheck-deals-title" data-testid="paycheck-deals-modal">
         <div className={modal.head}>
           <div>
             <div className={modal.eyebrow}>{when} · {isMidSlot ? 'Mid-month' : 'Month-end'} paycheck</div>
@@ -483,7 +636,7 @@ function PaycheckDealsModal({ slot, point, rows, takeHome, onClose }) {
           <>
             <div className={own.filters} style={{ marginBottom: 4 }}>
               {history.deals.map(d => (
-                <span key={d.key} className={own.chip} style={{ cursor: 'default' }}><i style={{ background: colorOf[d.key] }} />{dealLabel(d)}</span>
+                <span key={d.key} className={own.chip} style={{ cursor: 'default', ...(figured[reviewKey(d)] ? { color: '#00684a', fontWeight: 700 } : null) }}><i style={{ background: colorOf[d.key] }} />{figured[reviewKey(d)] ? '✓ ' : ''}{dealLabel(d)}</span>
               ))}
               <span className={own.chip} style={{ cursor: 'default' }}><i style={{ background: 'transparent', border: '1.5px dashed var(--color-text-secondary)' }} />Projected</span>
             </div>
@@ -526,39 +679,7 @@ function PaycheckDealsModal({ slot, point, rows, takeHome, onClose }) {
                 <line x1={pad.left} x2={width - pad.right} y1={y(0)} y2={y(0)} stroke="var(--color-text-muted)" />
               </svg>
             </div>
-            <div className={styles.tableWrap} style={{ marginTop: 12 }}>
-              <table className={styles.table} data-testid="deal-history-table">
-                <thead>
-                  <tr>
-                    <th>Pay month</th>
-                    {history.deals.map(d => <th key={d.key} className={styles.num}>{dealLabel(d)}</th>)}
-                    <th className={styles.num}>Total pre-tax</th>
-                    <th className={styles.num}>Est. take-home</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.points.map(p => (
-                    <tr key={p.payMonth} style={p.payMonth === point.payMonth ? { background: 'var(--color-surface-alt)', fontWeight: 700 } : undefined}>
-                      <td className={styles.nowrap}>{monthLabel(p.payMonth, { month: 'short', year: 'numeric' })}{p.payMonth === point.payMonth && <span className={styles.muted}> · this paycheck</span>}</td>
-                      {history.deals.map(d => <td key={d.key} className={styles.num}>{p.byDeal[d.key] ? cents(p.byDeal[d.key].amount) : <span className={styles.muted}>—</span>}</td>)}
-                      <td className={styles.num}>{p.amount ? cents(p.amount) : <span className={styles.muted}>—</span>}</td>
-                      <td className={styles.num}>{p.amount ? cents(p.takeHome) : <span className={styles.muted}>—</span>}</td>
-                      <td className={styles.nowrap}>{p.status ? STATUSES.find(st => st.id === p.status)?.label : <span className={styles.muted}>—</span>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr>
-                    <td><b>24 months</b></td>
-                    {history.deals.map(d => <td key={d.key} className={styles.num}><b>{cents(d.total)}</b></td>)}
-                    <td className={styles.num}><b>{cents(history.total)}</b></td>
-                    <td className={styles.num}><b>{cents(history.takeHome)}</b></td>
-                    <td />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+            <DealHistoryTable history={history} point={point} />
           </>
         )}
       </div>
