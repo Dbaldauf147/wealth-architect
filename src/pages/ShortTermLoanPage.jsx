@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { loanInterestQueue, impliedBalances } from '../lib/loanInterest';
 import { LoanBalance } from './LoanBalance';
+import { LoanLedger } from './LoanLedger';
 import styles from './ShortTermLoanPage.module.css';
 
 // Currency with cents — interest amounts are small, so cents matter.
@@ -45,10 +46,17 @@ function dailyInterestOf(loan) {
 
 export function ShortTermLoanPage() {
   const { shortTermLoan, transactions, privacyMode } = useData();
-  const { saveLoanDetails, clearLoan, addLoanPayment, removeLoanPayment, recordLoanBalance, tagLoanTransactions, setLoanTransactionsIgnored } = useDataActions();
+  const { saveLoanDetails, clearLoan, addLoanPayment, removeLoanPayment, recordLoanBalance, addLoanLedgerEntry, removeLoanLedgerEntry, tagLoanTransactions, setLoanTransactionsIgnored } = useDataActions();
 
   const loan = shortTermLoan || null;
   const [editing, setEditing] = useState(false);
+  const [tab, setTab] = useState(() => {
+    try { return localStorage.getItem('loanPageTab') === 'ledger' ? 'ledger' : 'overview'; } catch { return 'overview'; }
+  });
+  const pickTab = id => {
+    setTab(id);
+    try { localStorage.setItem('loanPageTab', id); } catch { /* private mode: just don't remember */ }
+  };
 
   // Loan-details form state
   const [form, setForm] = useState(() => ({
@@ -212,6 +220,22 @@ export function ShortTermLoanPage() {
         </button>
       </header>
 
+      <div className={styles.tabBar} role="tablist" aria-label="Loan sections">
+        {[
+          { id: 'overview', label: 'Overview', icon: 'monitoring' },
+          { id: 'ledger', label: 'Loans & payments', icon: 'receipt_long' },
+        ].map(t => (
+          <button key={t.id} type="button" role="tab" aria-selected={tab === t.id}
+            className={`${styles.tab} ${tab === t.id ? styles.tabActive : ''}`} onClick={() => pickTab(t.id)}>
+            <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{t.icon}</span>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'ledger' ? (
+        <LoanLedger loan={loan} readOnly={privacyMode} onAdd={addLoanLedgerEntry} onRemove={removeLoanLedgerEntry} onEditLoan={openEditor} />
+      ) : (<>
       {/* Headline: daily interest */}
       <div className={styles.heroCard}>
         <div className={styles.heroLabel}>Daily interest</div>
@@ -335,6 +359,7 @@ export function ShortTermLoanPage() {
         onTag={tagLoanTransactions}
         onIgnore={setLoanTransactionsIgnored}
       />
+      </>)}
     </div>
   );
 }

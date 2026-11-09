@@ -117,7 +117,11 @@ export function mergeLoan(local, remote) {
   // Balances typed in on either side are kept, the newer side winning a date.
   const balances = new Map();
   for (const e of [...(older.balanceHistory || []), ...(newer.balanceHistory || [])]) if (e?.date) balances.set(e.date, e);
+  // Ledger rows are unioned by id, the newer side winning a row.
+  const ledger = new Map();
+  for (const e of [...(older.ledger || []), ...(newer.ledger || [])]) if (e?.id) ledger.set(e.id, e);
   const out = { ...older, ...newer, payments };
+  if (ledger.size) out.ledger = [...ledger.values()];
   if (balances.size) out.balanceHistory = [...balances.values()].sort((x, y) => x.date.localeCompare(y.date));
   if (ignored.length || newer.ignoredTransactionIds || older.ignoredTransactionIds) out.ignoredTransactionIds = ignored;
   return out;
@@ -191,17 +195,19 @@ export function impliedBalances(loan) {
  * Three sources, each a point { date, balance, source }:
  *   'start'   the principal on the start date
  *   'payment' the balance an interest payment implies (see impliedBalances)
+ *   'ledger'  what's owed after a new loan or a payment toward it (loanLedger)
  *   'entered' a balance the user typed in from a statement (loan.balanceHistory)
  *
- * On the same date an entered balance beats an implied one — it's the
- * lender's number, not an estimate — and both beat the start.
+ * On the same date an entered balance beats the ledger — it's the lender's
+ * number — the ledger beats an implied one, and all of them beat the start.
  *
- * @returns { points, current, paidDown }
+ * @returns { points, current, borrowed, paidDown }
  *   current   the newest point, or null
- *   paidDown  principal − current.balance, or null
+ *   borrowed  original principal + every new loan
+ *   paidDown  borrowed − current.balance, or null
  */
 export function balanceTimeline(loan) {
-  const rank = { start: 0, payment: 1, entered: 2 };
+  const rank = { start: 0, payment: 1, ledger: 2, entered: 3 };
   const byDate = new Map();
   const put = pt => {
     if (!pt.date || !Number.isFinite(pt.balance)) return;
@@ -214,6 +220,10 @@ export function balanceTimeline(loan) {
   for (const p of impliedBalances(loan).periods) {
     if (p.balance != null) put({ date: p.date, balance: p.balance, source: 'payment', interest: p.interest, days: p.days, from: p.from });
   }
+  const ledger = loanLedger(loan);
+  for (const r of ledger.rows) {
+    if (!r.original) put({ date: r.date, balance: r.balance, source: 'ledger' });
+  }
   for (const e of loan?.balanceHistory || []) {
     const amt = Number(e?.amount);
     if (e?.date && Number.isFinite(amt) && amt >= 0) put({ date: e.date, balance: amt, source: 'entered' });
@@ -221,7 +231,8 @@ export function balanceTimeline(loan) {
 
   const points = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
   const current = points.length ? points[points.length - 1] : null;
-  return { points, current, paidDown: current && principal > 0 ? principal - current.balance : null };
+  const borrowed = ledger.borrowed;
+  return { points, current, borrowed, paidDown: current && borrowed > 0 ? borrowed - current.balance : null };
 }
 
 /** Interest paid by date, oldest first, with a running total. */
@@ -244,4 +255,44 @@ export function withBalanceEntry(history, date, amount) {
   const rest = (history || []).filter(e => e.date !== date);
   if (amount != null) rest.push({ date, amount: Number(amount) });
   return rest.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * The loan's ledger: money borrowed and principal paid back.
+ *
+ * The original loan (principal on the start date) is the first row; the rest
+ * are loan.ledger entries { id, date, type: 'loan' | 'payment', amount,
+ * label, note } — 'loan' for a new loan or draw taken out, 'payment' for
+ * money paid toward the balance. Interest payments live in loan.payments and
+ * aren't part of this.
+ *
+ * @returns {
+ *   rows      oldest first, each with `balance` — what was owed after it
+ *   borrowed  original principal + every new loan
+ *   repaid    every payment toward the loan
+ *   owed      borrowed − repaid
+ * }
+ */
+export function loanLedger(loan) {
+  const rows = [];
+  const principal = Number(loan?.principal) || 0;
+  if (principal > 0) {
+    rows.push({ id: 'original', date: loan.startDate || '', type: 'loan', amount: principal, label: loan.name || 'Original loan', original: true });
+  }
+  for (const e of loan?.ledger || []) {
+    const amount = Number(e?.amount) || 0;
+    if (!(amount > 0) || (e.type !== 'loan' && e.type !== 'payment')) continue;
+    rows.push({ ...e, amount });
+  }
+  // Oldest first; on the same day the original loan comes first, then new
+  // loans before payments, so a balance never dips below zero mid-day.
+  const order = r => (r.original ? 0 : r.type === 'loan' ? 1 : 2);
+  rows.sort((a, b) => (a.date || '').localeCompare(b.date || '') || order(a) - order(b) || String(a.id).localeCompare(String(b.id)));
+
+  let balance = 0, borrowed = 0, repaid = 0;
+  for (const r of rows) {
+    if (r.type === 'loan') { balance += r.amount; borrowed += r.amount; } else { balance -= r.amount; repaid += r.amount; }
+    r.balance = balance;
+  }
+  return { rows, borrowed, repaid, owed: borrowed - repaid };
 }

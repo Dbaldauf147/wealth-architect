@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isInterestCharge, toISODate, paymentFromTransaction, loanInterestQueue, txnKey, mergeLoan, impliedBalances, balanceTimeline, interestPaidSeries, withBalanceEntry } from './loanInterest.js';
+import { isInterestCharge, toISODate, paymentFromTransaction, loanInterestQueue, txnKey, mergeLoan, impliedBalances, balanceTimeline, interestPaidSeries, withBalanceEntry, loanLedger } from './loanInterest.js';
 
 const txn = (over = {}) => ({
   transactionId: 'a', date: '9/20/2026', description: 'Ring Loan Interest', amount: -42.5,
@@ -196,7 +196,7 @@ describe('balanceTimeline', () => {
   });
 
   it('copes with no loan or no principal', () => {
-    expect(balanceTimeline(null)).toEqual({ points: [], current: null, paidDown: null });
+    expect(balanceTimeline(null)).toEqual({ points: [], current: null, borrowed: 0, paidDown: null });
     const { current, paidDown } = balanceTimeline({ balanceHistory: [{ date: '2026-10-01', amount: 500 }] });
     expect(current.balance).toBe(500);
     expect(paidDown).toBeNull();
@@ -229,5 +229,53 @@ describe('mergeLoan balanceHistory', () => {
     const local = { payments: [], balanceHistory: [{ date: '2026-10-01', amount: 1 }] };
     const remote = { payments: [], balanceHistory: [{ date: '2026-11-01', amount: 2 }] };
     expect(mergeLoan(local, remote).balanceHistory.map(e => e.date)).toEqual(['2026-10-01', '2026-11-01']);
+  });
+});
+
+describe('loanLedger', () => {
+  const loan = ledger => ({ name: 'Bridge', principal: 10000, startDate: '2026-09-01', ledger });
+
+  it('starts with the original loan and keeps a running balance', () => {
+    const { rows, borrowed, repaid, owed } = loanLedger(loan([
+      { id: 'b', date: '2026-10-01', type: 'payment', amount: 2000 },
+      { id: 'a', date: '2026-09-15', type: 'loan', amount: 5000, label: 'Second draw' },
+    ]));
+    expect(rows.map(r => [r.id, r.balance])).toEqual([['original', 10000], ['a', 15000], ['b', 13000]]);
+    expect(rows[0]).toMatchObject({ label: 'Bridge', original: true });
+    expect([borrowed, repaid, owed]).toEqual([15000, 2000, 13000]);
+  });
+
+  it('puts a new loan before a payment on the same day, and drops junk', () => {
+    const { rows } = loanLedger(loan([
+      { id: 'p', date: '2026-10-01', type: 'payment', amount: '300' },
+      { id: 'l', date: '2026-10-01', type: 'loan', amount: 100 },
+      { id: 'x', date: '2026-10-01', type: 'loan', amount: 0 },
+      { id: 'y', date: '2026-10-01', type: 'fee', amount: 5 },
+    ]));
+    expect(rows.map(r => r.id)).toEqual(['original', 'l', 'p']);
+    expect(rows[2].amount).toBe(300);
+  });
+
+  it('works with no original principal', () => {
+    expect(loanLedger({ ledger: [{ id: 'a', date: '2026-10-01', type: 'loan', amount: 50 }] }))
+      .toMatchObject({ borrowed: 50, repaid: 0, owed: 50 });
+    expect(loanLedger(null)).toEqual({ rows: [], borrowed: 0, repaid: 0, owed: 0 });
+  });
+
+  it('feeds the balance timeline, and paid down counts every loan', () => {
+    const { current, borrowed, paidDown } = balanceTimeline(loan([
+      { id: 'a', date: '2026-09-15', type: 'loan', amount: 5000 },
+      { id: 'b', date: '2026-10-01', type: 'payment', amount: 2000 },
+    ]));
+    expect(current).toMatchObject({ date: '2026-10-01', balance: 13000, source: 'ledger' });
+    expect([borrowed, paidDown]).toEqual([15000, 2000]);
+  });
+
+  it('is unioned by id when merging', () => {
+    const merged = mergeLoan(
+      { payments: [], ledger: [{ id: 'a', date: '2026-10-01', type: 'loan', amount: 1 }] },
+      { payments: [], ledger: [{ id: 'b', date: '2026-10-02', type: 'payment', amount: 1 }] },
+    );
+    expect(merged.ledger.map(e => e.id).sort()).toEqual(['a', 'b']);
   });
 });

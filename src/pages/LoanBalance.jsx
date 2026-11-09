@@ -38,13 +38,12 @@ function niceTicks(max, count = 4) {
   return ticks;
 }
 
-const SOURCE_LABEL = { start: 'Starting principal', payment: 'Implied by interest paid', entered: 'Entered by you' };
+const SOURCE_LABEL = { start: 'Starting principal', payment: 'Implied by interest paid', ledger: 'From loans & payments', entered: 'Entered by you' };
 
 export function LoanBalance({ loan, readOnly, onRecordBalance }) {
   const timeline = useMemo(() => balanceTimeline(loan), [loan]);
   const interest = useMemo(() => interestPaidSeries(loan), [loan]);
-  const principal = Number(loan.principal) || 0;
-  const { current, paidDown } = timeline;
+  const { current, paidDown, borrowed } = timeline;
   const interestTotal = interest.length ? interest[interest.length - 1].total : 0;
 
   return (
@@ -64,9 +63,9 @@ export function LoanBalance({ loan, readOnly, onRecordBalance }) {
         <div className={styles.balanceFigures}>
           {paidDown != null && (
             <div className={styles.balanceSide}>
-              <div className={styles.statLabel}>{paidDown >= 0 ? 'Principal paid' : 'Above principal'}</div>
+              <div className={styles.statLabel}>{paidDown >= 0 ? 'Principal paid' : 'More than borrowed'}</div>
               <div className={styles.balanceSideValue}>{money(Math.abs(paidDown))}</div>
-              <div className={styles.statSub}>{paidDown >= 0 && principal > 0 ? `${Math.round((paidDown / principal) * 100)}% of ${money(principal, false)}` : `vs ${money(principal, false)} principal`}</div>
+              <div className={styles.statSub}>{paidDown >= 0 && borrowed > 0 ? `${Math.round((paidDown / borrowed) * 100)}% of ${money(borrowed, false)} borrowed` : `vs ${money(borrowed, false)} borrowed`}</div>
             </div>
           )}
           <div className={styles.balanceSide}>
@@ -77,7 +76,7 @@ export function LoanBalance({ loan, readOnly, onRecordBalance }) {
         </div>
       </div>
 
-      {current && <WhereItStands principal={principal} remaining={current.balance} interestPaid={interestTotal} />}
+      {current && <WhereItStands principal={borrowed} remaining={current.balance} interestPaid={interestTotal} />}
 
       <BalanceForm loan={loan} current={current} readOnly={readOnly} onSave={onRecordBalance} />
 
@@ -113,7 +112,7 @@ function WhereItStands({ principal, remaining, interestPaid }) {
         <span className={styles.legendItem}><i className={styles.swatch} style={{ background: 'var(--viz-interest)' }} />Interest paid <b>{money(interestPaid, false)}</b></span>
       </div>
 
-      <div className={styles.barLabel}>Principal{principal > 0 ? ` · ${money(principal, false)}` : ''}</div>
+      <div className={styles.barLabel}>Borrowed{principal > 0 ? ` · ${money(principal, false)}` : ''}</div>
       <div className={styles.barTrack} role="img" aria-label={`${tip.paid}; ${tip.left}`}>
         {paid > 0 && (
           <div className={styles.barSeg} style={{ width: pct(paid), background: 'var(--viz-paid)' }}
@@ -301,7 +300,7 @@ function BalanceChart({ points }) {
         )}
       </div>
       <div className={styles.chartKey}>
-        <span><svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4" fill="var(--viz-left)" /></svg> From principal &amp; interest paid</span>
+        <span><svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4" fill="var(--viz-left)" /></svg> From loans, payments &amp; interest paid</span>
         <span><svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4" fill="var(--color-surface)" stroke="var(--viz-left)" strokeWidth="2" /></svg> Entered by you</span>
       </div>
     </figure>
