@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { baseSalary, paySchedule, commissionRows, chartPoints, rawSheetRows, chartSheetRows, addMonths, expectedVsActual, expectedVsActualTotals, expectedVsActualSheetRows, payByMonth, payByMonthSheetRows, payByMonthPaycheckRows, dealHistory, dealHistorySheetRows } from './commissionSchedule.js';
+import { baseSalary, paySchedule, commissionRows, chartPoints, rawSheetRows, chartSheetRows, addMonths, expectedVsActual, expectedVsActualTotals, expectedVsActualSheetRows, payByMonth, payByMonthSheetRows, payByMonthPaycheckRows, dealHistory, dealHistorySheetRows, paymentsText, gapReasonSheetRows } from './commissionSchedule.js';
 
 const today = new Date(2026, 10, 8); // Sun Nov 8, 2026
 const pc = (y, m, d, amount) => ({ date: new Date(y, m - 1, d), amount });
@@ -205,8 +205,65 @@ describe('dealHistory', () => {
   });
   it('exports a row per month with a column per deal', () => {
     const sheet = dealHistorySheetRows(h);
-    expect(sheet).toHaveLength(13);
+    // Header, 12 months, a total row and a payments row.
+    expect(sheet).toHaveLength(15);
     expect(sheet[0].map(c => c.v)).toEqual(['Pay month', 'Acme · HVAC', 'Total (pre-tax)', 'Est. take-home', 'Status']);
+    expect(sheet[14][0]).toBe('Payments');
+    expect(sheet[14][1]).toBe(paymentsText(h.deals[0]));
+  });
+  it('counts the payments from each deal', () => {
+    const d = h.deals[0];
+    expect(d.payments.total).toBe(h.points.filter(p => p.byDeal[d.key]).length);
+    expect(d.payments.paid + d.payments.recorded + d.payments.projected).toBe(d.payments.total);
+    expect(d.payments.paid).toBe(1); // October's, for September
+    expect(h.payments).toBe(d.payments.total);
+    expect(paymentsText({ payments: { total: 5, paid: 2, recorded: 1, projected: 2 } })).toBe('5 (2 paid, 1 recorded, 2 projected)');
   });
 });
 const round = n => Math.round(n * 100) / 100;
+
+describe('why a paycheck missed its expected amount', () => {
+  const base = { amount: 3000, day: 15 };
+  const row = (payMonth, account, amount) => ({ payMonth, earnedMonth: addMonths(payMonth, -1), account, project: 'P', amount, status: 'paid' });
+  const mid = (m) => ({ date: new Date(2026, m - 1, 15), amount: 3000, base: 3000, commission: 0 });
+  const end = (m, d, commission, b = 3000) => ({ date: new Date(2026, m - 1, d), amount: b + commission, base: b, commission });
+  const run = (rows, paychecks) => payByMonth({ rows, paychecks, base, takeHome: 0.5, range: 'all', today: new Date(2026, 10, 20) });
+
+  it('points at the deal whose payment matches a shortfall', () => {
+    const [oct] = run([row('2026-10', 'Alpha', 1000), row('2026-10', 'Beta', 400)], [mid(10), end(10, 30, 500)]);
+    // Expected 700 take-home, got 500: Beta's 400 at 50%.
+    expect(oct.slots[1].why[0]).toMatch(/Beta · P's \$400\.00 pre-tax/);
+    expect(oct.slots[0].why).toEqual(['Matches the usual base salary.']);
+  });
+  it('calls a gap that reverses next month timing', () => {
+    const [sep, oct] = run([row('2026-09', 'Alpha', 1000), row('2026-10', 'Alpha', 1000)],
+      [mid(9), end(9, 30, 300), mid(10), end(10, 30, 700)]);
+    expect(sep.slots[1].why[0]).toMatch(/next month-end paycheck came in \+\$200\.00/);
+    expect(oct.slots[1].why[0]).toMatch(/previous month-end paycheck was −\$200\.00.*a month late/);
+  });
+  it('falls back to the take-home rate the paycheck implies', () => {
+    const [oct] = run([row('2026-10', 'Alpha', 1000)], [mid(10), end(10, 30, 400)]);
+    expect(oct.slots[1].why).toHaveLength(1);
+    expect(oct.slots[1].why[0]).toMatch(/took home 40% of \$1,000\.00 pre-tax against the 50% assumed/);
+  });
+  it('finds two payments that together make up the shortfall', () => {
+    const [oct] = run([row('2026-10', 'Alpha', 1000), row('2026-10', 'Beta', 600), row('2026-10', 'Gamma', 300)], [mid(10), end(10, 30, 500)]);
+    // Expected 950, got 500: Beta + Gamma = 900 pre-tax = 450 take-home.
+    expect(oct.slots[1].why[0]).toMatch(/close to Beta · P \(\$600\.00\) \+ Gamma · P \(\$300\.00\)/);
+  });
+  it('says a rate far from normal is not just withholding', () => {
+    const [oct] = run([row('2026-10', 'Alpha', 1000), row('2026-10', 'Beta', 700)], [mid(10), end(10, 30, 200)]);
+    expect(oct.slots[1].why.at(-1)).toMatch(/too far below normal for tax withholding alone/);
+  });
+  it('notes a changed base, a missing deposit and a near-match', () => {
+    const [sep, oct] = run([row('2026-09', 'Alpha', 1000), row('2026-10', 'Alpha', 1000)],
+      [mid(9), mid(10), end(10, 30, 490, 2900)]);
+    expect(sep.slots[1].status).toBe('missed');
+    expect(sep.slots[1].why[0]).toMatch(/No month-end deposit was found for September 2026/);
+    expect(oct.slots[1].why[0]).toMatch(/base portion was \$2,900\.00 against the usual \$3,000\.00/);
+    expect(oct.slots[1].why[1]).toMatch(/within \$10\.00 of expected/);
+    const sheet = gapReasonSheetRows([sep, oct]);
+    expect(sheet[0].map(c => c.v)).toEqual(['Pay month', 'Date', 'Paycheck', 'Expected', 'Actual', 'Gap', 'Why']);
+    expect(sheet.find(r => r[0] === '2026-10' && r[2] === 'Month-end')[6].v).toMatch(/base portion/);
+  });
+});

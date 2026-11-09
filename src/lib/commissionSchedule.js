@@ -329,7 +329,7 @@ export function payByMonth({ rows, paychecks, base, takeHome, range = 'around', 
     if (!byMonth.has(k)) byMonth.set(k, []);
     byMonth.get(k).push(p);
   }
-  return points.map(pt => {
+  const out = points.map(pt => {
     const landed = (byMonth.get(pt.payMonth) || []).sort((a, b) => a.date - b.date).map(p => ({
       date: p.date, kind: isMid(p) ? 'mid' : 'end', deposit: round2(p.amount),
       base: round2(p.base ?? p.amount), commission: round2(p.commission || 0),
@@ -401,6 +401,118 @@ export function payByMonth({ rows, paychecks, base, takeHome, range = 'around', 
       rows: pt.rows,
     };
   });
+  explainGaps(out, rate);
+  return out;
+}
+
+const usd = n => `$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const sgn = n => `${n < 0 ? '−' : '+'}${usd(n)}`;
+const pctTxt = r => `${Math.round(r * 1000) / 10}%`;
+const dealName = r => [r.account, r.project].filter(Boolean).join(' · ') || 'a deal';
+const commGap = sl => (sl && sl.actual && sl.expected ? round2(sl.actual.commission - sl.expected.commission) : null);
+const monthName = key => { const [y, m] = key.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); };
+
+/**
+ * Why each paycheck differs from what was expected, in plain sentences, best
+ * guess first. Sets `why` (string[]) on every slot. It looks at the base
+ * portion; a commission shortfall that matches one deal (that payment probably
+ * wasn't in the paycheck); a near-opposite gap in the next or previous
+ * month-end paycheck (timing); and the take-home rate the paycheck implies
+ * against the one assumed (withholding on commission varies).
+ */
+export function explainGaps(points, rate) {
+  points.forEach((pt, i) => {
+    const prevEnd = points[i - 1]?.slots[1];
+    const nextEnd = points[i + 1]?.slots[1];
+    for (const sl of pt.slots) sl.why = explainSlot(sl, pt, prevEnd, nextEnd, rate);
+  });
+}
+
+function explainSlot(sl, pt, prevEnd, nextEnd, rate) {
+  const which = sl.kind === 'mid' ? 'mid-month' : 'month-end';
+  if (sl.status === 'no-data') return [];
+  if (!sl.actual) {
+    return sl.status === 'expected'
+      ? ['Not paid yet.']
+      : [`No ${which} deposit was found for ${monthName(pt.payMonth)}. It may have landed in another account, been categorised as something other than payroll, or not been paid.`];
+  }
+  if (!sl.expected) return [];
+  const a = sl.actual;
+  const e = sl.expected;
+  const out = [];
+  const baseDiff = round2(a.base - e.base);
+  if (Math.abs(baseDiff) >= 1) {
+    out.push(`The base portion was ${usd(a.base)} against the usual ${usd(e.base)} (${sgn(baseDiff)}): a raise, a benefits or 401(k) change, or a one-off deduction.`);
+  }
+  if (sl.kind === 'mid') {
+    if (a.commission >= 1) out.push(`This mid-month paycheck carried ${usd(a.commission)} above base, which isn't expected: an early commission, a bonus or a reimbursement.`);
+    if (!out.length) out.push('Matches the usual base salary.');
+    return out;
+  }
+  const gap = round2(a.commission - e.commission);
+  const tol = Math.max(25, Math.abs(e.commission) * 0.03);
+  if (Math.abs(gap) <= tol) {
+    out.push(Math.abs(gap) < 1 ? 'Commission matched the tracker.' : `Commission was within ${usd(gap)} of expected: ordinary variation in tax withholding.`);
+    return out;
+  }
+  const preTax = pt.trackerPreTax;
+  let explained = false;
+  if (a.commission < 1 && preTax > 0) {
+    out.push(`No commission came through, though the tracker had ${usd(preTax)} pre-tax due (${pt.rows.length} payment${pt.rows.length === 1 ? '' : 's'}). It may come in a later paycheck.`);
+    explained = true;
+  }
+  // Payments whose take-home adds up to the shortfall: they probably weren't
+  // in this paycheck. Fewest deals first, then the closest total.
+  if (gap < 0 && !explained) {
+    const byDeal = new Map();
+    for (const r of pt.rows) {
+      const k = dealName(r);
+      byDeal.set(k, round2((byDeal.get(k) || 0) + r.amount));
+    }
+    const deals = [...byDeal].map(([name, amt]) => ({ name, amt, th: amt * rate })).slice(0, 12);
+    let best = null;
+    for (let mask = 1; mask < (1 << deals.length); mask++) {
+      const pick = deals.filter((_, i) => mask & (1 << i));
+      const th = pick.reduce((t, d) => t + d.th, 0);
+      const miss = Math.abs(gap + th);
+      if (miss > Math.max(tol, Math.abs(gap) * 0.08)) continue;
+      if (!best || pick.length < best.pick.length || (pick.length === best.pick.length && miss < best.miss)) best = { pick, th, miss };
+    }
+    if (best) {
+      const amt = best.pick.reduce((t, d) => t + d.amt, 0);
+      const rest = best.miss >= 1 ? ` That leaves ${usd(best.miss)} unexplained, within normal withholding variation.` : '';
+      out.push((best.pick.length === 1
+        ? `The ${usd(gap)} shortfall is close to ${best.pick[0].name}'s ${usd(amt)} pre-tax (about ${usd(best.th)} take-home), so that payment probably wasn't in this paycheck.`
+        : `The ${usd(gap)} shortfall is close to ${best.pick.map(d => `${d.name} (${usd(d.amt)})`).join(' + ')}: ${usd(amt)} pre-tax, about ${usd(best.th)} take-home. Those payments probably weren't in this paycheck.`) + rest);
+      explained = true;
+    }
+  }
+  // Timing: the neighbouring paycheck is off by about the same amount the other way.
+  const near = g => g != null && Math.sign(g) === -Math.sign(gap) && Math.abs(g + gap) <= Math.max(tol, Math.abs(gap) * 0.25);
+  const nextGap = commGap(nextEnd);
+  const prevGap = commGap(prevEnd);
+  if (near(nextGap)) {
+    out.push(`The next month-end paycheck came in ${sgn(nextGap)} against expected, nearly the reverse of this one, so this looks like timing: money moved between paychecks.`);
+    explained = true;
+  } else if (near(prevGap)) {
+    out.push(`The previous month-end paycheck was ${sgn(prevGap)} against expected, nearly the reverse of this one, so this looks like that money arriving a month ${gap > 0 ? 'late' : 'early'}.`);
+    explained = true;
+  }
+  if (preTax > 0 && a.commission >= 1) {
+    const eff = a.commission / preTax;
+    const lead = `${explained ? 'Otherwise: if' : 'If'} every payment was in full, the commission took home ${pctTxt(eff)} of ${usd(preTax)} pre-tax against the ${pctTxt(rate)} assumed.`;
+    // Withholding moves the take-home rate by a few points, not by half.
+    if (Math.abs(eff - rate) <= rate * 0.2) {
+      out.push(`${lead} Withholding on commission (supplemental pay) differs from the average rate, and that alone accounts for the ${sgn(gap)}.`);
+    } else if (eff < rate) {
+      out.push(`${lead} That's too far below normal for tax withholding alone. More likely some of the ${pt.rows.length} payment${pt.rows.length === 1 ? '' : 's'} due weren't in this paycheck (paid late, partly, or not yet), or the tracker's amounts are higher than what was approved. Worth checking each deal against the pay statement.`);
+    } else {
+      out.push(`${lead} That's too far above normal for tax withholding alone. More likely the paycheck included money the tracker doesn't show for this month: a late payment from an earlier month, a deal missing from the tracker, or a bonus.`);
+    }
+  } else if (preTax <= 0 && a.commission >= 1) {
+    out.push(`The tracker had nothing due this month, yet the paycheck carried ${usd(a.commission)} above base: a late payment from an earlier month, a deal not in the tracker, or a bonus.`);
+  }
+  return out;
 }
 
 /** Total pay as spreadsheet rows, one per month. */
@@ -419,7 +531,7 @@ export function payByMonthSheetRows(points) {
 
 /** Every paycheck behind the bars, expected beside actual, for the raw export. */
 export function payByMonthPaycheckRows(points) {
-  const out = [['Pay month', 'Date', 'Paycheck', 'Status', 'Expected base', 'Expected commission', 'Expected total', 'Deposit', 'Base', 'Commission', 'Difference']
+  const out = [['Pay month', 'Date', 'Paycheck', 'Status', 'Expected base', 'Expected commission', 'Expected total', 'Deposit', 'Base', 'Commission', 'Difference', 'Why the gap']
     .map((h, i) => ({ v: h, s: i >= 4 ? 'headerRight' : 'header' }))];
   const STATUS = { received: 'Received', expected: 'Expected', missed: 'Not found', 'no-data': 'Before history' };
   const money = v => (v == null ? '' : { v, s: 'money' });
@@ -429,7 +541,7 @@ export function payByMonthPaycheckRows(points) {
       const a = sl.actual;
       out.push([p.payMonth, ymd(sl.date), sl.kind === 'mid' ? 'Mid-month' : 'Month-end', STATUS[sl.status],
         money(e?.base), money(e?.commission), e ? { v: round2(e.base + e.commission), s: 'moneyBold' } : '',
-        money(a?.deposit), money(a?.base), money(a?.commission), money(sl.diff)]);
+        money(a?.deposit), money(a?.base), money(a?.commission), money(sl.diff), { v: (sl.why || []).join(' '), s: 'wrap' }]);
     }
   }
   return out;
@@ -445,7 +557,8 @@ export function payByMonthPaycheckRows(points) {
  * @param deals     the paycheck's rows ([{ account, project }]) — duplicates are fine
  * @param from      first pay month ("YYYY-MM")
  * @param months    how many pay months (default 24)
- * @returns { deals: [{ key, account, project, total, past, ahead }],
+ * @returns { deals: [{ key, account, project, total, past, ahead,
+ *                     payments: { total, paid, recorded, projected } (pay months with money from the deal) }],
  *            points: [{ payMonth, byDeal: { [key]: { amount, status } }, amount, takeHome,
  *                       status: 'paid' | 'recorded' | 'projected' | null }],
  *            total, takeHome }
@@ -460,7 +573,7 @@ export function dealHistory({ rows, deals, takeHome, from, months = 24, today = 
     const k = keyFor(d);
     if (seen.has(k)) continue;
     seen.add(k);
-    list.push({ key: k, account: d.account || '', project: d.project || '', total: 0, past: 0, ahead: 0 });
+    list.push({ key: k, account: d.account || '', project: d.project || '', total: 0, past: 0, ahead: 0, payments: { total: 0, paid: 0, recorded: 0, projected: 0 } });
   }
   const byKey = new Map(list.map(d => [d.key, d]));
   const to = addMonths(from, months - 1);
@@ -481,12 +594,13 @@ export function dealHistory({ rows, deals, takeHome, from, months = 24, today = 
     p.amount = round2(p.amount + r.amount);
     if (!p.status || RANK[r.status] > RANK[p.status]) p.status = r.status;
     d.total = round2(d.total + r.amount);
+    if (!prev) { d.payments.total++; d.payments[r.status]++; }
     if (r.payMonth <= nowKey && r.status !== 'projected') d.past = round2(d.past + r.amount);
     else d.ahead = round2(d.ahead + r.amount);
   }
   for (const p of points) p.takeHome = round2(p.amount * rate);
   const total = round2(points.reduce((s, p) => s + p.amount, 0));
-  return { deals: list, points, total, takeHome: round2(total * rate) };
+  return { deals: list, points, total, takeHome: round2(total * rate), payments: points.filter(p => p.amount > 0).length };
 }
 
 /** dealHistory() as spreadsheet rows: one per pay month, a column per deal. */
@@ -498,6 +612,32 @@ export function dealHistorySheetRows(history) {
     out.push([p.payMonth,
       ...history.deals.map(d => (p.byDeal[d.key] ? { v: p.byDeal[d.key].amount, s: 'money' } : '')),
       { v: p.amount, s: 'moneyBold' }, { v: p.takeHome, s: 'money' }, p.status ? STATUS_LABEL[p.status] : '']);
+  }
+  out.push(['Total', ...history.deals.map(d => ({ v: d.total, s: 'moneyBold' })), { v: history.total, s: 'moneyBold' }, { v: history.takeHome, s: 'moneyBold' }, '']);
+  out.push(['Payments', ...history.deals.map(paymentsText), history.payments, '', '']);
+  return out;
+}
+
+/** "8 (5 paid, 3 projected)" for a dealHistory deal. */
+export function paymentsText(d) {
+  const p = d.payments;
+  const parts = [`${p.paid} paid`, p.recorded ? `${p.recorded} recorded` : '', p.projected ? `${p.projected} projected` : ''].filter(Boolean);
+  return `${p.total} (${parts.join(', ')})`;
+}
+
+/** Each paycheck's gap and the reasons for it, for an export sheet. */
+export function gapReasonSheetRows(points) {
+  const out = [['Pay month', 'Date', 'Paycheck', 'Expected', 'Actual', 'Gap', 'Why']
+    .map((h, i) => ({ v: h, s: i >= 3 && i <= 5 ? 'headerRight' : 'header' }))];
+  for (const p of points) {
+    for (const sl of p.slots) {
+      if (sl.status === 'no-data') continue;
+      out.push([p.payMonth, ymd(sl.date), sl.kind === 'mid' ? 'Mid-month' : 'Month-end',
+        sl.expected ? { v: round2(sl.expected.base + sl.expected.commission), s: 'money' } : '',
+        sl.actual ? { v: sl.actual.deposit, s: 'money' } : 'not landed',
+        sl.diff == null ? '' : { v: sl.diff, s: 'moneyBold' },
+        { v: (sl.why || []).join(' '), s: 'wrap' }]);
+    }
   }
   return out;
 }
