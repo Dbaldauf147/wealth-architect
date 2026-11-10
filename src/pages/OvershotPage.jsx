@@ -12,6 +12,7 @@ import { useCommissions } from '../hooks/useCommissions';
 import { expectedPayouts, monthLabel } from '../lib/commissions';
 import { computeIncome, commissionTakeHome, monthKeysEnding, monthKeyFor as incomeMonthKey } from '../lib/income';
 import { baseSalary, paySchedule } from '../lib/commissionSchedule';
+import { projectedMonth } from '../lib/overIncomeAlert';
 import styles from './OvershotPage.module.css';
 
 /* When spending overtakes income. Same income/spending definitions as Cash
@@ -167,6 +168,11 @@ export function OvershotPage() {
 
   const { months, summary, pace } = result;
   const complete = months.filter(m => !m.partial);
+  // The month in progress against the income it's expected to bring in: what
+  // has come in plus the paychecks still due. Only once there's a pay schedule.
+  const projection = expectedIncome?.months.length
+    ? projectedMonth({ month: months.find(m => m.partial), expected: expectedIncome.months })
+    : null;
   const newestFirst = [...months].reverse();
 
   return (
@@ -203,15 +209,19 @@ export function OvershotPage() {
         <div className={styles.cardHead}>
           <div>
             <h2 className={styles.cardTitle}>Income vs spending, by month</h2>
-            <div className={styles.cardHint}>Shaded months are the ones where spending overtook income.</div>
+            <div className={styles.cardHint}>
+              Shaded months are the ones where spending overtook income.
+              {projection && <> The month in progress shows its expected income as an outline: what has come in plus the paychecks still due on the Commissions tab’s schedule.</>}
+            </div>
           </div>
           <div className={styles.legend}>
             <span><i style={{ background: INCOME }} />Income</span>
+            {projection && <span><i className={styles.legendProjected} style={{ borderColor: INCOME }} />Expected income</span>}
             <span><i style={{ background: SPENDING }} />Spending</span>
             <span><i className={styles.legendBand} />Over income</span>
           </div>
         </div>
-        <MonthlyChart months={months} />
+        <MonthlyChart months={months} projection={projection} />
       </section>
 
       <SurplusSplit months={split} transactions={transactions} />
@@ -475,14 +485,15 @@ function PaceCard({ pace }) {
 }
 
 /* Paired bars per month; months over income get a shaded band and a label. */
-function MonthlyChart({ months }) {
+function MonthlyChart({ months, projection = null }) {
   const [ref, width] = useMeasuredWidth(320);
   const [hover, setHover] = useState(null);
   const H = 280;
   const pad = { top: 28, right: 8, bottom: 26, left: 48 };
   const innerW = width - pad.left - pad.right;
   const innerH = H - pad.top - pad.bottom;
-  const max = niceMax(Math.max(...months.map(m => Math.max(m.income, m.spending)), 1));
+  const projectedFor = m => (projection && m.partial && projection.key === m.key ? projection : null);
+  const max = niceMax(Math.max(...months.map(m => Math.max(m.income, m.spending, projectedFor(m)?.projected || 0)), 1));
   const step = innerW / months.length;
   const barW = Math.max(3, Math.min(22, (step - 10) / 2));
   const y = v => pad.top + innerH - (v / max) * innerH;
@@ -514,14 +525,33 @@ function MonthlyChart({ months }) {
         ))}
         {months.map((m, i) => {
           const cx = pad.left + step * i + step / 2;
-          const isOver = m.over && !m.partial;
+          const proj = projectedFor(m);
+          // The month in progress is judged against its expected income.
+          const isOver = proj ? proj.over : m.over && !m.partial;
+          const gap = proj ? proj.gap : m.gap;
+          const projTop = proj && proj.projected > m.income ? y(proj.projected) : null;
           return (
             <g key={m.key}>
               {isOver && (
                 <>
-                  <rect x={cx - step / 2 + 1} y={pad.top} width={step - 2} height={innerH} fill={CRITICAL} opacity={0.08} rx={3} />
-                  <text x={cx} y={pad.top - 8} textAnchor="middle" className={styles.overLabel}>▲ {axis(m.gap)}</text>
+                  <rect x={cx - step / 2 + 1} y={pad.top} width={step - 2} height={innerH} fill={CRITICAL} opacity={proj ? 0.05 : 0.08} rx={3} />
+                  <text x={cx} y={pad.top - 8} textAnchor="middle" className={styles.overLabel}>▲ {axis(gap)}{proj ? '*' : ''}</text>
                 </>
+              )}
+              {projTop != null && (
+                <rect
+                  data-testid="overshot-projected-bar"
+                  x={cx - barW - 1 + 0.75}
+                  y={projTop + 0.75}
+                  width={barW - 1.5}
+                  height={Math.max(0, pad.top + innerH - projTop - 0.75)}
+                  rx={Math.min(3, barW / 2)}
+                  fill={INCOME}
+                  fillOpacity={0.08}
+                  stroke={INCOME}
+                  strokeWidth={1.5}
+                  strokeDasharray="4 3"
+                />
               )}
               {bar(cx - barW - 1, m.income, INCOME, m.partial ? 0.45 : 1)}
               {bar(cx + 1, m.spending, SPENDING, m.partial ? 0.45 : 1)}
@@ -546,21 +576,30 @@ function MonthlyChart({ months }) {
       </svg>
       {hover != null && (() => {
         const m = months[hover];
+        const proj = projectedFor(m);
         const left = Math.min(width - 200, Math.max(0, pad.left + step * hover + step / 2 - 100));
         return (
           <div className={styles.tooltip} style={{ left, top: 4 }}>
             <div className={styles.tooltipTitle}>{long(m.key)}{m.partial ? ' (so far)' : ''}</div>
             <div><i style={{ background: INCOME }} />Income <b>{money(m.income)}</b></div>
+            {proj && (
+              <div><i className={styles.legendProjected} style={{ borderColor: INCOME }} />Expected income <b>{money(proj.projected)}</b></div>
+            )}
+            {proj && proj.stillDue > 0 && <div className={styles.muted}>{money(proj.stillDue)} in paychecks still due</div>}
             <div><i style={{ background: SPENDING }} />Spending <b>{money(m.spending)}</b></div>
             <div className={styles.tooltipNet}>
-              {m.partial
+              {proj
+                ? (proj.over ? `Over expected income by ${money(proj.gap)}` : `${money(proj.projected - m.spending)} of expected income left`)
+                : m.partial
                 ? (m.over ? `Spending ahead by ${money(m.gap)} so far` : `${money(m.net)} ahead so far`)
                 : m.over ? `Over by ${money(m.gap)}` : `${money(m.net)} left over`}
             </div>
           </div>
         );
       })()}
-      {months.some(m => m.partial) && <div className={styles.chartFoot}>* month in progress</div>}
+      {months.some(m => m.partial) && (
+        <div className={styles.chartFoot}>* month in progress{projection ? ' — judged against its expected income (dashed outline)' : ''}</div>
+      )}
     </div>
   );
 }

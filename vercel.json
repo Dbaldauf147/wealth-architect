@@ -21,6 +21,10 @@
       "schedule": "15 15 * * *"
     },
     {
+      "path": "/api/over-income-alert",
+      "schedule": "30 15 * * *"
+    },
+    {
       "path": "/api/portfolio-snapshot",
       "schedule": "0 22 * * 1-5"
     }
