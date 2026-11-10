@@ -207,3 +207,60 @@ export function computeOvershot({ transactions, monthKeys, today = new Date() })
 
   return { months, summary, pace };
 }
+
+/**
+ * Expected income by month, from the Commissions tab's pay schedule
+ * (commissionSchedule paySchedule: base salary twice a month, plus the
+ * month-end commission at its take-home rate). A payday that has already
+ * landed counts what actually came in; the rest count what's expected.
+ * Set against a typical month's spending, so each month reads as a
+ * surplus or a shortfall before it happens.
+ *
+ * Payroll only: other money in (refunds, interest, a side payment) isn't
+ * on the schedule, so it isn't here.
+ *
+ * @param schedule         paySchedule() rows
+ * @param typicalSpending  a typical complete month's spending, or null
+ * @param months           how many months to return, starting with the first in the schedule
+ * @returns [{ key, received, expected, base, commission, commissionPreTax, total,
+ *             projected, earnedMonth, paychecks, leftOver }]
+ */
+export function expectedIncomeMonths({ schedule, typicalSpending = null, months = 6 }) {
+  const byKey = new Map();
+  for (const p of schedule || []) {
+    const key = monthKeyFor(p.date);
+    if (!byKey.has(key)) {
+      byKey.set(key, { key, received: 0, expected: 0, base: 0, commission: 0, commissionPreTax: 0, projected: false, earnedMonth: null, paychecks: 0 });
+    }
+    const m = byKey.get(key);
+    m.paychecks += 1;
+    if (p.status === 'received') {
+      m.received += p.received || 0;
+    } else {
+      m.expected += p.total;
+      m.base += p.base;
+      m.commission += p.commissionTakeHome;
+    }
+    if (p.kind === 'end') {
+      m.commissionPreTax += p.commissionPreTax;
+      m.earnedMonth = p.earnedMonth;
+      m.projected = m.projected || !!p.projected;
+    }
+  }
+  return [...byKey.values()]
+    .sort((a, b) => (a.key < b.key ? -1 : 1))
+    .slice(0, months)
+    .map(m => {
+      const total = round2(m.received + m.expected);
+      return {
+        ...m,
+        received: round2(m.received),
+        expected: round2(m.expected),
+        base: round2(m.base),
+        commission: round2(m.commission),
+        commissionPreTax: round2(m.commissionPreTax),
+        total,
+        leftOver: typicalSpending == null ? null : round2(total - typicalSpending),
+      };
+    });
+}
