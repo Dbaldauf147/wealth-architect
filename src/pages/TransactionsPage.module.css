@@ -2059,3 +2059,99 @@
   color: var(--color-text-primary);
   box-shadow: var(--shadow-xs);
 }
+
+/* ── Watched vendors: flagged rows, watch panel ── */
+.subTabCount {
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(234, 88, 12, 0.12);
+  color: #c2410c;
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.merchantClickable { cursor: pointer; }
+.merchantName.merchantClickable:hover { text-decoration: underline; }
+
+.watchFlag {
+  font-size: 14px !important;
+  color: #c2410c;
+  vertical-align: -2px;
+  margin-right: 3px;
+}
+
+.flaggedRow td:first-child {
+  box-shadow: inset 3px 0 0 #ea580c;
+}
+
+.flaggedRow td {
+  background: rgba(234, 88, 12, 0.035);
+}
+
+.watchPanel {
+  border: 1px solid var(--border-ghost);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--color-surface, #fff);
+  padding: 12px 14px;
+}
+
+.watchPanelHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.watchPanelHint {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+}
+
+.watchPanelEmpty {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-top: 8px;
+}
+
+.watchChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.watchChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  border: 1px solid rgba(234, 88, 12, 0.35);
+  background: rgba(234, 88, 12, 0.06);
+  color: #9a3412;
+  border-radius: 999px;
+  padding: 3px 4px 3px 9px;
+  font-size: 12px;
+}
+
+.watchChipText { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.watchChipNote { color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.watchChipCount {
+  font-size: 11px;
+  font-weight: 700;
+  background: #fff;
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+.watchChipRemove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  display: flex;
+  padding: 2px;
+  border-radius: 999px;
+}

@@ -10,12 +10,15 @@ import { statementLookup, statementLabel, ordinal, txnKey as statementKey } from
 import { uncatOver20RecentCutoff, isUncatOver20Recent, countUncatOver20Recent } from '../lib/uncategorized';
 import { matchAmazonOrders, describeAmazonMatch, amazonOrderUrl, itemSummary, amazonImportStalled } from '../lib/amazonOrders';
 import CardChoiceModal from '../components/CardChoiceModal';
+import WatchVendorModal from '../components/WatchVendorModal';
+import { matchingWatchRules, watchRuleCounts, describeWatchRule } from '../lib/watchedVendors';
 import styles from './TransactionsPage.module.css';
 
 const TXN_TAB_PREF_KEY = 'wa.transactions.tab';
 const TXN_TABS = [
   { id: 'transactions', label: 'Transactions', icon: 'receipt_long' },
   { id: 'categories', label: 'Categories', icon: 'category' },
+  { id: 'flagged', label: 'Flagged', icon: 'flag' },
 ];
 
 const PAGE_SIZE = 50;
@@ -817,7 +820,7 @@ function isRowChrome(el) {
 // category edit — which only changes the edited transaction object — re-renders
 // just that one row instead of the whole visible page.
 const TransactionRow = memo(function TransactionRow({
-  t, i, selectedIds, visibleColumns, categoryRules, subcategoryRules, transactionNotes, accountNicknames, editingId, editingSubId, newCategoryText, manageCategoriesMode, renamingCategory, renameText, showHiddenCategories, subSearchText, categoryOptions, hiddenCategoryList, transactions, dropdownRef, subDropdownRef, findMatchingRules, toggleSelect, setEditingRule, setEditingId, setNewCategoryText, setManageCategoriesMode, setRenamingCategory, setRenameText, setShowHiddenCategories, handleCategorySelect, removeCategoryRule, flashSaved, updateTransactionCategory, renameCategory, removeCategory, unhideCategory, setEditingSubId, setSubSearchText, handleSubcategorySelect, removeSubcategoryRule, addSubcategoryRule, updateTransactionDate, updateTransactionNote, setAccountNickname, toggleHideTransaction, splitTag, tagForSplit, untagSplit, onExplainCard, statement, onEditStatement, amazonMatch, onOpenAmazonOrder,
+  t, i, selectedIds, visibleColumns, categoryRules, subcategoryRules, transactionNotes, accountNicknames, editingId, editingSubId, newCategoryText, manageCategoriesMode, renamingCategory, renameText, showHiddenCategories, subSearchText, categoryOptions, hiddenCategoryList, transactions, dropdownRef, subDropdownRef, findMatchingRules, toggleSelect, setEditingRule, setEditingId, setNewCategoryText, setManageCategoriesMode, setRenamingCategory, setRenameText, setShowHiddenCategories, handleCategorySelect, removeCategoryRule, flashSaved, updateTransactionCategory, renameCategory, removeCategory, unhideCategory, setEditingSubId, setSubSearchText, handleSubcategorySelect, removeSubcategoryRule, addSubcategoryRule, updateTransactionDate, updateTransactionNote, setAccountNickname, toggleHideTransaction, splitTag, tagForSplit, untagSplit, onExplainCard, statement, onEditStatement, amazonMatch, onOpenAmazonOrder, watchMatches, onWatch,
 }) {
   const icon = getCategoryIcon(t.category);
   const color = catColor(t.category || 'Uncategorized');
@@ -850,7 +853,7 @@ const TransactionRow = memo(function TransactionRow({
   };
   return (
     <tr
-      className={selectedIds.has(t.transactionId) ? styles.selectedRow : ''}
+      className={[selectedIds.has(t.transactionId) ? styles.selectedRow : '', watchMatches ? styles.flaggedRow : ''].filter(Boolean).join(' ')}
       onDoubleClick={e => {
         if (isRowChrome(e.target)) return;
         window.getSelection?.()?.removeAllRanges();
@@ -875,9 +878,18 @@ const TransactionRow = memo(function TransactionRow({
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div
-              className={styles.merchantName}
-              {...(amazonMatch ? { style: { cursor: 'pointer' }, title: 'Show the Amazon order', onClick: () => onOpenAmazonOrder(t) } : {})}
-            >{t.description}</div>
+              className={`${styles.merchantName} ${styles.merchantClickable}`}
+              role="button"
+              tabIndex={0}
+              title={watchMatches ? `Watched vendor — ${watchMatches.map(r => r.note || describeWatchRule(r)).join('; ')}. Click to edit.` : 'Click to flag this vendor to watch'}
+              onClick={() => onWatch(t)}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onWatch(t); } }}
+            >
+              {watchMatches && (
+                <span className={`material-symbols-outlined ${styles.watchFlag}`} aria-label="Flagged">flag</span>
+              )}
+              {t.description}
+            </div>
             <div className={styles.merchantSub}>
               {t.fullDescription && t.fullDescription !== t.description
                 ? t.fullDescription.slice(0, 60)
@@ -936,7 +948,7 @@ const TransactionRow = memo(function TransactionRow({
           </div>
         </div>
       </td>}
-      {visibleColumns.has('description') && <td className={styles.institutionCell} title={t.fullDescription || t.description}>
+      {visibleColumns.has('description') && <td className={`${styles.institutionCell} ${styles.merchantClickable}`} title={`${t.fullDescription || t.description}\n\nClick to flag this vendor to watch`} onClick={() => onWatch(t)}>
         {t.fullDescription || t.description}
       </td>}
       {visibleColumns.has('category') && <td style={{ position: 'relative', overflow: 'visible' }}>
@@ -1639,8 +1651,8 @@ function RentCollisionNotice({ collisions, onMove, onDismiss }) {
 }
 
 export function TransactionsPage() {
-  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, splitTags, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View, rentDupeDismissed, cardPromos, promoTags, cardMap, statementCloseDays, amazonOrders } = useData();
-  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, tagForSplit, untagSplit, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns, setActiveTxnView, setShowAccounts, setPareto8020View, dismissRentCollision, setPromoTagForTransactions, setStatementCloseDay } = useDataActions();
+  const { transactions, analytics, loading, categoryRules, subcategoryRules, customCategories, hiddenCategories, transactionNotes, splitTags, accountNicknames, accountNumbers, accountGroups, hiddenTransactions, hiddenCount, organizedCategories, incomeCategories, savedTxnViews: savedViews, chartHiddenCats, chartHiddenSubs, columnWidths, categoryColors, visibleColumns: visibleColumnsRaw, activeTxnView: activeViewName, showAccounts, pareto8020View, rentDupeDismissed, cardPromos, promoTags, cardMap, statementCloseDays, amazonOrders, watchedVendors } = useData();
+  const { updateTransactionCategory, updateTransactionSubcategory, updateTransactionDate, bulkUpdateCategoryByIds, addCategoryRule, removeCategoryRule, updateCategoryRule, addSubcategoryRule, removeSubcategoryRule, updateSubcategoryRule, addCustomCategory, renameCategory, removeCategory, unhideCategory, updateTransactionNote, setAccountNickname, getMatchCount, toggleHideTransaction, tagForSplit, untagSplit, setCategoryBucket, saveTxnView, deleteTxnView, updateTxnView, setChartHiddenCats, setChartHiddenSubs, setColumnWidths, setCategoryColor, resetCategoryColor, setVisibleColumns, setActiveTxnView, setShowAccounts, setPareto8020View, dismissRentCollision, setPromoTagForTransactions, setStatementCloseDay, setWatchedVendors } = useDataActions();
   // Run over every transaction, not the filtered view — a rent clash is a fact
   // about the ledger and shouldn't disappear because the search box is narrow.
   const rentCollisions = useMemo(
@@ -2037,6 +2049,22 @@ export function TransactionsPage() {
     [amazonOrders, transactions],
   );
   const [amazonOrderTxn, setAmazonOrderTxn] = useState(null);
+  // Watched vendors: the transaction whose flag popup is open. The Flagged
+  // subtab (txnTab === 'flagged') shows the table narrowed to flagged rows.
+  const [watchTxn, setWatchTxn] = useState(null);
+  const watchRules = useMemo(() => (Array.isArray(watchedVendors) ? watchedVendors : []), [watchedVendors]);
+  // Transaction object → the watch rules it trips. Keyed by object so rows
+  // without a transactionId flag too.
+  const watchMatchMap = useMemo(() => {
+    const m = new Map();
+    if (!watchRules.length) return m;
+    for (const t of transactions || []) {
+      const hits = matchingWatchRules(t, watchRules);
+      if (hits.length) m.set(t, hits);
+    }
+    return m;
+  }, [transactions, watchRules]);
+  const watchCounts = useMemo(() => watchRuleCounts(transactions, watchRules), [transactions, watchRules]);
   // Every card row joined to the open order: a split shipment is two or three.
   const amazonOrderCharges = useMemo(() => {
     const order = amazonOrderTxn && amazonMatches.get(amazonOrderTxn.transactionId)?.order;
@@ -2058,6 +2086,9 @@ export function TransactionsPage() {
   /* Filtered + sorted transactions */
   const filtered = useMemo(() => {
     let list = transactions || [];
+    if (txnTab === 'flagged') {
+      list = list.filter(t => watchMatchMap.has(t));
+    }
     if (activeAccount !== 'all') {
       list = list.filter(t => t.account === activeAccount);
     }
@@ -2153,7 +2184,7 @@ export function TransactionsPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return sorted;
-  }, [transactions, activeAccount, deferredSearch, includedCategories, includedSubcategories, selectedMonth, deferredColumnFilters, sortCol, sortDir, deferredNotes, noSubOnly, uncatRecentOnly, dateFrom, dateTo, statementLabels, statementText]);
+  }, [transactions, activeAccount, deferredSearch, includedCategories, includedSubcategories, selectedMonth, deferredColumnFilters, sortCol, sortDir, deferredNotes, noSubOnly, uncatRecentOnly, dateFrom, dateTo, statementLabels, statementText, txnTab, watchMatchMap]);
 
   const paginated = useMemo(
     () => filtered.slice(0, (page + 1) * PAGE_SIZE),
@@ -2914,6 +2945,7 @@ export function TransactionsPage() {
           >
             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{t.icon}</span>
             {t.label}
+            {t.id === 'flagged' && <span className={styles.subTabCount}>{watchMatchMap.size}</span>}
           </button>
         ))}
       </div>
@@ -3131,7 +3163,46 @@ export function TransactionsPage() {
         );
       })()}
 
-      {txnTab === 'transactions' && <>
+      {(txnTab === 'transactions' || txnTab === 'flagged') && <>
+      {txnTab === 'flagged' && (
+        <div className={styles.watchPanel}>
+          <div className={styles.watchPanelHead}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#c2410c' }}>visibility</span>
+            <strong>Watched vendors</strong>
+            <span className={styles.watchPanelHint}>Click any merchant or description in the table to flag it.</span>
+          </div>
+          {watchRules.length === 0 ? (
+            <div className={styles.watchPanelEmpty}>
+              No vendors flagged yet. Switch to Transactions and click a merchant to start watching it.
+            </div>
+          ) : (
+            <div className={styles.watchChips}>
+              {watchRules.map(r => (
+                <div key={r.id} className={styles.watchChip} title={r.note || undefined}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>flag</span>
+                  <span className={styles.watchChipText}>{describeWatchRule(r)}</span>
+                  {r.note && <span className={styles.watchChipNote}>· {r.note}</span>}
+                  <span className={styles.watchChipCount}>{watchCounts[r.id] || 0}</span>
+                  <button
+                    type="button"
+                    className={styles.watchChipRemove}
+                    title="Stop watching"
+                    aria-label={`Stop watching ${r.description || 'this vendor'}`}
+                    onClick={() => {
+                      if (!window.confirm(`Stop watching ${describeWatchRule(r)}?`)) return;
+                      setWatchedVendors(watchRules.filter(x => x.id !== r.id));
+                      flashSaved();
+                    }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Search + Views */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
         <input
@@ -4046,6 +4117,8 @@ export function TransactionsPage() {
                     statement={statementLabels.get(statementKey(t))}
                     amazonMatch={amazonMatches.get(t.transactionId)}
                     onOpenAmazonOrder={setAmazonOrderTxn}
+                    watchMatches={watchMatchMap.get(t)}
+                    onWatch={setWatchTxn}
                     onEditStatement={setEditingStatementAcct}
                     editingId={isCatRow ? editingId : null}
                     editingSubId={isSubRow ? editingSubId : null}
@@ -4209,6 +4282,16 @@ export function TransactionsPage() {
         </div>
         );
       })()}
+
+      {watchTxn && (
+        <WatchVendorModal
+          txn={watchTxn}
+          rules={watchRules}
+          transactions={transactions}
+          onClose={() => setWatchTxn(null)}
+          onSave={next => { setWatchedVendors(next); setWatchTxn(null); flashSaved(); }}
+        />
+      )}
 
       {/* Edit Rules Dialog */}
       {amazonOrderTxn && amazonMatches.get(amazonOrderTxn.transactionId) && (
