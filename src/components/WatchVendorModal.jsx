@@ -23,6 +23,7 @@ const toItem = r => ({
   min: r.minAmount != null ? String(r.minAmount) : '',
   max: r.maxAmount != null ? String(r.maxAmount) : '',
   note: r.note || '',
+  email: r.email !== false,
 });
 
 const toRule = it => newWatchRule({
@@ -33,6 +34,7 @@ const toRule = it => newWatchRule({
   minAmount: it.min,
   maxAmount: it.max,
   note: it.note,
+  email: it.email,
 });
 
 /**
@@ -49,12 +51,12 @@ export default function WatchVendorModal({ txn, rules, transactions, onSave, onC
   const [items, setItems] = useState(() => (
     existing.length
       ? existing.map(toItem)
-      : [{ id: null, pattern: txn.description || '', sign: '', min: '', max: '', note: '' }]
+      : [{ id: null, pattern: txn.description || '', sign: '', min: '', max: '', note: '', email: true }]
   ));
 
   const update = (i, patch) => setItems(prev => prev.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
   const remove = i => setItems(prev => prev.filter((_, idx) => idx !== i));
-  const add = () => setItems(prev => [...prev, { id: null, pattern: txn.description || '', sign: '', min: '', max: '', note: '' }]);
+  const add = () => setItems(prev => [...prev, { id: null, pattern: txn.description || '', sign: '', min: '', max: '', note: '', email: true }]);
 
   const counts = useMemo(() => items.map(it => {
     const r = toRule(it);
@@ -155,6 +157,10 @@ export default function WatchVendorModal({ txn, rules, transactions, onSave, onC
               <label className={styles.field}>
                 <span>Note (optional)</span>
                 <input type="text" placeholder="Why are you watching this?" value={it.note} onChange={e => update(i, { note: e.target.value })} />
+              </label>
+              <label className={styles.emailToggle}>
+                <input type="checkbox" checked={it.email !== false} onChange={e => update(i, { email: e.target.checked })} />
+                <span>Email me when a new matching transaction comes in</span>
               </label>
               <div className={styles.count} data-testid="watch-match-count">
                 {hasFilter ? (

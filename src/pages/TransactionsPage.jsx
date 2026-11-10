@@ -3169,7 +3169,7 @@ export function TransactionsPage() {
           <div className={styles.watchPanelHead}>
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#c2410c' }}>visibility</span>
             <strong>Watched vendors</strong>
-            <span className={styles.watchPanelHint}>Click any merchant or description in the table to flag it.</span>
+            <span className={styles.watchPanelHint}>Click any merchant or description in the table to flag it. New matching transactions are emailed once a day.</span>
           </div>
           {watchRules.length === 0 ? (
             <div className={styles.watchPanelEmpty}>
@@ -3183,6 +3183,20 @@ export function TransactionsPage() {
                   <span className={styles.watchChipText}>{describeWatchRule(r)}</span>
                   {r.note && <span className={styles.watchChipNote}>· {r.note}</span>}
                   <span className={styles.watchChipCount}>{watchCounts[r.id] || 0}</span>
+                  <button
+                    type="button"
+                    className={styles.watchChipRemove}
+                    style={{ opacity: r.email === false ? 0.45 : 1 }}
+                    title={r.email === false ? 'Email off — click to email new transactions' : 'Emailing new transactions — click to turn off'}
+                    aria-label={r.email === false ? 'Turn on email' : 'Turn off email'}
+                    aria-pressed={r.email !== false}
+                    onClick={() => {
+                      setWatchedVendors(watchRules.map(x => (x.id === r.id ? { ...x, email: x.email === false } : x)));
+                      flashSaved();
+                    }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{r.email === false ? 'notifications_off' : 'mail'}</span>
+                  </button>
                   <button
                     type="button"
                     className={styles.watchChipRemove}

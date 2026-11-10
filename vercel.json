@@ -17,6 +17,10 @@
       "schedule": "0 15 * * *"
     },
     {
+      "path": "/api/watched-vendors",
+      "schedule": "15 15 * * *"
+    },
+    {
       "path": "/api/portfolio-snapshot",
       "schedule": "0 22 * * 1-5"
     }
