@@ -561,7 +561,8 @@ export function payByMonthPaycheckRows(points) {
  *                     payments: { total, paid, recorded, projected } (pay months with money from the deal) }],
  *            points: [{ payMonth, byDeal: { [key]: { amount, status } }, amount, takeHome,
  *                       status: 'paid' | 'recorded' | 'projected' | null }],
- *            total, takeHome }
+ *            total, takeHome, taxRate }
+ * taxRate is the expected tax on the commission: 1 − the take-home rate.
  */
 export function dealHistory({ rows, deals, takeHome, from, months = 24, today = new Date() }) {
   const rate = takeHome ?? DEFAULT_TAKE_HOME;
@@ -600,21 +601,22 @@ export function dealHistory({ rows, deals, takeHome, from, months = 24, today = 
   }
   for (const p of points) p.takeHome = round2(p.amount * rate);
   const total = round2(points.reduce((s, p) => s + p.amount, 0));
-  return { deals: list, points, total, takeHome: round2(total * rate), payments: points.filter(p => p.amount > 0).length };
+  return { deals: list, points, total, takeHome: round2(total * rate), taxRate: Math.round((1 - rate) * 10000) / 10000, payments: points.filter(p => p.amount > 0).length };
 }
 
 /** dealHistory() as spreadsheet rows: one per pay month, a column per deal. */
 export function dealHistorySheetRows(history) {
   const label = d => dealDisplay(d).label;
-  const out = [['Pay month', ...history.deals.map(label), 'Total (pre-tax)', 'Est. take-home', 'Status']
+  const out = [['Pay month', ...history.deals.map(label), 'Total (pre-tax)', 'Est. take-home', 'Status', 'Expected tax rate']
     .map((h, i) => ({ v: h, s: i >= 1 ? 'headerRight' : 'header' }))];
   for (const p of history.points) {
     out.push([p.payMonth,
       ...history.deals.map(d => (p.byDeal[d.key] ? { v: p.byDeal[d.key].amount, s: 'money' } : '')),
-      { v: p.amount, s: 'moneyBold' }, { v: p.takeHome, s: 'money' }, p.status ? STATUS_LABEL[p.status] : '']);
+      { v: p.amount, s: 'moneyBold' }, { v: p.takeHome, s: 'money' }, p.status ? STATUS_LABEL[p.status] : '',
+      p.amount ? { v: history.taxRate, s: 'pct' } : '']);
   }
-  out.push(['Total', ...history.deals.map(d => ({ v: d.total, s: 'moneyBold' })), { v: history.total, s: 'moneyBold' }, { v: history.takeHome, s: 'moneyBold' }, '']);
-  out.push(['Payments', ...history.deals.map(paymentsText), history.payments, '', '']);
+  out.push(['Total', ...history.deals.map(d => ({ v: d.total, s: 'moneyBold' })), { v: history.total, s: 'moneyBold' }, { v: history.takeHome, s: 'moneyBold' }, '', { v: history.taxRate, s: 'pct' }]);
+  out.push(['Payments', ...history.deals.map(paymentsText), history.payments, '', '', '']);
   return out;
 }
 
