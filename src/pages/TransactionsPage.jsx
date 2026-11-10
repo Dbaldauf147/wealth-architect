@@ -12,6 +12,12 @@ import { matchAmazonOrders, describeAmazonMatch, amazonOrderUrl, itemSummary, am
 import CardChoiceModal from '../components/CardChoiceModal';
 import styles from './TransactionsPage.module.css';
 
+const TXN_TAB_PREF_KEY = 'wa.transactions.tab';
+const TXN_TABS = [
+  { id: 'transactions', label: 'Transactions', icon: 'receipt_long' },
+  { id: 'categories', label: 'Categories', icon: 'category' },
+];
+
 const PAGE_SIZE = 50;
 
 function fmt(n) {
@@ -1686,6 +1692,15 @@ export function TransactionsPage() {
   // every other caller.
   const [toastMsg, setToastMsg] = useState(null);
   const [includedCategories, setIncludedCategories] = useState(new Set());
+  // Which subtab is showing: the transaction table, or the category buckets.
+  // A view preference, remembered in this browser.
+  const [txnTab, setTxnTab] = useState(() => {
+    try { return TXN_TABS.some(t => t.id === localStorage.getItem(TXN_TAB_PREF_KEY)) ? localStorage.getItem(TXN_TAB_PREF_KEY) : 'transactions'; } catch { return 'transactions'; }
+  });
+  function chooseTxnTab(id) {
+    setTxnTab(id);
+    try { localStorage.setItem(TXN_TAB_PREF_KEY, id); } catch { /* private mode */ }
+  }
   const [includedSubcategories, setIncludedSubcategories] = useState(new Set());
   const [chartMode, setChartMode] = useState('stacked');
   const [chartMonthCount, setChartMonthCount] = useState(13);
@@ -2887,8 +2902,24 @@ export function TransactionsPage() {
         </div>
       )}
 
+      <div className={styles.subTabBar} role="tablist" aria-label="Transactions views">
+        {TXN_TABS.map(t => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={txnTab === t.id}
+            className={`${styles.subTab} ${txnTab === t.id ? styles.subTabActive : ''}`}
+            onClick={() => chooseTxnTab(t.id)}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{t.icon}</span>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       {/* Category Review Buckets */}
-      {(() => {
+      {txnTab === 'categories' && (() => {
         const paretoGroupLabelStyle = {
           width: '100%',
           fontSize: 10,
@@ -3100,6 +3131,7 @@ export function TransactionsPage() {
         );
       })()}
 
+      {txnTab === 'transactions' && <>
       {/* Search + Views */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
         <input
@@ -4053,6 +4085,8 @@ export function TransactionsPage() {
           )}
         </div>
       </div>
+
+      </>}
 
       {/* Bulk category rule confirmation */}
       {pendingRule && (() => {
