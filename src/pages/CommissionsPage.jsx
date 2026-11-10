@@ -458,6 +458,7 @@ function DealHistoryTable({ history, point }) {
     { id: 'total', label: 'Total pre-tax', w: 130, num: true },
     { id: 'takeHome', label: 'Est. take-home', w: 130, num: true },
     { id: 'status', label: 'Status', w: 170 },
+    { id: 'taxRate', label: 'Expected tax rate', w: 140, num: true },
   ], [history.deals]);
   const widthOf = c => prefs.widths[c.id] || c.w;
   const shown = cols.filter(c => c.locked || !prefs.hidden[c.id]);
@@ -489,6 +490,7 @@ function DealHistoryTable({ history, point }) {
     if (c.deal) return p.byDeal[c.deal.key] ? cents(p.byDeal[c.deal.key].amount) : <span className={styles.muted}>—</span>;
     if (c.id === 'total') return p.amount ? cents(p.amount) : <span className={styles.muted}>—</span>;
     if (c.id === 'takeHome') return p.amount ? cents(p.takeHome) : <span className={styles.muted}>—</span>;
+    if (c.id === 'taxRate') return p.amount ? pct(history.taxRate) : <span className={styles.muted}>—</span>;
     return p.status ? STATUSES.find(st => st.id === p.status)?.label : <span className={styles.muted}>—</span>;
   };
   const foot = c => {
@@ -496,6 +498,7 @@ function DealHistoryTable({ history, point }) {
     if (c.deal) return <>{cents(c.deal.total)}<div className={own.payCount}>{plural(c.deal.payments.total, 'payment')}</div></>;
     if (c.id === 'total') return <>{cents(history.total)}<div className={own.payCount}>{plural(history.payments, 'month')} with a payment</div></>;
     if (c.id === 'takeHome') return cents(history.takeHome);
+    if (c.id === 'taxRate') return <>{pct(history.taxRate)}<div className={own.payCount}>1 − take-home rate</div></>;
     return '';
   };
   const cls = c => [c.num || c.deal ? own.num : '', isFig(c) ? own.figured : ''].filter(Boolean).join(' ') || undefined;
@@ -612,7 +615,7 @@ function PaycheckDealsModal({ slot, point, rows, takeHome, onClose }) {
   const past = history.deals.reduce((s, d) => s + d.past, 0);
   const ahead = history.deals.reduce((s, d) => s + d.ahead, 0);
   const exportIt = () => downloadXlsx([
-    { name: '24 months', rows: [[{ v: `Commissions in the ${monthLabel(point.payMonth)} month-end paycheck, by pay month`, s: 'title' }], [{ v: `Pre-tax; take-home at ${Math.round(rate * 100)}%`, s: 'muted' }], [], ...dealHistorySheetRows(history)], cols: [12, ...history.deals.map(() => 22), 16, 14, 18] },
+    { name: '24 months', rows: [[{ v: `Commissions in the ${monthLabel(point.payMonth)} month-end paycheck, by pay month`, s: 'title' }], [{ v: `Pre-tax; take-home at ${Math.round(rate * 100)}%`, s: 'muted' }], [], ...dealHistorySheetRows(history)], cols: [12, ...history.deals.map(() => 22), 16, 14, 18, 16] },
     { name: 'Why the gap', rows: [[{ v: `${monthLabel(point.payMonth)} paychecks: expected vs actual, and why`, s: 'title' }], [{ v: `Expected = usual base + the tracker's commission at ${Math.round(rate * 100)}% take-home. Reasons are best guesses from the deposits and the tracker, most likely first.`, s: 'muted' }], [], ...gapReasonSheetRows([point])], cols: GAP_COLS },
   ], `commissions-${point.payMonth}-deals-24-months`);
 

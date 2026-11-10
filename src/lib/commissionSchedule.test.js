@@ -197,6 +197,7 @@ describe('dealHistory', () => {
   });
   it('splits past from projected and keeps the status', () => {
     expect(at('2026-10')).toMatchObject({ amount: 1000, takeHome: 500, status: 'paid' });
+    expect(h.taxRate).toBe(0.5);
     expect(at('2026-12').status).toBe('projected');
     const d = h.deals[0];
     expect(d.past).toBe(1000 + (at('2026-11').status === 'projected' ? 0 : at('2026-11').amount));
@@ -207,7 +208,12 @@ describe('dealHistory', () => {
     const sheet = dealHistorySheetRows(h);
     // Header, 12 months, a total row and a payments row.
     expect(sheet).toHaveLength(15);
-    expect(sheet[0].map(c => c.v)).toEqual(['Pay month', 'Acme · HVAC', 'Total (pre-tax)', 'Est. take-home', 'Status']);
+    expect(sheet[0].map(c => c.v)).toEqual(['Pay month', 'Acme · HVAC', 'Total (pre-tax)', 'Est. take-home', 'Status', 'Expected tax rate']);
+    // The tax rate is the last column: on months with a payment, and the total.
+    const oct = sheet.find(r => r[0] === '2026-10');
+    expect(oct.at(-1)).toEqual({ v: 0.5, s: 'pct' });
+    expect(sheet.find(r => r[0] === '2026-09').at(-1)).toBe('');
+    expect(sheet[13].at(-1)).toEqual({ v: 0.5, s: 'pct' });
     expect(sheet[14][0]).toBe('Payments');
     expect(sheet[14][1]).toBe(paymentsText(h.deals[0]));
   });
