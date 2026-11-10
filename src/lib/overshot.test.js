@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeOvershot, monthsSpanned } from './overshot.js';
+import { computeOvershot, monthsSpanned, expectedIncomeMonths } from './overshot.js';
 
 const tx = (date, amount, category, description = category) => ({ date, amount, category, description });
 
@@ -117,5 +117,35 @@ describe('monthsSpanned', () => {
     const t = [tx('11/20/2025', -5, 'Shopping'), tx('02/02/2026', -5, 'Shopping')];
     expect(monthsSpanned(t, new Date(2026, 2, 1))).toEqual(['2025-11', '2025-12', '2026-01', '2026-02', '2026-03']);
     expect(monthsSpanned([], new Date())).toEqual([]);
+  });
+});
+
+describe('expectedIncomeMonths', () => {
+  const row = (date, kind, extra = {}) => ({
+    date: new Date(date), kind, base: 3000, commissionPreTax: 0, commissionTakeHome: 0, total: 3000,
+    projected: false, earnedMonth: null, status: 'expected', received: null, ...extra,
+  });
+  const schedule = [
+    row('2026-11-14', 'mid', { status: 'received', received: 2990 }),
+    row('2026-11-30', 'end', { commissionPreTax: 1000, commissionTakeHome: 600, total: 3600, earnedMonth: '2026-10' }),
+    row('2026-12-15', 'mid'),
+    row('2026-12-31', 'end', { commissionPreTax: 500, commissionTakeHome: 300, total: 3300, earnedMonth: '2026-11', projected: true }),
+    row('2027-01-15', 'mid'),
+  ];
+
+  it('counts what landed, adds what is expected, by month', () => {
+    const [nov, dec] = expectedIncomeMonths({ schedule, typicalSpending: 6000 });
+    expect(nov).toMatchObject({ key: '2026-11', received: 2990, expected: 3600, total: 6590, base: 3000, commission: 600, commissionPreTax: 1000, earnedMonth: '2026-10', projected: false, paychecks: 2, leftOver: 590 });
+    expect(dec).toMatchObject({ key: '2026-12', received: 0, total: 6300, commission: 300, projected: true, leftOver: 300 });
+  });
+
+  it('limits the months and leaves leftOver empty without a typical month', () => {
+    const out = expectedIncomeMonths({ schedule, months: 2 });
+    expect(out.map(m => m.key)).toEqual(['2026-11', '2026-12']);
+    expect(out[0].leftOver).toBeNull();
+  });
+
+  it('is empty without a schedule', () => {
+    expect(expectedIncomeMonths({ schedule: [] })).toEqual([]);
   });
 });

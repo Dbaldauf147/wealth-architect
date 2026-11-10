@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../contexts/DataContext';
-import { computeOvershot, monthsSpanned } from '../lib/overshot';
+import { computeOvershot, monthsSpanned, expectedIncomeMonths } from '../lib/overshot';
 import { buildCashPosition } from '../lib/cashPosition';
 import { CashBridgeReport } from '../components/CashBridgeReport';
 import { SurplusSplit } from '../components/SurplusSplit';
@@ -9,6 +9,9 @@ import { upcomingCardPayments } from '../lib/paymentReminder';
 import { countedAccountMatcher } from '../lib/cashBridge';
 import { detectPaychecks, detectCashBills, planUpcomingCash } from '../lib/upcomingCash';
 import { useCommissions } from '../hooks/useCommissions';
+import { expectedPayouts, monthLabel } from '../lib/commissions';
+import { computeIncome, commissionTakeHome, monthKeysEnding, monthKeyFor as incomeMonthKey } from '../lib/income';
+import { baseSalary, paySchedule } from '../lib/commissionSchedule';
 import styles from './OvershotPage.module.css';
 
 /* When spending overtakes income. Same income/spending definitions as Cash
@@ -63,7 +66,7 @@ function niceMax(v) {
 
 export function OvershotPage() {
   const { transactions, balanceHistory, balances, incomeCategories, hiddenCards, statementCloseDays, accountNicknames, accountGroups, loading } = useData();
-  const { payouts: commissionPayouts } = useCommissions();
+  const { payouts: commissionPayouts, commissions } = useCommissions();
   const [range, setRange] = useState(12);
   const [surplusMode, setSurplusMode] = useState('cash'); // 'cash' | 'flow'
   // Which accounts count as cash on hand, beyond the defaults. Kept in this
@@ -112,6 +115,19 @@ export function OvershotPage() {
     });
     return { ...plan, cashAsOf: cash.now.asOf };
   }, [transactions, cash, balances, hiddenCards, statementCloseDays, accountNicknames, accountGroups, incomeCategories, commissionPayouts]);
+
+  // Expected income, month by month, from the Commissions tab's pay
+  // schedule — built exactly as that tab builds it, so the two agree.
+  const expectedIncome = useMemo(() => {
+    if (!transactions?.length) return null;
+    const now = new Date();
+    const { paychecks } = computeIncome({ transactions, incomeCategories, monthKeys: monthKeysEnding(incomeMonthKey(now), 13), today: now });
+    const base = baseSalary(paychecks, now);
+    if (!base) return null;
+    const takeHome = commissionTakeHome(paychecks, commissionPayouts, now);
+    const schedule = paySchedule({ base, paychecks, expected: expectedPayouts(commissions, now), takeHome, today: now });
+    return { base, takeHome, months: expectedIncomeMonths({ schedule, typicalSpending: result?.pace?.typicalSpending ?? null, months: 6 }) };
+  }, [transactions, incomeCategories, commissions, commissionPayouts, result]);
 
   // Each month's surplus split into invested and kept, beside what the cash
   // position actually did (needs the month-end before the window too).
@@ -178,6 +194,10 @@ export function OvershotPage() {
       </div>
 
       {pace && <PaceCard pace={pace} />}
+
+      {expectedIncome?.months.length > 0 && (
+        <ExpectedIncomeCard data={expectedIncome} typicalSpending={pace?.typicalSpending ?? null} />
+      )}
 
       <section className={styles.card}>
         <div className={styles.cardHead}>
@@ -368,6 +388,67 @@ function Stat({ value, label, sub, tone, testId }) {
       <div className={styles.heroStatLabel}>{label}</div>
       {sub && <div className={styles.heroStatSub}>{sub}</div>}
     </div>
+  );
+}
+
+/* What's coming in over the next few months, from the Commissions tab: base
+   salary twice a month plus each month-end's commission at its take-home
+   rate. Paydays already gone count what actually landed. */
+function ExpectedIncomeCard({ data, typicalSpending }) {
+  const { months, takeHome, base } = data;
+  const rate = Math.round((takeHome ?? 0.6) * 100);
+  const total = months.reduce((s, m) => s + m.total, 0);
+  const leftOver = typicalSpending == null ? null : total - typicalSpending * months.length;
+  return (
+    <section className={styles.card} data-testid="overshot-expected-income">
+      <div className={styles.cardHead}>
+        <div>
+          <h2 className={styles.cardTitle}>Expected income</h2>
+          <div className={styles.cardHint}>
+            From the Commissions tab’s pay schedule: base salary of {money(base.amount)} twice a month, plus each month-end’s commission at {rate}% take-home
+            {takeHome == null ? ' (a default, until there’s history to measure)' : ''}. Paychecks already in count what actually landed.
+            {' '}<b>{money(total)}</b> over the next {months.length} month{months.length === 1 ? '' : 's'}
+            {leftOver != null && <> — {leftOver >= 0 ? `${money(leftOver)} more than` : `${money(-leftOver)} short of`} {months.length} typical month{months.length === 1 ? '' : 's'} of spending ({money(typicalSpending)} a month)</>}.
+            {' '}Payroll only: other money in isn’t scheduled.
+          </div>
+        </div>
+      </div>
+      <div className={styles.tableWrap}>
+        <table className={styles.table} data-testid="overshot-expected-income-table">
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th className={styles.num}>Already in</th>
+              <th className={styles.num}>Base still due</th>
+              <th className={styles.num}>Commission take-home</th>
+              <th className={styles.num}>Expected income</th>
+              {typicalSpending != null && <th className={styles.num}>vs typical spending</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {months.map(m => (
+              <tr key={m.key} data-over={m.leftOver != null && m.leftOver < 0 ? 'true' : 'false'}>
+                <td className={styles.nowrap}>
+                  {long(m.key)}
+                  {m.earnedMonth && m.commissionPreTax > 0 && (
+                    <div className={styles.muted}>
+                      {monthLabel(m.earnedMonth, { month: 'short' })} commission {money(m.commissionPreTax)} pre-tax{m.projected ? ' · projected' : ''}
+                    </div>
+                  )}
+                </td>
+                <td className={styles.num}>{m.received ? money(m.received) : <span className={styles.muted}>—</span>}</td>
+                <td className={styles.num}>{m.base ? money(m.base) : <span className={styles.muted}>—</span>}</td>
+                <td className={styles.num}>{m.commission ? money(m.commission) : <span className={styles.muted}>—</span>}</td>
+                <td className={styles.num}><b>{money(m.total)}</b></td>
+                {typicalSpending != null && (
+                  <td className={`${styles.num} ${m.leftOver < 0 ? styles.negText : ''}`}>{signed(m.leftOver)}</td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
