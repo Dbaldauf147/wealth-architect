@@ -298,6 +298,12 @@ const loadVendorAlerts = () => loadJSON('vendorAlerts', []) || [];
 const saveVendorAlerts = (v) => saveJSON('vendorAlerts', v);
 const loadVendorAlertsUpdatedAt = () => loadJSON('vendorAlertsUpdatedAt', null);
 const saveVendorAlertsUpdatedAt = (v) => saveJSON('vendorAlertsUpdatedAt', v);
+// Watched vendors — rules (same filters as auto-categorization) whose matching
+// transactions get flagged on the Transactions page (see lib/watchedVendors).
+const loadWatchedVendors = () => loadJSON('watchedVendors', []) || [];
+const saveWatchedVendors = (v) => saveJSON('watchedVendors', v);
+const loadWatchedVendorsUpdatedAt = () => loadJSON('watchedVendorsUpdatedAt', null);
+const saveWatchedVendorsUpdatedAt = (v) => saveJSON('watchedVendorsUpdatedAt', v);
 
 // Transactions hand-tagged to a card promotion, as { [transactionId]: promoId }.
 // The promos' match rules only get you so far — a $300 travel credit redeemed
@@ -560,6 +566,12 @@ function mergedDiffersFromRemote(merged, remote) {
   if ((merged.vendorAlertsUpdatedAt ?? null) !== (remote.vendorAlertsUpdatedAt ?? null)) {
     return true;
   }
+  if (JSON.stringify(merged.watchedVendors ?? []) !== JSON.stringify(Array.isArray(remote.watchedVendors) ? remote.watchedVendors : [])) {
+    return true;
+  }
+  if ((merged.watchedVendorsUpdatedAt ?? null) !== (remote.watchedVendorsUpdatedAt ?? null)) {
+    return true;
+  }
   // Imported Robinhood trades — single object, compare serialized.
   if (JSON.stringify(merged.robinhoodTrades ?? null) !== JSON.stringify(remote.robinhoodTrades ?? null)) {
     return true;
@@ -586,7 +598,7 @@ const EMPTY_LOCALS = {
   assetClasses: {}, netWorthCategories: {}, netWorthLiquidCategories: {}, netWorthPrefs: null,
   customAssets: [], customLiabilities: [], customAssetClasses: [],
   hiddenCards: [], paymentReminderPrefs: {}, calendarSyncPrefs: {}, splitwisePrefs: {}, commissionReview: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
-  cardPromos: null, cardPromosUpdatedAt: null, promoTags: {}, vendorAlerts: [], vendorAlertsUpdatedAt: null,
+  cardPromos: null, cardPromosUpdatedAt: null, promoTags: {}, vendorAlerts: [], vendorAlertsUpdatedAt: null, watchedVendors: [], watchedVendorsUpdatedAt: null,
   hiddenCategories: new Set(), rangeExcludedCategories: [], rangeExcludedSeeded: false, shortTermLoan: null, robinhoodTrades: null,
   organizedCategories: new Set(), incomeCategories: new Set(), savedTxnViews: {},
   chartHiddenCats: new Set(), chartHiddenSubs: new Set(), txnColumnWidths: {},
@@ -616,6 +628,8 @@ function readLocalConfig() {
     promoTags: loadPromoTags(),
     vendorAlerts: loadVendorAlerts(),
     vendorAlertsUpdatedAt: loadVendorAlertsUpdatedAt(),
+    watchedVendors: loadWatchedVendors(),
+    watchedVendorsUpdatedAt: loadWatchedVendorsUpdatedAt(),
     assetClasses: loadAssetClasses(),
     netWorthCategories: loadNetWorthCategories(),
     netWorthLiquidCategories: loadNetWorthLiquidCategories(),
@@ -686,6 +700,13 @@ function mergeConfig(remote, locals) {
         locals.vendorAlertsUpdatedAt, remote.vendorAlertsUpdatedAt,
       );
       return { vendorAlerts: m.promos || [], vendorAlertsUpdatedAt: m.at };
+    })(),
+    ...(() => {
+      const m = mergePromos(
+        locals.watchedVendors, Array.isArray(remote.watchedVendors) ? remote.watchedVendors : null,
+        locals.watchedVendorsUpdatedAt, remote.watchedVendorsUpdatedAt,
+      );
+      return { watchedVendors: m.promos || [], watchedVendorsUpdatedAt: m.at };
     })(),
     promoTags: unionMap(locals.promoTags, remote.promoTags),
     assetClasses: unionMap(locals.assetClasses, remote.assetClasses),
@@ -763,6 +784,8 @@ function buildSyncPayload(v) {
     promoTags: v.promoTags,
     vendorAlerts: v.vendorAlerts || [],
     vendorAlertsUpdatedAt: v.vendorAlertsUpdatedAt ?? null,
+    watchedVendors: v.watchedVendors || [],
+    watchedVendorsUpdatedAt: v.watchedVendorsUpdatedAt ?? null,
     assetClasses: v.assetClasses,
     netWorthCategories: v.netWorthCategories,
     netWorthLiquidCategories: v.netWorthLiquidCategories,
@@ -877,6 +900,8 @@ export function DataProvider({ children }) {
   const [cardPromosUpdatedAt, setCardPromosUpdatedAt] = useState(loadCardPromosUpdatedAt);
   const [vendorAlerts, setVendorAlertsState] = useState(loadVendorAlerts);
   const [vendorAlertsUpdatedAt, setVendorAlertsUpdatedAt] = useState(loadVendorAlertsUpdatedAt);
+  const [watchedVendors, setWatchedVendorsState] = useState(loadWatchedVendors);
+  const [watchedVendorsUpdatedAt, setWatchedVendorsUpdatedAt] = useState(loadWatchedVendorsUpdatedAt);
   const [promoTags, setPromoTags] = useState(loadPromoTags);
   const [assetClasses, setAssetClasses] = useState(loadAssetClasses);
   const [netWorthCategories, setNetWorthCategories] = useState(loadNetWorthCategories);
@@ -953,6 +978,8 @@ export function DataProvider({ children }) {
     setCardPromosUpdatedAt(m.cardPromosUpdatedAt ?? null); saveCardPromosUpdatedAt(m.cardPromosUpdatedAt ?? null);
     setVendorAlertsState(m.vendorAlerts || []); saveVendorAlerts(m.vendorAlerts || []);
     setVendorAlertsUpdatedAt(m.vendorAlertsUpdatedAt ?? null); saveVendorAlertsUpdatedAt(m.vendorAlertsUpdatedAt ?? null);
+    setWatchedVendorsState(m.watchedVendors || []); saveWatchedVendors(m.watchedVendors || []);
+    setWatchedVendorsUpdatedAt(m.watchedVendorsUpdatedAt ?? null); saveWatchedVendorsUpdatedAt(m.watchedVendorsUpdatedAt ?? null);
     setPromoTags(m.promoTags); savePromoTags(m.promoTags);
     setAssetClasses(m.assetClasses); saveAssetClasses(m.assetClasses);
     setNetWorthCategories(m.netWorthCategories); saveNetWorthCategories(m.netWorthCategories);
@@ -1102,7 +1129,7 @@ export function DataProvider({ children }) {
     if (!syncHydrated.current) return;
     const currentConfig = {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
-      transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, statementCloseDays, placeLinks, placeRules, cardPromos, cardPromosUpdatedAt, promoTags, vendorAlerts, vendorAlertsUpdatedAt, assetClasses,
+      transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, statementCloseDays, placeLinks, placeRules, cardPromos, cardPromosUpdatedAt, promoTags, vendorAlerts, vendorAlertsUpdatedAt, watchedVendors, watchedVendorsUpdatedAt, assetClasses,
       netWorthCategories, netWorthLiquidCategories, netWorthPrefs, customAssets,
       customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, splitwisePrefs, commissionReview, weeklyEmailSections, weeklyEmailDay,
       customCategories, hiddenCategories, rangeExcludedCategories, rangeExcludedSeeded, shortTermLoan, robinhoodTrades, organizedCategories,
@@ -1149,6 +1176,8 @@ export function DataProvider({ children }) {
     promoTags,
     vendorAlerts,
     vendorAlertsUpdatedAt,
+    watchedVendors,
+    watchedVendorsUpdatedAt,
     assetClasses,
     netWorthCategories,
     netWorthLiquidCategories,
@@ -1643,6 +1672,15 @@ export function DataProvider({ children }) {
     saveVendorAlerts(next);
     setVendorAlertsUpdatedAt(at);
     saveVendorAlertsUpdatedAt(at);
+  }, []);
+
+  const setWatchedVendors = useCallback((rules) => {
+    const next = Array.isArray(rules) ? rules : [];
+    const at = new Date().toISOString();
+    setWatchedVendorsState(next);
+    saveWatchedVendors(next);
+    setWatchedVendorsUpdatedAt(at);
+    saveWatchedVendorsUpdatedAt(at);
   }, []);
 
   // Tag transactions to a card promotion so their spend counts against that
@@ -2591,6 +2629,7 @@ export function DataProvider({ children }) {
     updatePlaceRules,
     setCardPromos,
     setVendorAlerts,
+    setWatchedVendors,
     setPromoTagForTransactions,
     clearPromoTagsFor,
     setAccountGroup,
@@ -2671,6 +2710,7 @@ export function DataProvider({ children }) {
     updatePlaceRules,
     setCardPromos,
     setVendorAlerts,
+    setWatchedVendors,
     setPromoTagForTransactions,
     clearPromoTagsFor,
     setAccountGroup,
@@ -2772,6 +2812,7 @@ export function DataProvider({ children }) {
     placeRules,
     cardPromos: cardPromos ?? SEED_PROMOS,
     vendorAlerts,
+    watchedVendors,
     promoTags,
     assetClasses: shownMaps.assetClasses,
     netWorthCategories: shownMaps.netWorthCategories,
@@ -2838,6 +2879,7 @@ export function DataProvider({ children }) {
     splitTags,
     cardPromos,
     vendorAlerts,
+    watchedVendors,
     placeLinks,
     placeRules,
     promoTags,
