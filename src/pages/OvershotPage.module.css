@@ -184,6 +184,13 @@
   border: 1px solid rgba(208, 59, 59, 0.4);
 }
 
+.legend .legendProjected,
+.tooltip .legendProjected {
+  box-sizing: border-box;
+  background: rgba(42, 120, 214, 0.08);
+  border: 1.5px dashed;
+}
+
 /* ── Pace ─────────────────────────────────────────────────────────────── */
 
 .pace {

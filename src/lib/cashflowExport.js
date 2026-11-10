@@ -11,7 +11,7 @@
  *     with refunds netted in (|signed sum|), exactly like the page.
  */
 
-import { buildCardSchedule } from './cardSchedule';
+import { buildCardSchedule } from './cardSchedule.js';
 import { classifyAccount } from './cashPosition.js';
 
 const NON_EXPENSE_CATS = new Set(['paycheck', 'income', 'tax refund/payment']);
