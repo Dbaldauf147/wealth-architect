@@ -37,6 +37,30 @@ export function sumDaily(categories) {
 }
 
 /**
+ * A projectMonthSpending() category with your own expected total for the month
+ * in place of the projected one. It can't be less than what's already spent.
+ * The days still to come keep the category's usual shape, rescaled to land on
+ * the new total (a straight line when the category had nothing more projected).
+ * @returns the category with projected, remaining, delta and daily replaced,
+ *          plus `auto` (the projection it replaced) and `expected`
+ */
+export function withExpected(category, expected) {
+  if (!(expected >= 0)) return category;
+  const projected = round2(Math.max(category.soFar, expected));
+  const remaining = round2(projected - category.soFar);
+  const today = category.daily.findIndex(r => r.projected != null);
+  const last = category.daily.length - 1;
+  const daily = category.daily.map((r, i) => {
+    if (r.projected == null) return r;
+    const share = category.remaining > 0.005
+      ? (r.projected - category.soFar) / category.remaining
+      : last > today ? (i - today) / (last - today) : 1;
+    return { ...r, projected: i === last ? projected : round2(category.soFar + remaining * Math.max(0, Math.min(1, share))) };
+  });
+  return { ...category, projected, remaining, delta: round2(projected - category.typical), daily, auto: category.projected, expected };
+}
+
+/**
  * @param transactions  the ledger
  * @param today         "now"; its month is the one projected
  * @param lookback      how many complete months the rest-of-month pattern comes from

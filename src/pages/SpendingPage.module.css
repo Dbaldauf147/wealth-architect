@@ -141,3 +141,41 @@ tr td.under {
 .rowOff td {
   opacity: 0.45;
 }
+
+.expectedCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.expectedInput {
+  width: 84px;
+  padding: 5px 6px;
+  border: 1px solid var(--border-ghost, rgba(0, 0, 0, 0.14));
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 13px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.expectedInput::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.clearBtn {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.setNote {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
