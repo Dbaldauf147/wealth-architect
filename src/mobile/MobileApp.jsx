@@ -7,6 +7,7 @@ import { InsightsTab } from './InsightsTab';
 import { SearchTab } from './SearchTab';
 import { SplitsTab } from './SplitsTab';
 import { RulesTab } from './RulesTab';
+import { MonthForSheet } from './MonthForSheet';
 import { loadEmailPrefs, sendWeeklyEmail } from '../lib/weeklyEmailClient';
 import { applyBadge, clearBadge, badgeBlocker, requestBadgePermission } from './appBadge';
 import styles from './MobileApp.module.css';
@@ -348,6 +349,8 @@ export function MobileApp() {
           </>
         )}
       </div>
+
+      <MonthForSheet />
 
       <nav className={styles.tabbar}>
         {TABS.map(t => (
