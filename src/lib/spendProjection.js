@@ -27,6 +27,15 @@ function addMonths(key, n) {
   return `${Math.floor(i / 12)}-${pad((i % 12) + 1)}`;
 }
 
+/** The month's running totals over a set of projectMonthSpending() categories. */
+export function sumDaily(categories) {
+  const len = categories.length ? categories[0].daily.length : 0;
+  return Array.from({ length: len }, (_, i) => {
+    const add = f => (categories[0].daily[i][f] == null ? null : round2(categories.reduce((s, c) => s + c.daily[i][f], 0)));
+    return { day: i + 1, actual: add('actual'), projected: add('projected'), typical: add('typical') };
+  });
+}
+
 /**
  * @param transactions  the ledger
  * @param today         "now"; its month is the one projected
@@ -35,7 +44,9 @@ function addMonths(key, n) {
  *   key, day, daysInMonth, daysLeft,
  *   basis: [monthKey] (the complete months used, oldest first; empty = nothing to project from),
  *   soFar, remaining, projected, typical, lastMonth,
- *   categories: [{ category, soFar, remaining, projected, typical, delta }] (largest projection first),
+ *   categories: [{ category, soFar, remaining, projected, typical, delta,
+ *                  daily: [{ day, actual, projected, typical }] (the category's own running totals) }]
+ *               (largest projection first),
  *   daily: [{ day, actual (cumulative, null after today), projected (cumulative, null before today), typical (cumulative) }],
  * }
  */
@@ -79,8 +90,28 @@ export function projectMonthSpending({ transactions, today = new Date(), lookbac
     }
     const remaining = n ? after / n : 0;
     const typical = n ? total / n : 0;
+    // The category day by day: what it has spent, its usual shape, and the
+    // projection riding that shape from today's total.
+    const daily = [];
+    let cumActual = 0;
+    let cumTypical = 0;
+    let typicalAtToday = 0;
+    for (let d = 1; d <= dim; d++) {
+      cumActual += byMonth[key]?.[category]?.[d] || 0;
+      // A basis month shorter than this one has simply finished by day d.
+      cumTypical += n ? basis.reduce((s, k) => s + (byMonth[k][category]?.[d] || 0), 0) / n : 0;
+      if (d === day) typicalAtToday = cumTypical;
+      daily.push({
+        day: d,
+        actual: d <= day ? round2(cumActual) : null,
+        // Days 29–31 of longer basis months, past this month's end, land on the last day.
+        projected: d < day ? null : round2(d === dim ? soFar + remaining : soFar + (cumTypical - typicalAtToday)),
+        typical: round2(cumTypical),
+      });
+    }
     return {
       category,
+      daily,
       soFar: round2(soFar),
       remaining: round2(remaining),
       projected: round2(soFar + remaining),
@@ -94,29 +125,7 @@ export function projectMonthSpending({ transactions, today = new Date(), lookbac
   const soFar = total('soFar');
   const remaining = total('remaining');
 
-  // Day by day: what has been spent, the usual shape of a month, and the
-  // projection riding that shape from today's total.
-  const monthDay = (k, d) => Object.values(byMonth[k] || {}).reduce((s, perDay) => s + (perDay[d] || 0), 0);
-  const daily = [];
-  let actual = 0;
-  let typical = 0;
-  let typicalToday = 0;
-  for (let d = 1; d <= dim; d++) {
-    actual += monthDay(key, d);
-    // A basis month shorter than this one has simply finished by day d.
-    typical += n ? basis.reduce((s, k) => s + monthDay(k, d), 0) / n : 0;
-    if (d === day) typicalToday = typical;
-    daily.push({
-      day: d,
-      actual: d <= day ? round2(actual) : null,
-      projected: d >= day ? round2(soFar + (typical - typicalToday)) : null,
-      typical: round2(typical),
-    });
-    if (d === day) actual = soFar;
-  }
-  // Days 29–31 of longer basis months, past this month's end, still count.
-  const lastRow = daily[daily.length - 1];
-  if (lastRow) lastRow.projected = round2(soFar + remaining);
+  const daily = sumDaily(categories);
 
   const prev = addMonths(key, -1);
   return {

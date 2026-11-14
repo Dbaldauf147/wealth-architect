@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../contexts/DataContext';
 import { useBudgets } from '../hooks/useBudgets';
-import { projectMonthSpending } from '../lib/spendProjection';
+import { projectMonthSpending, sumDaily } from '../lib/spendProjection';
 import { BudgetsPage } from './BudgetsPage';
 import { TrendsPage } from './TrendsPage';
 import styles from './OvershotPage.module.css';
@@ -21,6 +21,16 @@ const TABS = [
 
 const SPENT = '#eb6834';
 const TYPICAL = '#64748b';
+const LINE = 'var(--color-text-primary)';
+// One colour per category, by its rank in the projection (the app's
+// categorical dataviz slots, then a second round of distinct hues).
+const CAT_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#8b5cf6', '#e0a40b', '#e0457b', '#0ea5b7', '#6b7280', '#84cc16', '#b45309', '#4f46e5', '#be185d', '#0f766e', '#a16207'];
+// Categories switched off on the This month tab: a view preference, kept in
+// this browser only. The page says so whenever any are off.
+const HIDDEN_KEY = 'wa-spend-month-hidden';
+function loadHidden() {
+  try { const v = JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]'); return new Set(Array.isArray(v) ? v : []); } catch { return new Set(); }
+}
 const money = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
 const signed = n => (n > 0 ? '+' : n < 0 ? '−' : '') + money(Math.abs(n));
 const axis = n => (n >= 1000 ? `$${Math.round(n / 100) / 10}k` : `$${Math.round(n)}`);
@@ -48,54 +58,83 @@ function useMeasuredWidth(initial = 320) {
   return [ref, width];
 }
 
-/* The month so far (solid), where it's heading (dashed) and the usual shape
-   of a month (grey), all cumulative by day. */
-function PaceChart({ p }) {
+/* The month by day, stacked by category: solid up to today, faded where it's
+   projected. The outline is the total (solid so far, dashed projected) and the
+   dotted line is the usual shape of a month for the same categories. */
+function PaceChart({ p, cats, daily, totals }) {
   const [ref, width] = useMeasuredWidth();
   const [hover, setHover] = useState(null);
-  const H = 260;
-  const pad = { top: 16, right: 64, bottom: 26, left: 48 };
+  const H = 320;
+  const pad = { top: 18, right: 64, bottom: 26, left: 48 };
   const innerW = width - pad.left - pad.right;
   const innerH = H - pad.top - pad.bottom;
-  const max = niceMax(Math.max(1, p.projected, p.typical, p.soFar));
+  const hasBasis = p.basis.length > 0;
+  const max = niceMax(Math.max(1, totals.projected, totals.typical, totals.soFar));
   const x = d => pad.left + (p.daysInMonth > 1 ? ((d - 1) / (p.daysInMonth - 1)) * innerW : 0);
   const y = v => pad.top + innerH - (v / max) * innerH;
   const line = (rows, f) => rows.filter(r => r[f] != null).map((r, i) => `${i ? 'L' : 'M'}${x(r.day).toFixed(1)},${y(r[f]).toFixed(1)}`).join(' ');
+  // Each category's band: its running total (actual, then projected) on top
+  // of the ones below it. Largest at the bottom.
+  const bands = useMemo(() => {
+    const floor = Array(p.daysInMonth).fill(0);
+    return cats.map(c => {
+      const lower = [...floor];
+      const upper = c.daily.map((r, i) => (floor[i] += r.actual ?? r.projected ?? 0));
+      return { category: c.category, color: c.color, lower, upper: [...upper] };
+    });
+  }, [cats, p.daysInMonth]);
+  const area = b => {
+    const up = b.upper.map((v, i) => `${i ? 'L' : 'M'}${x(i + 1).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+    const down = b.lower.map((v, i) => `L${x(i + 1).toFixed(1)},${y(v).toFixed(1)}`).reverse().join(' ');
+    return `${up} ${down} Z`;
+  };
   const dayStep = Math.max(1, Math.ceil(p.daysInMonth / Math.max(1, Math.floor(innerW / 44))));
-  const h = hover != null ? p.daily[hover] : null;
+  const h = hover != null ? daily[hover] : null;
   const onMove = e => {
     const box = e.currentTarget.getBoundingClientRect();
     const d = Math.round(((e.clientX - box.left - pad.left) / innerW) * (p.daysInMonth - 1)) + 1;
     setHover(Math.max(1, Math.min(p.daysInMonth, d)) - 1);
   };
+  const xToday = x(p.day);
+  const hoverCats = h ? cats.map(c => ({ ...c, v: c.daily[hover].actual ?? c.daily[hover].projected ?? 0 })).filter(c => c.v > 0.5).sort((a, b) => b.v - a.v) : [];
   return (
     <div ref={ref} className={styles.chartWrap} data-testid="spend-pace-chart">
-      <svg width={width} height={H} role="img" aria-label="Cumulative spending this month: so far, projected and typical" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+      <svg width={width} height={H} role="img" aria-label="Cumulative spending this month by category: so far and projected" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+        <defs>
+          <clipPath id="spend-past"><rect x={pad.left} y={0} width={Math.max(0, xToday - pad.left)} height={H} /></clipPath>
+          <clipPath id="spend-future"><rect x={xToday} y={0} width={Math.max(0, width - xToday)} height={H} /></clipPath>
+        </defs>
         {[0, 0.25, 0.5, 0.75, 1].map(f => f * max).map(t => (
           <g key={t}>
             <line x1={pad.left} x2={width - pad.right} y1={y(t)} y2={y(t)} stroke="var(--color-surface-alt)" />
             <text x={pad.left - 8} y={y(t) + 4} textAnchor="end" className={styles.axisText}>{axis(t)}</text>
           </g>
         ))}
-        {p.daily.filter(r => r.day === 1 || r.day % dayStep === 0).map(r => (
+        {daily.filter(r => r.day === 1 || r.day % dayStep === 0).map(r => (
           <text key={r.day} x={x(r.day)} y={H - 8} textAnchor="middle" className={styles.axisText} fontWeight={r.day === p.day ? 700 : undefined}>{r.day}</text>
         ))}
-        <line x1={x(p.day)} x2={x(p.day)} y1={pad.top} y2={pad.top + innerH} stroke="var(--color-text-muted)" strokeDasharray="2 3" />
-        <text x={x(p.day)} y={pad.top - 4} textAnchor="middle" className={styles.axisText}>today</text>
-        {p.basis.length > 0 && <path d={line(p.daily, 'typical')} fill="none" stroke={TYPICAL} strokeWidth={1.5} opacity={0.7} />}
-        <path d={line(p.daily, 'projected')} fill="none" stroke={SPENT} strokeWidth={2} strokeDasharray="5 4" />
-        <path d={line(p.daily, 'actual')} fill="none" stroke={SPENT} strokeWidth={2.5} />
-        <circle cx={x(p.day)} cy={y(p.soFar)} r={4} fill={SPENT} stroke="var(--color-surface)" strokeWidth={2} />
-        <text x={x(p.daysInMonth) + 6} y={y(p.projected) + 4} className={styles.axisText} fontWeight={700} fill={SPENT}>{money(p.projected)}</text>
+        <g clipPath="url(#spend-past)">
+          {bands.map(b => <path key={b.category} data-band={b.category} d={area(b)} fill={b.color} fillOpacity={0.9} stroke="var(--color-surface)" strokeWidth={0.75} />)}
+        </g>
+        <g clipPath="url(#spend-future)">
+          {bands.map(b => <path key={b.category} data-band-projected={b.category} d={area(b)} fill={b.color} fillOpacity={0.38} stroke="var(--color-surface)" strokeWidth={0.75} />)}
+        </g>
+        <line x1={xToday} x2={xToday} y1={pad.top} y2={pad.top + innerH} stroke="var(--color-text-muted)" strokeDasharray="2 3" />
+        <text x={xToday} y={pad.top - 5} textAnchor="middle" className={styles.axisText}>today</text>
+        {hasBasis && <path d={line(daily, 'typical')} fill="none" stroke={LINE} strokeWidth={1.5} strokeDasharray="1.5 4" strokeLinecap="round" />}
+        <path d={line(daily, 'projected')} fill="none" stroke={LINE} strokeWidth={1.75} strokeDasharray="5 4" />
+        <path d={line(daily, 'actual')} fill="none" stroke={LINE} strokeWidth={2.25} />
+        {daily.length > 0 && <text x={x(p.daysInMonth) + 6} y={y(totals.projected) + 4} className={styles.axisText} fontWeight={700} style={{ fill: LINE }}>{money(totals.projected)}</text>}
         {h && <line x1={x(h.day)} x2={x(h.day)} y1={pad.top} y2={pad.top + innerH} stroke="var(--color-text-primary)" strokeWidth={1} opacity={0.35} />}
         <line x1={pad.left} x2={width - pad.right} y1={y(0)} y2={y(0)} stroke="var(--color-text-muted)" />
       </svg>
       {h && (
-        <div className={styles.tooltip} style={{ left: Math.min(width - 230, Math.max(0, x(h.day) - 115)), top: 4 }}>
+        <div className={styles.tooltip} style={{ left: Math.min(width - 230, Math.max(0, x(h.day) + (x(h.day) > width / 2 ? -246 : 16))), top: 4 }} data-testid="spend-pace-tooltip">
           <div className={styles.tooltipTitle}>{shortMonth(p.key)} {h.day}</div>
-          {h.actual != null && <div><i style={{ background: SPENT }} />Spent by then <b>{money(h.actual)}</b></div>}
-          {h.actual == null && <div><i className={styles.legendProjected} style={{ borderColor: SPENT, background: 'transparent' }} />Projected by then <b>{money(h.projected)}</b></div>}
-          {p.basis.length > 0 && <div><i style={{ background: TYPICAL }} />Usually by then <b>{money(h.typical)}</b></div>}
+          <div>{h.actual != null ? 'Spent by then' : 'Projected by then'} <b>{money(h.actual ?? h.projected)}</b></div>
+          {hasBasis && <div>Usually by then <b>{money(h.typical)}</b></div>}
+          {hoverCats.slice(0, 8).map(c => <div key={c.category}><i style={{ background: c.color, opacity: h.actual != null ? 1 : 0.5 }} />{c.category} <b>{money(c.v)}</b></div>)}
+          {hoverCats.length > 8 && <div className={styles.muted}>{hoverCats.length - 8} more <b>{money(hoverCats.slice(8).reduce((t, c) => t + c.v, 0))}</b></div>}
         </div>
       )}
     </div>
@@ -105,7 +144,20 @@ function PaceChart({ p }) {
 function ThisMonth() {
   const { transactions, loading } = useData();
   const { budgets } = useBudgets();
-  const p = useMemo(() => (transactions?.length ? projectMonthSpending({ transactions, today: new Date() }) : null), [transactions]);
+  const full = useMemo(() => (transactions?.length ? projectMonthSpending({ transactions, today: new Date() }) : null), [transactions]);
+  const [hidden, setHidden] = useState(loadHidden);
+  const saveHidden = next => { try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...next])); } catch { /* private mode */ } return next; };
+  const toggleCat = c => setHidden(prev => { const next = new Set(prev); if (next.has(c)) next.delete(c); else next.add(c); return saveHidden(next); });
+  // The projection over just the categories that are switched on.
+  const view = useMemo(() => {
+    if (!full) return null;
+    const all = full.categories.map((c, i) => ({ ...c, color: CAT_COLORS[i % CAT_COLORS.length] }));
+    const cats = all.filter(c => !hidden.has(c.category));
+    const r2 = n => Math.round(n * 100) / 100;
+    const total = f => r2(cats.reduce((s2, c) => s2 + c[f], 0));
+    return { all, cats, daily: sumDaily(cats), p: { ...full, soFar: total('soFar'), remaining: total('remaining'), projected: total('projected'), typical: total('typical') } };
+  }, [full, hidden]);
+  const p = view?.p || null;
   // Monthly budgets by category name, as the Budgets tab matches them.
   const limits = useMemo(() => {
     const out = new Map();
@@ -118,10 +170,12 @@ function ThisMonth() {
   if (loading && !p) return <div className={styles.empty}>Loading transactions…</div>;
   if (!p || (!p.categories.length)) return <div className={styles.empty}>No spending to project yet.</div>;
 
-  const rows = p.categories.map(c => ({ ...c, budget: limits.get(c.category.toLowerCase()) ?? null }));
+  const rows = view.all.map(c => ({ ...c, off: hidden.has(c.category), budget: limits.get(c.category.toLowerCase()) ?? null }));
+  const shown = rows.filter(r => !r.off);
+  const offCount = rows.length - shown.length;
   const hasBudgets = rows.some(r => r.budget != null);
-  const overBudget = rows.filter(r => r.budget != null && r.projected > r.budget);
-  const budgetTotal = rows.reduce((s, r) => s + (r.budget || 0), 0);
+  const overBudget = shown.filter(r => r.budget != null && r.projected > r.budget);
+  const budgetTotal = shown.reduce((s, r) => s + (r.budget || 0), 0);
   const delta = Math.round((p.projected - p.typical) * 100) / 100;
   const hasBasis = p.basis.length > 0;
   const basisText = hasBasis
@@ -132,7 +186,7 @@ function ThisMonth() {
   return (
     <div className={styles.page} data-testid="spend-this-month">
       <div className={styles.hero}>
-        <div className={styles.heroLabel}>{longMonth(p.key)} · day {p.day} of {p.daysInMonth}</div>
+        <div className={styles.heroLabel}>{longMonth(p.key)} · day {p.day} of {p.daysInMonth}{offCount > 0 && <span data-testid="spend-hidden-note"> · {offCount} of {rows.length} categories switched off</span>}</div>
         <div className={styles.heroTitle}>
           {hasBasis
             ? <>On track to spend {money(p.projected)} this month</>
@@ -175,15 +229,25 @@ function ThisMonth() {
         <div className={styles.cardHead}>
           <div>
             <h2 className={styles.cardTitle}>Where the month is heading</h2>
-            <div className={styles.cardHint}>Running total by day. The dashed line follows the usual shape of the rest of a month from today’s total.</div>
+            <div className={styles.cardHint}>Running total by day, a colour per category: solid is what’s been spent, faded is what’s projected from today on. Click a category to switch it off everywhere on this tab.</div>
           </div>
           <div className={styles.legend}>
-            <span><i className={own.legendLine} style={{ borderColor: SPENT }} />Spent so far</span>
-            <span><i className={`${own.legendLine} ${own.legendDash}`} style={{ borderColor: SPENT }} />Projected</span>
-            {hasBasis && <span><i className={own.legendLine} style={{ borderColor: TYPICAL }} />Typical month</span>}
+            <span><i className={own.legendLine} style={{ borderColor: LINE }} />Spent so far</span>
+            <span><i className={`${own.legendLine} ${own.legendDash}`} style={{ borderColor: LINE }} />Projected</span>
+            {hasBasis && <span><i className={`${own.legendLine} ${own.legendDot}`} style={{ borderColor: LINE }} />Typical month</span>}
           </div>
         </div>
-        <PaceChart p={p} />
+        <div className={own.chips} data-testid="spend-category-chips">
+          {rows.map(r => (
+            <button key={r.category} type="button" className={`${own.chip} ${r.off ? own.chipOff : ''}`} aria-pressed={!r.off} onClick={() => toggleCat(r.category)} data-category={r.category}
+              title={r.off ? `Show ${r.category}` : `Hide ${r.category} (${money(r.projected)} projected)`}>
+              <i style={{ background: r.color }} />{r.category}
+            </button>
+          ))}
+          {offCount > 0 && <button type="button" className={own.chipLink} onClick={() => setHidden(saveHidden(new Set()))} data-testid="spend-show-all">Show all</button>}
+          {offCount < rows.length && rows.length > 1 && <button type="button" className={own.chipLink} onClick={() => setHidden(saveHidden(new Set(rows.map(r => r.category))))} data-testid="spend-hide-all">Hide all</button>}
+        </div>
+        <PaceChart p={p} cats={view.cats} daily={view.daily} totals={p} />
       </section>
 
       <section className={styles.card}>
@@ -191,7 +255,7 @@ function ThisMonth() {
           <div>
             <h2 className={styles.cardTitle}>Projected spending by category</h2>
             <div className={styles.cardHint}>
-              Largest projection first. The bar is the projection (solid = already spent); the tick is a typical month{hasBudgets ? ', and the budget where there is one' : ''}.
+              Largest projection first. Untick a category to leave it out of the totals and the chart. The bar is the projection (solid = already spent); the tick is a typical month{hasBudgets ? ', and the budget where there is one' : ''}.
             </div>
           </div>
         </div>
@@ -213,13 +277,16 @@ function ThisMonth() {
               {rows.map(r => {
                 const over = r.budget != null && r.projected > r.budget;
                 return (
-                  <tr key={r.category} data-category={r.category}>
+                  <tr key={r.category} data-category={r.category} className={r.off ? own.rowOff : undefined}>
                     <td>
                       <div className={own.catCell}>
-                        <span>{r.category}</span>
+                        <label className={own.catName}>
+                          <input type="checkbox" checked={!r.off} onChange={() => toggleCat(r.category)} aria-label={`Include ${r.category}`} />
+                          <i style={{ background: r.color }} />{r.category}
+                        </label>
                         <div className={own.track} aria-hidden="true">
-                          <i style={{ width: `${(r.projected / scale) * 100}%`, background: over ? '#d03b3b' : SPENT, opacity: 0.3 }} />
-                          <i style={{ width: `${(r.soFar / scale) * 100}%`, background: over ? '#d03b3b' : SPENT }} />
+                          <i style={{ width: `${(r.projected / scale) * 100}%`, background: r.color, opacity: 0.35 }} />
+                          <i style={{ width: `${(r.soFar / scale) * 100}%`, background: r.color }} />
                           {r.typical > 0 && <i style={{ left: `calc(${(r.typical / scale) * 100}% - 1px)`, width: 2, background: TYPICAL, borderRadius: 0 }} />}
                         </div>
                       </div>
@@ -239,7 +306,7 @@ function ThisMonth() {
                 );
               })}
               <tr className={own.totalRow}>
-                <td>Total</td>
+                <td>Total{offCount > 0 ? ` (${shown.length} of ${rows.length} categories)` : ''}</td>
                 <td className={styles.num}>{money(p.soFar)}</td>
                 <td className={styles.num}>{money(p.remaining)}</td>
                 <td className={styles.num}>{money(p.projected)}</td>
