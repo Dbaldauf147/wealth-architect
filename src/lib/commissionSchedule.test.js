@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { baseSalary, paySchedule, commissionRows, chartPoints, rawSheetRows, chartSheetRows, addMonths, expectedVsActual, expectedVsActualTotals, expectedVsActualSheetRows, payByMonth, payByMonthSheetRows, payByMonthPaycheckRows, dealHistory, dealHistorySheetRows, paymentsText, gapReasonSheetRows } from './commissionSchedule.js';
+import { baseSalary, paySchedule, commissionRows, chartPoints, rawSheetRows, chartSheetRows, addMonths, expectedVsActual, expectedVsActualTotals, expectedVsActualSheetRows, payByMonth, payByMonthSheetRows, payByMonthPaycheckRows, dealHistory, dealHistorySheetRows, monthEndBase, paymentsText, gapReasonSheetRows } from './commissionSchedule.js';
 
 const today = new Date(2026, 10, 8); // Sun Nov 8, 2026
 const pc = (y, m, d, amount) => ({ date: new Date(y, m - 1, d), amount });
@@ -271,5 +271,25 @@ describe('why a paycheck missed its expected amount', () => {
     const sheet = gapReasonSheetRows([sep, oct]);
     expect(sheet[0].map(c => c.v)).toEqual(['Pay month', 'Date', 'Paycheck', 'Expected', 'Actual', 'Gap', 'Why']);
     expect(sheet.find(r => r[0] === '2026-10' && r[2] === 'Month-end')[6].v).toMatch(/base portion/);
+  });
+});
+
+describe('monthEndBase', () => {
+  const split = [
+    { date: new Date(2026, 9, 15), amount: 3000, base: 3000, commission: 0 },
+    { date: new Date(2026, 9, 30), amount: 3480, base: 2990, commission: 490 },
+  ];
+  const b = monthEndBase({ paychecks: split, base: { amount: 3000 }, from: '2026-09', months: 4, today });
+
+  it('uses the base a landed month-end paycheck carried', () => {
+    expect(b['2026-10']).toEqual({ amount: 2990, status: 'paid' });
+  });
+  it('projects the usual base from this month on, and leaves unknown past months out', () => {
+    expect(b['2026-11']).toEqual({ amount: 3000, status: 'projected' });
+    expect(b['2026-12']).toEqual({ amount: 3000, status: 'projected' });
+    expect(b['2026-09']).toBeUndefined();
+  });
+  it('projects nothing without a base salary', () => {
+    expect(monthEndBase({ paychecks: split, base: null, from: '2026-10', months: 3, today })).toEqual({ '2026-10': { amount: 2990, status: 'paid' } });
   });
 });

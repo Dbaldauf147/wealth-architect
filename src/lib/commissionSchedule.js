@@ -604,6 +604,34 @@ export function dealHistory({ rows, deals, takeHome, from, months = 24, today = 
   return { deals: list, points, total, takeHome: round2(total * rate), taxRate: Math.round((1 - rate) * 10000) / 10000, payments: points.filter(p => p.amount > 0).length };
 }
 
+/**
+ * The base salary inside each month-end paycheck across a run of pay months,
+ * to sit under the commission in the deal-history chart. A month whose
+ * month-end paycheck landed has the base that paycheck carried; this month (if
+ * it hasn't landed) and later ones have the usual base, projected. A past
+ * month with no month-end paycheck on record has none.
+ *
+ * @param paychecks  computeIncome().paychecks
+ * @param base       baseSalary() output, or null
+ * @returns { [payMonth]: { amount, status: 'paid' | 'projected' } }
+ */
+export function monthEndBase({ paychecks, base, from, months = 24, today = new Date() }) {
+  const nowKey = keyOf(today);
+  const landed = new Map();
+  for (const p of paychecks || []) {
+    if (isMid(p)) continue;
+    const k = keyOf(p.date);
+    landed.set(k, round2((landed.get(k) || 0) + (p.base ?? p.amount)));
+  }
+  const out = {};
+  const to = addMonths(from, months - 1);
+  for (let k = from; k <= to; k = addMonths(k, 1)) {
+    if (landed.has(k)) out[k] = { amount: landed.get(k), status: 'paid' };
+    else if (base && k >= nowKey) out[k] = { amount: base.amount, status: 'projected' };
+  }
+  return out;
+}
+
 /** dealHistory() as spreadsheet rows: one per pay month, a column per deal. */
 export function dealHistorySheetRows(history) {
   const label = d => dealDisplay(d).label;
