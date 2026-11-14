@@ -6,6 +6,7 @@ import {
 } from '../lib/suggest';
 import { buildReviewQueue, reviewStats, latestTransactionDate, SORTS } from '../lib/reviewQueue';
 import { ALL_CATEGORIES, getCategoryIcon, catColor, catBg, SUBCATEGORIES } from '../lib/categories';
+import { monthForKind } from '../lib/monthFor';
 import { CategorySheet, SubcategorySheet } from './CategorySheet';
 import { AlertsStrip } from './AlertsStrip';
 import {
@@ -22,12 +23,12 @@ const UNDO_MS = 7000;
 export function ReviewTab({ sort, onSortChange, askSub }) {
   const {
     transactions, categoryRules, customCategories, hiddenCategories,
-    categoryColors, splitTags, spendAlerts, amazonOrders,
+    categoryColors, splitTags, spendAlerts, amazonOrders, incomeCategories,
   } = useData();
   const {
     updateTransactionCategory, updateTransactionSubcategory, bulkUpdateCategoryByIds,
     addCategoryRule, removeCategoryRule, addSubcategoryRule, addCustomCategory,
-    getMatchCount, tagForSplit, untagSplit, categorizeAlert, dismissAlert,
+    getMatchCount, tagForSplit, untagSplit, categorizeAlert, dismissAlert, updateTransactionDate,
   } = useDataActions();
 
   const [skipped, setSkipped] = useState(() => new Set());
@@ -197,6 +198,12 @@ export function ReviewTab({ sort, onSortChange, askSub }) {
     if (!undo) return;
     clearTimeout(undoTimer.current);
     bulkUpdateCategoryByIds(undo.ids, 'Uncategorized');
+    // A month picked for rent or income goes with the category it was picked for.
+    // Only theirs, though — a date moved by hand on anything else stays put.
+    const ids = new Set(undo.ids);
+    for (const t of transactions || []) {
+      if (ids.has(t.transactionId) && t.originalDate != null && monthForKind(t, incomeCategories)) updateTransactionDate(t.transactionId, null);
+    }
     if (undo.ruleSaved) {
       const idx = (categoryRules || []).findIndex(
         r => r.description === undo.ruleSaved.description && r.category === undo.ruleSaved.category,
@@ -204,7 +211,7 @@ export function ReviewTab({ sort, onSortChange, askSub }) {
       if (idx !== -1) removeCategoryRule(idx);
     }
     setUndo(null);
-  }, [undo, categoryRules, bulkUpdateCategoryByIds, removeCategoryRule]);
+  }, [undo, categoryRules, bulkUpdateCategoryByIds, removeCategoryRule, updateTransactionDate, transactions, incomeCategories]);
 
   /* Commit a subcategory to the transactions just filed, and optionally
      remember it as a rule the same way a category can be remembered. */

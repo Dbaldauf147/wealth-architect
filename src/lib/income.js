@@ -41,6 +41,12 @@ function median(xs) {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
+/** The lower-cased categories that count as income: the Income bucket, or the defaults when it's empty. */
+export function incomeCategorySet(incomeCategories) {
+  const chosen = [...(incomeCategories || [])].map(c => String(c).toLowerCase()).filter(c => !MOVING.has(c));
+  return new Set(chosen.length ? chosen : DEFAULT_INCOME);
+}
+
 export function monthKeyFor(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
@@ -189,8 +195,8 @@ export function cadenceOf(dates) {
  * @param today
  */
 export function computeIncome({ transactions, incomeCategories, monthKeys, today = new Date() }) {
-  const chosen = [...(incomeCategories || [])].map(c => String(c).toLowerCase()).filter(c => !MOVING.has(c));
-  const incomeSet = new Set(chosen.length ? chosen : DEFAULT_INCOME);
+  const incomeSet = incomeCategorySet(incomeCategories);
+  const usingDefaults = ![...(incomeCategories || [])].some(c => !MOVING.has(String(c).toLowerCase()));
   const nowKey = monthKeyFor(today);
   const inWindow = new Set(monthKeys);
   const first = monthKeys[0];
@@ -366,7 +372,7 @@ export function computeIncome({ transactions, incomeCategories, monthKeys, today
       best: best && best.total > 0 ? { key: best.key, total: best.total } : null,
       latest: latest ? { key: latest.key, total: latest.total, vsAvg: avg ? (latest.total - avg) / avg : null, lastYear: latest.lastYear } : null,
       categories: [...incomeSet],
-      usingDefaults: !chosen.length,
+      usingDefaults,
     },
     current,
     paychecks,
