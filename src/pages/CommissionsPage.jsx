@@ -587,14 +587,26 @@ const DEAL_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#8b5cf6', '#e0a40b', '#e0
 // Whether the popup's chart stacks base salary under the commission: a view
 // preference, kept in this browser only.
 const SHOW_BASE_KEY = 'wa-commission-deal-base';
+// The chart's number labels (each bar's total, each segment's value): on
+// unless turned off, also kept in this browser only.
+const SHOW_TOTALS_KEY = 'wa-commission-deal-totals';
+const SHOW_VALUES_KEY = 'wa-commission-deal-values';
 const BASE_COLOR = '#475569';
-function PaycheckDealsModal({ slot, point, rows, takeHome, paychecks, base, onClose }) {
-  const [ref, width] = useMeasuredWidth();
-  const [showBase, setShowBase] = useState(() => { try { return localStorage.getItem(SHOW_BASE_KEY) === '1'; } catch { return false; } });
-  const toggleBase = () => setShowBase(v => {
-    try { localStorage.setItem(SHOW_BASE_KEY, v ? '0' : '1'); } catch { /* private mode */ }
+function useStoredFlag(key, fallback) {
+  const [on, setOn] = useState(() => {
+    try { const v = localStorage.getItem(key); return v == null ? fallback : v === '1'; } catch { return fallback; }
+  });
+  const toggle = () => setOn(v => {
+    try { localStorage.setItem(key, v ? '0' : '1'); } catch { /* private mode */ }
     return !v;
   });
+  return [on, toggle];
+}
+function PaycheckDealsModal({ slot, point, rows, takeHome, paychecks, base, onClose }) {
+  const [ref, width] = useMeasuredWidth();
+  const [showBase, toggleBase] = useStoredFlag(SHOW_BASE_KEY, false);
+  const [showTotals, toggleTotals] = useStoredFlag(SHOW_TOTALS_KEY, true);
+  const [showValues, toggleValues] = useStoredFlag(SHOW_VALUES_KEY, true);
   const rate = takeHome ?? 0.6;
   const nowKey = monthKeyFor(new Date());
   const from = useMemo(() => {
@@ -613,14 +625,24 @@ function PaycheckDealsModal({ slot, point, rows, takeHome, paychecks, base, onCl
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const H = 220;
-  const pad = { top: 12, right: 8, bottom: 26, left: 52 };
+  // Value labels need segments tall and wide enough to hold a number.
+  const H = showValues ? 320 : 220;
+  const pad = { top: showTotals ? 20 : 12, right: 8, bottom: 26, left: 52 };
   const innerW = width - pad.left - pad.right;
   const innerH = H - pad.top - pad.bottom;
   const max = niceMax(Math.max(1, ...history.points.map(p => p.takeHome + (baseAt(p)?.amount || 0))));
   const step = innerW / history.points.length;
-  const barW = Math.max(4, Math.min(26, step * 0.62));
+  const barW = showValues ? Math.max(4, Math.min(50, step * 0.8)) : Math.max(4, Math.min(26, step * 0.62));
   const y = v => pad.top + innerH - (v / max) * innerH;
+  // Whole dollars where there's room, "$2.7k" where there isn't, nothing below that.
+  const fit = (v, w) => (w >= 42 ? money(v) : w >= 30 ? axis(v) : null);
+  const valueLabel = (key, v, top, h, faded) => {
+    const text = showValues && h >= 12 ? fit(v, barW) : null;
+    return text && (
+      <text key={key} data-value-label x={0} y={top + (h - 1) / 2 + 3.5} textAnchor="middle" fontSize={10} fontWeight={700} pointerEvents="none"
+        fill={faded ? 'var(--color-text-primary)' : '#fff'} stroke={faded ? 'none' : 'rgba(0,0,0,0.35)'} strokeWidth={faded ? undefined : 2} paintOrder="stroke">{text}</text>
+    );
+  };
   const labelEvery = Math.max(1, Math.ceil(history.points.length / Math.max(1, Math.floor(innerW / 52))));
   const when = slot.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   const isMidSlot = slot.kind === 'mid';
@@ -677,6 +699,10 @@ function PaycheckDealsModal({ slot, point, rows, takeHome, paychecks, base, onCl
                   <i style={{ background: BASE_COLOR }} />Base salary
                 </button>
               )}
+              <button type="button" className={`${own.chip} ${showTotals ? '' : own.chipOff}`} aria-pressed={showTotals} onClick={toggleTotals} data-testid="toggle-total-labels"
+                title={showTotals ? 'Hide the total above each bar' : 'Show the total above each bar'}>Totals</button>
+              <button type="button" className={`${own.chip} ${showValues ? '' : own.chipOff}`} aria-pressed={showValues} onClick={toggleValues} data-testid="toggle-value-labels"
+                title={showValues ? 'Hide the value on each segment' : 'Show each segment’s value where it fits'}>Values</button>
             </div>
             <div ref={ref} className={styles.chartWrap} data-testid="deal-history-chart">
               <svg width={width} height={H} role="img" aria-label={`Take-home commission from these deals by pay month${showBase ? ', on top of base salary' : ''}`}>
@@ -709,6 +735,23 @@ function PaycheckDealsModal({ slot, point, rows, takeHome, paychecks, base, onCl
                         const faded = v.status === 'projected';
                         return <rect key={d.key} x={x0} y={top} width={barW} height={Math.max(0, h - 1)} rx={2} fill={colorOf[d.key]} fillOpacity={faded ? 0.28 : 1} stroke={faded ? colorOf[d.key] : 'none'} strokeDasharray={faded ? '3 2' : undefined} />;
                       })}
+                      <g transform={`translate(${x0 + barW / 2} 0)`}>
+                        {b && b.amount > 0 && valueLabel('base', b.amount, y(b.amount), y(0) - y(b.amount), b.status === 'projected')}
+                        {history.deals.reduce((st, d) => {
+                          const v = p.byDeal[d.key];
+                          if (!v || !(v.amount > 0)) return st;
+                          const amt = v.amount * rate;
+                          const top = y(st.acc + amt);
+                          st.out.push(valueLabel(d.key, amt, top, y(st.acc) - top, v.status === 'projected'));
+                          st.acc += amt;
+                          return st;
+                        }, { acc: b ? b.amount : 0, out: [] }).out}
+                        {showTotals && p.takeHome + (b ? b.amount : 0) > 0 && fit(1, step) && (
+                          <text data-total-label x={0} y={y(p.takeHome + (b ? b.amount : 0)) - 5} textAnchor="middle" fontSize={10.5} fontWeight={700} pointerEvents="none" fill="var(--color-text-primary)">
+                            {fit(p.takeHome + (b ? b.amount : 0), step)}
+                          </text>
+                        )}
+                      </g>
                       <rect x={pad.left + step * i} y={pad.top} width={step} height={innerH} fill="transparent" />
                     </g>
                   );
