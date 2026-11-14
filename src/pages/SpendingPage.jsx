@@ -48,10 +48,16 @@ const MONTH_SHORT = MONTH_LONG.map(m => m.slice(0, 3));
 const longMonth = key => { const [y, m] = key.split('-').map(Number); return `${MONTH_LONG[m - 1]} ${y}`; };
 const shortMonth = key => MONTH_SHORT[Number(key.slice(5)) - 1];
 
-function niceMax(v) {
-  const p = 10 ** Math.floor(Math.log10(v));
-  const f = v / p;
-  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
+// A y axis that hugs the data: a round step that gives about five gridlines,
+// and a top that is the first step above the highest value (so $5.7k tops out
+// at $6k, not $10k).
+function tightAxis(top) {
+  const v = top > 0.5 ? top : 100; // nothing switched on: a plain $0–$100 axis
+  const raw = v / 5;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].find(f => f * pow >= raw) * pow;
+  const max = Math.ceil(v / step - 1e-9) * step;
+  return { max, ticks: Array.from({ length: Math.round(max / step) + 1 }, (_, i) => i * step) };
 }
 
 function useMeasuredWidth(initial = 320) {
@@ -78,7 +84,8 @@ function PaceChart({ p, cats, daily, totals }) {
   const innerW = width - pad.left - pad.right;
   const innerH = H - pad.top - pad.bottom;
   const hasBasis = p.basis.length > 0;
-  const max = niceMax(Math.max(1, totals.projected, totals.typical, totals.soFar));
+  // Scaled to whatever is switched on, typical line included.
+  const { max, ticks } = tightAxis(Math.max(totals.projected, totals.soFar, ...(hasBasis ? daily.map(r => r.typical) : [0])));
   const x = d => pad.left + (p.daysInMonth > 1 ? ((d - 1) / (p.daysInMonth - 1)) * innerW : 0);
   const y = v => pad.top + innerH - (v / max) * innerH;
   const line = (rows, f) => rows.filter(r => r[f] != null).map((r, i) => `${i ? 'L' : 'M'}${x(r.day).toFixed(1)},${y(r[f]).toFixed(1)}`).join(' ');
@@ -113,10 +120,10 @@ function PaceChart({ p, cats, daily, totals }) {
           <clipPath id="spend-past"><rect x={pad.left} y={0} width={Math.max(0, xToday - pad.left)} height={H} /></clipPath>
           <clipPath id="spend-future"><rect x={xToday} y={0} width={Math.max(0, width - xToday)} height={H} /></clipPath>
         </defs>
-        {[0, 0.25, 0.5, 0.75, 1].map(f => f * max).map(t => (
+        {ticks.map(t => (
           <g key={t}>
             <line x1={pad.left} x2={width - pad.right} y1={y(t)} y2={y(t)} stroke="var(--color-surface-alt)" />
-            <text x={pad.left - 8} y={y(t) + 4} textAnchor="end" className={styles.axisText}>{axis(t)}</text>
+            <text x={pad.left - 8} y={y(t) + 4} textAnchor="end" className={styles.axisText} data-axis-tick>{axis(t)}</text>
           </g>
         ))}
         {daily.filter(r => r.day === 1 || r.day % dayStep === 0).map(r => (
