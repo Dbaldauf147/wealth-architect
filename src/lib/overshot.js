@@ -18,6 +18,16 @@ import { cashFlowBreakdown, cashFlowMonthKey } from './cashflowExport.js';
 const DAY = 86400000;
 const round2 = n => Math.round(n * 100) / 100;
 
+// Rent paid: by category/subcategory, or a whole-word "rent" in the
+// description (a Zelle "for rent" that imported uncategorised). The same test
+// as the weekly summary's; \brent\b doesn't fire on "parent" or "rental".
+function isRentPaid(t) {
+  if (!(t.amount < 0)) return false;
+  if ((t.subcategory || '').trim().toLowerCase() === 'rent') return true;
+  if ((t.category || '').trim().toLowerCase() === 'rent') return true;
+  return /\brent\b/.test(`${t.description || ''} ${t.fullDescription || ''}`.toLowerCase());
+}
+
 export function monthKeyFor(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
@@ -54,7 +64,8 @@ function median(xs) {
  * @param monthKeys     the window, oldest first — usually the tail of monthsSpanned
  * @param today         "now": its month is reported as in progress, not judged
  * @returns {
- *   months:  [{ key, income, spending, net, over, gap, partial, runOutDate, drivers, cumulative, rolling }],
+ *   months:  [{ key, income, spending, net, over, gap, partial, runOutDate, drivers, cumulative, rolling,
+ *              incomeByCategory, rent (rent paid, part of spending) }],
  *   summary: { status, overCount, completeCount, totalGap, net, currentStreak, longestStreak, rolling, crossings },
  *   pace:    null | { key, income, spending, typicalIncome, typicalSpending, daysLeft, share, alreadyOver },
  * }
@@ -68,6 +79,7 @@ export function computeOvershot({ transactions, monthKeys, today = new Date() })
   // the totals used (everything that isn't moving money).
   const daily = {};   // key -> { 'YYYY-MM-DD': { category: signed } }
   const byCat = {};   // key -> { category: signed }
+  const rentPaid = {}; // key -> rent paid out
   for (const t of transactions || []) {
     if (!t.date || !t.amount) continue;
     const r = role(t);
@@ -81,6 +93,7 @@ export function computeOvershot({ transactions, monthKeys, today = new Date() })
     const perDay = ((daily[key] ||= {})[day] ||= {});
     perDay[cat] = (perDay[cat] || 0) + t.amount;
     (byCat[key] ||= {})[cat] = (byCat[key][cat] || 0) + t.amount;
+    if (isRentPaid(t)) rentPaid[key] = (rentPaid[key] || 0) - t.amount;
   }
 
   let cumulative = 0;
@@ -94,7 +107,7 @@ export function computeOvershot({ transactions, monthKeys, today = new Date() })
     // what `income` adds up.
     const incomeByCategory = {};
     for (const [cat, v] of Object.entries(byCat[key] || {})) if (v > 0) incomeByCategory[cat] = round2(v);
-    return { key, income: round2(income), spending: round2(spending), net, invested: round2(invested), kept: round2(kept), over: spending > income, gap: round2(Math.max(0, spending - income)), partial, cumulative, incomeByCategory };
+    return { key, income: round2(income), spending: round2(spending), net, invested: round2(invested), kept: round2(kept), over: spending > income, gap: round2(Math.max(0, spending - income)), partial, cumulative, incomeByCategory, rent: round2(Math.min(spending, rentPaid[key] || 0)) };
   });
 
   const complete = months.filter(m => !m.partial);
@@ -248,6 +261,71 @@ export function incomeBuckets({ months, paychecks }) {
     out[m.key] = { base, commission, other: round2(Math.max(0, m.income - base - commission)), otherBy };
   }
   return out;
+}
+
+/**
+ * The Income vs spending chart with rent taken out of both sides: each
+ * month's rent comes off its spending and the same amount off its income, so
+ * what's left is the money that was actually up for grabs. The gap between
+ * the two doesn't move, and neither do the verdicts (over, gap, net).
+ *
+ * Rent comes out of base salary first, then commission, then other income.
+ * In the month in progress, rent that the income so far doesn't cover comes
+ * off the paychecks still expected. Next month hasn't paid rent yet, so its
+ * projection loses the most recent month's rent.
+ *
+ * @param months      computeOvershot().months
+ * @param buckets     incomeBuckets()
+ * @param expected    expectedIncomeMonths()
+ * @param projection  projectedMonth() or null
+ * @returns the same four, adjusted; months and expected rows carry `rentOut`
+ */
+export function subtractRent({ months, buckets, expected, projection }) {
+  // Take `amount` out of obj's keys in order; returns what couldn't be taken.
+  const take = (obj, keys, amount) => {
+    let left = amount;
+    for (const k of keys) {
+      const cut = Math.min(obj[k] || 0, left);
+      obj[k] = round2((obj[k] || 0) - cut);
+      left = round2(left - cut);
+    }
+    return left;
+  };
+  const outBuckets = {};
+  const overflow = {}; // month key -> rent the income so far didn't cover
+  const outMonths = (months || []).map(m => {
+    const rent = m.rent || 0;
+    const fromIncome = Math.min(rent, m.income);
+    const b = buckets?.[m.key];
+    if (b) {
+      const nb = { ...b };
+      take(nb, ['base', 'commission', 'other'], fromIncome);
+      outBuckets[m.key] = nb;
+    }
+    overflow[m.key] = round2(rent - fromIncome);
+    return { ...m, income: round2(m.income - fromIncome), spending: round2(m.spending - rent), rentOut: rent };
+  });
+  const current = outMonths.find(m => m.partial) || null;
+  const latestRent = [...outMonths].reverse().find(m => m.rentOut > 0)?.rentOut || 0;
+  const outExpected = (expected || []).map(e => {
+    const isCurrent = current && e.key === current.key;
+    const isNext = current && e.key > current.key && !outMonths.some(m => m.key === e.key) && e === (expected || []).find(x => x.key > current.key);
+    const rent = isCurrent ? overflow[e.key] || 0 : isNext ? latestRent : 0;
+    if (!rent) return e;
+    const ne = { ...e };
+    const left = take(ne, ['base', 'commission'], rent);
+    ne.expected = round2(Math.max(0, e.expected - (rent - left)));
+    ne.rentOut = isNext ? round2(rent - left) : 0;
+    return ne;
+  });
+  const outProjection = projection && current && projection.key === current.key ? {
+    ...projection,
+    income: current.income,
+    spending: current.spending,
+    projected: round2(Math.max(0, projection.projected - current.rentOut)),
+    stillDue: outExpected.find(e => e.key === current.key)?.expected ?? projection.stillDue,
+  } : projection;
+  return { months: outMonths, buckets: outBuckets, expected: outExpected, projection: outProjection };
 }
 
 /**

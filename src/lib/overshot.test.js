@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeOvershot, monthsSpanned, expectedIncomeMonths, incomeBuckets } from './overshot.js';
+import { computeOvershot, monthsSpanned, expectedIncomeMonths, incomeBuckets, subtractRent } from './overshot.js';
 
 const tx = (date, amount, category, description = category) => ({ date, amount, category, description });
 
@@ -179,5 +179,43 @@ describe('incomeBuckets', () => {
   });
   it('is all other income without paychecks', () => {
     expect(incomeBuckets({ months, paychecks: [] })['2026-07']).toMatchObject({ base: 0, commission: 0, other: 6950 });
+  });
+});
+
+describe('subtractRent', () => {
+  const t = [
+    tx('07/15/2026', 3000, 'Paycheck', 'ACME PAYROLL'),
+    tx('07/31/2026', 3600, 'Paycheck', 'ACME PAYROLL'),
+    tx('07/01/2026', -2000, 'Housing', 'Zelle to landlord for rent'),
+    tx('07/10/2026', -5000, 'Travel'),
+    tx('07/12/2026', -300, 'Travel', 'Car rental'),
+    tx('08/01/2026', -2000, 'Rent'),
+    tx('08/05/2026', -400, 'Food & Drink'),
+  ];
+  const { months } = computeOvershot({ transactions: t, monthKeys: ['2026-07', '2026-08'], today: new Date(2026, 7, 6) });
+  const buckets = { '2026-07': { base: 6000, commission: 600, other: 0, otherBy: [] }, '2026-08': { base: 0, commission: 0, other: 0, otherBy: [] } };
+  const expected = [
+    { key: '2026-08', expected: 6500, base: 6000, commission: 500, leftOver: -800 },
+    { key: '2026-09', expected: 6500, base: 6000, commission: 500, leftOver: -800 },
+    { key: '2026-10', expected: 6500, base: 6000, commission: 500, leftOver: -800 },
+  ];
+  const projection = { key: '2026-08', income: 0, stillDue: 6500, projected: 6500, spending: 2400, over: false, gap: 0 };
+  const r = subtractRent({ months, buckets, expected, projection });
+
+  it('finds rent by category or description, not "rental"', () => {
+    expect(months.map(m => m.rent)).toEqual([2000, 2000]);
+  });
+  it('takes rent off spending and income alike, base salary first, leaving the gap alone', () => {
+    expect(r.months[0]).toMatchObject({ income: 4600, spending: 5300, rentOut: 2000, over: true, gap: 700 });
+    expect(r.buckets['2026-07']).toMatchObject({ base: 4000, commission: 600 });
+  });
+  it('takes rent the month in progress hasn\'t earned yet off the paychecks still due', () => {
+    expect(r.months[1]).toMatchObject({ income: 0, spending: 400 });
+    expect(r.expected[0]).toMatchObject({ expected: 4500, base: 4000, commission: 500 });
+    expect(r.projection).toMatchObject({ projected: 4500, stillDue: 4500, spending: 400, over: false });
+  });
+  it('takes the latest rent off next month only', () => {
+    expect(r.expected[1]).toMatchObject({ expected: 4500, base: 4000, rentOut: 2000 });
+    expect(r.expected[2]).toEqual(expected[2]);
   });
 });

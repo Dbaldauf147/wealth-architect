@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../contexts/DataContext';
-import { computeOvershot, monthsSpanned, expectedIncomeMonths, incomeBuckets } from '../lib/overshot';
+import { computeOvershot, monthsSpanned, expectedIncomeMonths, incomeBuckets, subtractRent } from '../lib/overshot';
 import { buildCashPosition } from '../lib/cashPosition';
 import { CashBridgeReport } from '../components/CashBridgeReport';
 import { SurplusSplit } from '../components/SurplusSplit';
@@ -30,6 +30,7 @@ const BUCKETS = [
 ];
 const CRITICAL = '#d03b3b';
 const CASH_PREF_KEY = 'wa-overshot-cash-accounts';
+const RENT_PREF_KEY = 'wa-overshot-subtract-rent';
 
 const RANGES = [
   { months: 6, label: '6M' },
@@ -76,6 +77,13 @@ export function OvershotPage() {
   const { payouts: commissionPayouts, commissions } = useCommissions();
   const [range, setRange] = useState(12);
   const [surplusMode, setSurplusMode] = useState('cash'); // 'cash' | 'flow'
+  // The monthly chart with rent taken out of both sides: a view preference,
+  // kept in this browser only.
+  const [noRent, setNoRent] = useState(() => { try { return localStorage.getItem(RENT_PREF_KEY) === '1'; } catch { return false; } });
+  const toggleNoRent = () => setNoRent(v => {
+    try { localStorage.setItem(RENT_PREF_KEY, v ? '0' : '1'); } catch { /* private mode */ }
+    return !v;
+  });
   // Which accounts count as cash on hand, beyond the defaults. Kept in this
   // browser only: a per-viewer preference, not data.
   const [cashOverrides, setCashOverrides] = useState(() => {
@@ -189,6 +197,9 @@ export function OvershotPage() {
     ? projectedMonth({ month: months.find(m => m.partial), expected: expectedIncome.months })
     : null;
   const newestFirst = [...months].reverse();
+  const chart = { months, buckets, expected: expectedIncome?.months || [], projection };
+  const shownChart = noRent ? subtractRent(chart) : chart;
+  const hasRent = months.some(m => m.rent > 0);
 
   return (
     <div className={styles.page}>
@@ -234,9 +245,18 @@ export function OvershotPage() {
             {projection && <span><i className={styles.legendProjected} style={{ borderColor: INCOME }} />Expected income</span>}
             <span><i style={{ background: SPENDING }} />Spending</span>
             <span><i className={styles.legendBand} />Over income</span>
+            {hasRent && (
+              <span className={styles.segment}>
+                <button type="button" className={`${styles.segmentBtn} ${noRent ? styles.segmentActive : ''}`} aria-pressed={noRent} onClick={toggleNoRent} data-testid="overshot-subtract-rent"
+                  title={noRent ? 'Rent is taken out of spending and income. Click to put it back.' : 'Take each month’s rent out of spending, and the same amount out of income'}>
+                  {noRent ? '✓ ' : ''}Subtract rent
+                </button>
+              </span>
+            )}
           </div>
         </div>
-        <MonthlyChart months={months} projection={projection} buckets={buckets} expected={expectedIncome?.months || []} />
+        {noRent && <div className={styles.cardHint} style={{ marginBottom: 8 }} data-testid="overshot-rent-note">Rent is subtracted: each month’s rent is taken off spending and the same amount off income (base salary first), so the gap between the bars is unchanged.</div>}
+        <MonthlyChart months={shownChart.months} projection={shownChart.projection} buckets={shownChart.buckets} expected={shownChart.expected} />
       </section>
 
       <SurplusSplit months={split} transactions={transactions} />
@@ -646,9 +666,10 @@ function MonthlyChart({ months: actualMonths, projection = null, buckets = {}, e
             <div className={styles.tooltipTitle}>{long(m.key)} (projected)</div>
             <div><i className={styles.legendProjected} style={{ borderColor: INCOME }} />Expected income <b>{money(due.expected)}</b></div>
             {dueParts}
+            {due.rentOut > 0 && <div className={styles.muted}>Rent subtracted (last month’s) <b>{money(due.rentOut)}</b></div>}
             {due.leftOver != null && (
               <>
-                <div><i style={{ background: SPENDING, opacity: 0.45 }} />A typical month’s spending <b>{money(due.expected - due.leftOver)}</b></div>
+                <div><i style={{ background: SPENDING, opacity: 0.45 }} />A typical month’s spending <b>{money(Math.max(0, due.expected - due.leftOver))}</b></div>
                 <div className={styles.tooltipNet}>{due.leftOver >= 0 ? `${money(due.leftOver)} left over if spending is typical` : `Short by ${money(-due.leftOver)} if spending is typical`}</div>
               </>
             )}
@@ -677,6 +698,7 @@ function MonthlyChart({ months: actualMonths, projection = null, buckets = {}, e
             {proj && proj.stillDue > 0 && <div className={styles.muted}>{money(proj.stillDue)} in paychecks still due</div>}
             {proj && dueParts}
             <div><i style={{ background: SPENDING }} />Spending <b>{money(m.spending)}</b></div>
+            {m.rentOut > 0 && <div className={styles.muted} data-testid="overshot-rent-out">Rent subtracted from both <b>{money(m.rentOut)}</b></div>}
             <div className={styles.tooltipNet}>
               {proj
                 ? (proj.over ? `Over expected income by ${money(proj.gap)}` : `${money(proj.projected - m.spending)} of expected income left`)
