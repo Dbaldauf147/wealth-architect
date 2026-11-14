@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../contexts/DataContext';
-import { computeOvershot, monthsSpanned, expectedIncomeMonths } from '../lib/overshot';
+import { computeOvershot, monthsSpanned, expectedIncomeMonths, incomeBuckets } from '../lib/overshot';
 import { buildCashPosition } from '../lib/cashPosition';
 import { CashBridgeReport } from '../components/CashBridgeReport';
 import { SurplusSplit } from '../components/SurplusSplit';
@@ -22,6 +22,12 @@ import styles from './OvershotPage.module.css';
 // Red is kept for the "over" status, which always carries an icon and label.
 const INCOME = '#2a78d6';
 const SPENDING = '#eb6834';
+// The income bar's buckets: payroll in two blues, everything else in teal.
+const BUCKETS = [
+  { id: 'base', label: 'Base salary', color: INCOME },
+  { id: 'commission', label: 'Commission', color: '#8dbcf2' },
+  { id: 'other', label: 'Other income', color: '#0e9aa7' },
+];
 const CRITICAL = '#d03b3b';
 const CASH_PREF_KEY = 'wa-overshot-cash-accounts';
 
@@ -117,18 +123,27 @@ export function OvershotPage() {
     return { ...plan, cashAsOf: cash.now.asOf };
   }, [transactions, cash, balances, hiddenCards, statementCloseDays, accountNicknames, accountGroups, incomeCategories, commissionPayouts]);
 
+  // Payroll split into base and commission, exactly as the Income and
+  // Commissions pages split it (every payroll deposit on record, not just
+  // the window's).
+  const paychecks = useMemo(() => {
+    if (!transactions?.length) return [];
+    const now = new Date();
+    return computeIncome({ transactions, incomeCategories, monthKeys: monthKeysEnding(incomeMonthKey(now), 13), today: now }).paychecks;
+  }, [transactions, incomeCategories]);
+  const buckets = useMemo(() => (result ? incomeBuckets({ months: result.months, paychecks }) : {}), [result, paychecks]);
+
   // Expected income, month by month, from the Commissions tab's pay
   // schedule — built exactly as that tab builds it, so the two agree.
   const expectedIncome = useMemo(() => {
     if (!transactions?.length) return null;
     const now = new Date();
-    const { paychecks } = computeIncome({ transactions, incomeCategories, monthKeys: monthKeysEnding(incomeMonthKey(now), 13), today: now });
     const base = baseSalary(paychecks, now);
     if (!base) return null;
     const takeHome = commissionTakeHome(paychecks, commissionPayouts, now);
     const schedule = paySchedule({ base, paychecks, expected: expectedPayouts(commissions, now), takeHome, today: now });
     return { base, takeHome, months: expectedIncomeMonths({ schedule, typicalSpending: result?.pace?.typicalSpending ?? null, months: 6 }) };
-  }, [transactions, incomeCategories, commissions, commissionPayouts, result]);
+  }, [transactions, paychecks, commissions, commissionPayouts, result]);
 
   // Each month's surplus split into invested and kept, beside what the cash
   // position actually did (needs the month-end before the window too).
@@ -210,18 +225,18 @@ export function OvershotPage() {
           <div>
             <h2 className={styles.cardTitle}>Income vs spending, by month</h2>
             <div className={styles.cardHint}>
-              Shaded months are the ones where spending overtook income.
+              Shaded months are the ones where spending overtook income. Each income bar is split into base salary, commission and other income; hover a month for what the other income was.
               {projection && <> The month in progress shows its expected income as an outline: what has come in plus the paychecks still due on the Commissions tab’s schedule.</>}
             </div>
           </div>
           <div className={styles.legend}>
-            <span><i style={{ background: INCOME }} />Income</span>
+            {BUCKETS.map(b => <span key={b.id}><i style={{ background: b.color }} />{b.label}</span>)}
             {projection && <span><i className={styles.legendProjected} style={{ borderColor: INCOME }} />Expected income</span>}
             <span><i style={{ background: SPENDING }} />Spending</span>
             <span><i className={styles.legendBand} />Over income</span>
           </div>
         </div>
-        <MonthlyChart months={months} projection={projection} />
+        <MonthlyChart months={months} projection={projection} buckets={buckets} />
       </section>
 
       <SurplusSplit months={split} transactions={transactions} />
@@ -485,7 +500,7 @@ function PaceCard({ pace }) {
 }
 
 /* Paired bars per month; months over income get a shaded band and a label. */
-function MonthlyChart({ months, projection = null }) {
+function MonthlyChart({ months, projection = null, buckets = {} }) {
   const [ref, width] = useMeasuredWidth(320);
   const [hover, setHover] = useState(null);
   const H = 280;
@@ -499,18 +514,38 @@ function MonthlyChart({ months, projection = null }) {
   const y = v => pad.top + innerH - (v / max) * innerH;
   const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => f * max);
   const labelEvery = Math.ceil(months.length / Math.floor(innerW / 52));
-  const bar = (x, v, color, opacity) => {
+  // Rounded at the data end only, flat on the baseline.
+  const barPath = (x, v) => {
     const top = y(v);
     const h = pad.top + innerH - top;
     if (h <= 0) return null;
     const r = Math.min(4, barW / 2, h);
-    // Rounded at the data end only, flat on the baseline.
+    return `M${x},${top + h} V${top + r} Q${x},${top} ${x + r},${top} H${x + barW - r} Q${x + barW},${top} ${x + barW},${top + r} V${top + h} Z`;
+  };
+  const bar = (x, v, color, opacity) => {
+    const d = barPath(x, v);
+    return d && <path d={d} fill={color} opacity={opacity} />;
+  };
+  // The income bar: the same shape, filled bucket by bucket from the baseline.
+  const incomeBar = (x, m, opacity) => {
+    const d = barPath(x, m.income);
+    const parts = buckets[m.key];
+    if (!d || !parts) return bar(x, m.income, INCOME, opacity);
+    let acc = 0;
     return (
-      <path
-        d={`M${x},${top + h} V${top + r} Q${x},${top} ${x + r},${top} H${x + barW - r} Q${x + barW},${top} ${x + barW},${top + r} V${top + h} Z`}
-        fill={color}
-        opacity={opacity}
-      />
+      <g opacity={opacity} data-testid="overshot-income-bar" data-month={m.key}>
+        <clipPath id={`income-${m.key}`}><path d={d} /></clipPath>
+        <g clipPath={`url(#income-${m.key})`}>
+          {BUCKETS.map(b => {
+            const v = parts[b.id];
+            if (!(v > 0)) return null;
+            const top = y(acc + v);
+            const h = y(acc) - top;
+            acc += v;
+            return <rect key={b.id} data-bucket={b.id} x={x} y={top} width={barW} height={h} fill={b.color} />;
+          })}
+        </g>
+      </g>
     );
   };
 
@@ -553,7 +588,7 @@ function MonthlyChart({ months, projection = null }) {
                   strokeDasharray="4 3"
                 />
               )}
-              {bar(cx - barW - 1, m.income, INCOME, m.partial ? 0.45 : 1)}
+              {incomeBar(cx - barW - 1, m, m.partial ? 0.45 : 1)}
               {bar(cx + 1, m.spending, SPENDING, m.partial ? 0.45 : 1)}
               {i % labelEvery === 0 && (
                 <text x={cx} y={H - 8} textAnchor="middle" className={styles.axisText}>
@@ -577,11 +612,24 @@ function MonthlyChart({ months, projection = null }) {
       {hover != null && (() => {
         const m = months[hover];
         const proj = projectedFor(m);
-        const left = Math.min(width - 200, Math.max(0, pad.left + step * hover + step / 2 - 100));
+        const left = Math.min(width - 230, Math.max(0, pad.left + step * hover + step / 2 - 115));
         return (
           <div className={styles.tooltip} style={{ left, top: 4 }}>
             <div className={styles.tooltipTitle}>{long(m.key)}{m.partial ? ' (so far)' : ''}</div>
             <div><i style={{ background: INCOME }} />Income <b>{money(m.income)}</b></div>
+            {buckets[m.key] && m.income > 0 && (
+              <div className={styles.tooltipParts} data-testid="overshot-income-parts">
+                {BUCKETS.filter(b => buckets[m.key][b.id] > 0).map(b => (
+                  <div key={b.id}><i style={{ background: b.color }} />{b.label} <b>{money(buckets[m.key][b.id])}</b></div>
+                ))}
+                {buckets[m.key].otherBy.slice(0, 4).map(o => (
+                  <div key={o.category} className={styles.tooltipSub}>{o.category} <b>{money(o.amount)}</b></div>
+                ))}
+                {buckets[m.key].otherBy.length > 4 && (
+                  <div className={styles.tooltipSub}>{buckets[m.key].otherBy.length - 4} more <b>{money(buckets[m.key].otherBy.slice(4).reduce((s2, o) => s2 + o.amount, 0))}</b></div>
+                )}
+              </div>
+            )}
             {proj && (
               <div><i className={styles.legendProjected} style={{ borderColor: INCOME }} />Expected income <b>{money(proj.projected)}</b></div>
             )}
