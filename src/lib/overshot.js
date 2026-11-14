@@ -90,7 +90,11 @@ export function computeOvershot({ transactions, monthKeys, today = new Date() })
     const net = round2(income - spending);
     const partial = key === nowKey;
     cumulative = round2(cumulative + net);
-    return { key, income: round2(income), spending: round2(spending), net, invested: round2(invested), kept: round2(kept), over: spending > income, gap: round2(Math.max(0, spending - income)), partial, cumulative };
+    // The categories that are money in this month (net positive), which is
+    // what `income` adds up.
+    const incomeByCategory = {};
+    for (const [cat, v] of Object.entries(byCat[key] || {})) if (v > 0) incomeByCategory[cat] = round2(v);
+    return { key, income: round2(income), spending: round2(spending), net, invested: round2(invested), kept: round2(kept), over: spending > income, gap: round2(Math.max(0, spending - income)), partial, cumulative, incomeByCategory };
   });
 
   const complete = months.filter(m => !m.partial);
@@ -206,6 +210,44 @@ export function computeOvershot({ transactions, monthKeys, today = new Date() })
   }
 
   return { months, summary, pace };
+}
+
+/**
+ * Each month's income in buckets: base salary, commission, and everything
+ * else by category. Payroll is split as the Income and Commissions pages split
+ * it (lib/income splitPaychecks); the buckets add up to the month's income
+ * exactly, because each is carved out of the income categories the total is
+ * made of. A paycheck whose category nets below its amount that month (a
+ * clawback in the same category) is scaled down to what counted.
+ *
+ * @param months     computeOvershot().months
+ * @param paychecks  computeIncome().paychecks — [{ t, key, amount, base, commission }]
+ * @returns { [key]: { base, commission, other, otherBy: [{ category, amount }] (largest first) } }
+ */
+export function incomeBuckets({ months, paychecks }) {
+  const out = {};
+  for (const m of months || []) {
+    const mine = (paychecks || []).filter(p => p.key === m.key);
+    let base = 0;
+    let commission = 0;
+    const otherBy = [];
+    for (const [category, v] of Object.entries(m.incomeByCategory || {})) {
+      const pcs = mine.filter(p => (p.t?.category || 'Uncategorized') === category);
+      const paid = pcs.reduce((s, p) => s + p.amount, 0);
+      const f = paid > 0 ? Math.min(1, v / paid) : 0;
+      const b = pcs.reduce((s, p) => s + p.base, 0) * f;
+      const c = pcs.reduce((s, p) => s + p.commission, 0) * f;
+      base += b;
+      commission += c;
+      const rest = round2(v - b - c);
+      if (rest > 0.005) otherBy.push({ category, amount: rest });
+    }
+    base = round2(base);
+    commission = round2(commission);
+    otherBy.sort((a, b) => b.amount - a.amount);
+    out[m.key] = { base, commission, other: round2(Math.max(0, m.income - base - commission)), otherBy };
+  }
+  return out;
 }
 
 /**

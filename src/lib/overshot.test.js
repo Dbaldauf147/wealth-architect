@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeOvershot, monthsSpanned, expectedIncomeMonths } from './overshot.js';
+import { computeOvershot, monthsSpanned, expectedIncomeMonths, incomeBuckets } from './overshot.js';
 
 const tx = (date, amount, category, description = category) => ({ date, amount, category, description });
 
@@ -147,5 +147,37 @@ describe('expectedIncomeMonths', () => {
 
   it('is empty without a schedule', () => {
     expect(expectedIncomeMonths({ schedule: [] })).toEqual([]);
+  });
+});
+
+describe('incomeBuckets', () => {
+  const t = [
+    tx('07/15/2026', 3000, 'Paycheck', 'ACME PAYROLL'),
+    tx('07/31/2026', 3600, 'Paycheck', 'ACME PAYROLL'),
+    tx('07/20/2026', 250, 'Interest'),
+    tx('07/22/2026', 100, 'Paycheck', 'Expense reimbursement'),
+    tx('07/05/2026', -2000, 'Housing', 'Rent'),
+    tx('07/09/2026', 40, 'Housing', 'Refund'),
+    tx('08/14/2026', 3000, 'Paycheck', 'ACME PAYROLL'),
+    tx('08/20/2026', -500, 'Paycheck', 'Payroll correction'),
+  ];
+  const { months } = computeOvershot({ transactions: t, monthKeys: ['2026-07', '2026-08'], today: new Date(2026, 8, 2) });
+  const paychecks = [
+    { t: t[0], key: '2026-07', amount: 3000, base: 3000, commission: 0 },
+    { t: t[1], key: '2026-07', amount: 3600, base: 3000, commission: 600 },
+    { t: t[6], key: '2026-08', amount: 3000, base: 3000, commission: 0 },
+  ];
+  const b = incomeBuckets({ months, paychecks });
+
+  it('splits payroll into base and commission, and the rest by category', () => {
+    expect(months[0].income).toBe(6950);
+    expect(b['2026-07']).toEqual({ base: 6000, commission: 600, other: 350, otherBy: [{ category: 'Interest', amount: 250 }, { category: 'Paycheck', amount: 100 }] });
+  });
+  it('always adds up to the month\'s income, even when a paycheck is netted down', () => {
+    expect(months[1].income).toBe(2500);
+    expect(b['2026-08']).toEqual({ base: 2500, commission: 0, other: 0, otherBy: [] });
+  });
+  it('is all other income without paychecks', () => {
+    expect(incomeBuckets({ months, paychecks: [] })['2026-07']).toMatchObject({ base: 0, commission: 0, other: 6950 });
   });
 });
