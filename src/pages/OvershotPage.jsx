@@ -226,7 +226,7 @@ export function OvershotPage() {
             <h2 className={styles.cardTitle}>Income vs spending, by month</h2>
             <div className={styles.cardHint}>
               Shaded months are the ones where spending overtook income. Each income bar is split into base salary, commission and other income; hover a month for what the other income was.
-              {projection && <> The month in progress shows its expected income as an outline: what has come in plus the paychecks still due on the Commissions tab’s schedule.</>}
+              {projection && <> The month in progress shows its expected income as an outline: what has come in plus the paychecks still due on the Commissions tab’s schedule, base salary and commission apart. Next month is projected the same way.</>}
             </div>
           </div>
           <div className={styles.legend}>
@@ -236,7 +236,7 @@ export function OvershotPage() {
             <span><i className={styles.legendBand} />Over income</span>
           </div>
         </div>
-        <MonthlyChart months={months} projection={projection} buckets={buckets} />
+        <MonthlyChart months={months} projection={projection} buckets={buckets} expected={expectedIncome?.months || []} />
       </section>
 
       <SurplusSplit months={split} transactions={transactions} />
@@ -500,7 +500,7 @@ function PaceCard({ pace }) {
 }
 
 /* Paired bars per month; months over income get a shaded band and a label. */
-function MonthlyChart({ months, projection = null, buckets = {} }) {
+function MonthlyChart({ months: actualMonths, projection = null, buckets = {}, expected = [] }) {
   const [ref, width] = useMeasuredWidth(320);
   const [hover, setHover] = useState(null);
   const H = 280;
@@ -508,7 +508,16 @@ function MonthlyChart({ months, projection = null, buckets = {} }) {
   const innerW = width - pad.left - pad.right;
   const innerH = H - pad.top - pad.bottom;
   const projectedFor = m => (projection && m.partial && projection.key === m.key ? projection : null);
-  const max = niceMax(Math.max(...months.map(m => Math.max(m.income, m.spending, projectedFor(m)?.projected || 0)), 1));
+  // What the pay schedule still expects in a month, by bucket.
+  const dueFor = key => expected.find(e => e.key === key) || null;
+  // Next month, as one more column: nothing has happened in it yet, so it is
+  // only its projected income.
+  const current = actualMonths.find(m => m.partial);
+  const nextRow = projection && current ? dueFor(incomeMonthKey(new Date(Number(current.key.slice(0, 4)), Number(current.key.slice(5)), 1))) : null;
+  const months = useMemo(() => (nextRow && nextRow.expected > 0
+    ? [...actualMonths, { key: nextRow.key, future: true, income: 0, spending: 0, net: 0, gap: 0, over: false, partial: false }]
+    : actualMonths), [actualMonths, nextRow]);
+  const max = niceMax(Math.max(...months.map(m => Math.max(m.income, m.spending, projectedFor(m)?.projected || 0, m.future ? nextRow.expected : 0)), 1));
   const step = innerW / months.length;
   const barW = Math.max(3, Math.min(22, (step - 10) / 2));
   const y = v => pad.top + innerH - (v / max) * innerH;
@@ -525,6 +534,26 @@ function MonthlyChart({ months, projection = null, buckets = {} }) {
   const bar = (x, v, color, opacity) => {
     const d = barPath(x, v);
     return d && <path d={d} fill={color} opacity={opacity} />;
+  };
+  // Income still expected: dashed, bucket by bucket, on top of what has landed.
+  const DUE = BUCKETS.filter(b => b.id !== 'other');
+  const dueStack = (x, from, row, testid) => {
+    let acc = from;
+    return (
+      <g data-testid={testid} data-month={row.key}>
+        {DUE.map(b => {
+          const v = row[b.id];
+          if (!(v > 0)) return null;
+          const top = y(acc + v);
+          const h = y(acc) - top;
+          acc += v;
+          return (
+            <rect key={b.id} data-bucket={b.id} x={x + 0.75} y={top + 0.75} width={barW - 1.5} height={Math.max(0, h - 1.5)} rx={Math.min(3, barW / 2)}
+              fill={b.color} fillOpacity={0.18} stroke={b.id === 'base' ? b.color : '#5b97de'} strokeWidth={1.5} strokeDasharray="4 3" />
+          );
+        })}
+      </g>
+    );
   };
   // The income bar: the same shape, filled bucket by bucket from the baseline.
   const incomeBar = (x, m, opacity) => {
@@ -573,26 +602,17 @@ function MonthlyChart({ months, projection = null, buckets = {} }) {
                   <text x={cx} y={pad.top - 8} textAnchor="middle" className={styles.overLabel}>▲ {axis(gap)}{proj ? '*' : ''}</text>
                 </>
               )}
-              {projTop != null && (
-                <rect
-                  data-testid="overshot-projected-bar"
-                  x={cx - barW - 1 + 0.75}
-                  y={projTop + 0.75}
-                  width={barW - 1.5}
-                  height={Math.max(0, pad.top + innerH - projTop - 0.75)}
-                  rx={Math.min(3, barW / 2)}
-                  fill={INCOME}
-                  fillOpacity={0.08}
-                  stroke={INCOME}
-                  strokeWidth={1.5}
-                  strokeDasharray="4 3"
-                />
+              {projTop != null && (dueFor(m.key)
+                ? dueStack(cx - barW - 1, m.income, dueFor(m.key), 'overshot-projected-bar')
+                : <rect data-testid="overshot-projected-bar" x={cx - barW - 1 + 0.75} y={projTop + 0.75} width={barW - 1.5} height={Math.max(0, pad.top + innerH - projTop - 0.75)}
+                  rx={Math.min(3, barW / 2)} fill={INCOME} fillOpacity={0.08} stroke={INCOME} strokeWidth={1.5} strokeDasharray="4 3" />
               )}
+              {m.future && dueStack(cx - barW / 2, 0, nextRow, 'overshot-next-month-bar')}
               {incomeBar(cx - barW - 1, m, m.partial ? 0.45 : 1)}
               {bar(cx + 1, m.spending, SPENDING, m.partial ? 0.45 : 1)}
               {i % labelEvery === 0 && (
                 <text x={cx} y={H - 8} textAnchor="middle" className={styles.axisText}>
-                  {short(m.key)}{m.partial ? '*' : ''}
+                  {short(m.key)}{m.partial ? '*' : m.future ? '†' : ''}
                 </text>
               )}
               <rect
@@ -613,6 +633,27 @@ function MonthlyChart({ months, projection = null, buckets = {} }) {
         const m = months[hover];
         const proj = projectedFor(m);
         const left = Math.min(width - 230, Math.max(0, pad.left + step * hover + step / 2 - 115));
+        const due = proj || m.future ? dueFor(m.key) : null;
+        const dueParts = due && due.expected > 0 && (
+          <div className={styles.tooltipParts} data-testid="overshot-due-parts">
+            {DUE.filter(b => due[b.id] > 0).map(b => (
+              <div key={b.id}><i className={styles.legendProjected} style={{ borderColor: b.color }} />{b.label} <b>{money(due[b.id])}</b></div>
+            ))}
+          </div>
+        );
+        if (m.future) return (
+          <div className={styles.tooltip} style={{ left, top: 4 }} data-testid="overshot-next-month-tooltip">
+            <div className={styles.tooltipTitle}>{long(m.key)} (projected)</div>
+            <div><i className={styles.legendProjected} style={{ borderColor: INCOME }} />Expected income <b>{money(due.expected)}</b></div>
+            {dueParts}
+            {due.leftOver != null && (
+              <>
+                <div><i style={{ background: SPENDING, opacity: 0.45 }} />A typical month’s spending <b>{money(due.expected - due.leftOver)}</b></div>
+                <div className={styles.tooltipNet}>{due.leftOver >= 0 ? `${money(due.leftOver)} left over if spending is typical` : `Short by ${money(-due.leftOver)} if spending is typical`}</div>
+              </>
+            )}
+          </div>
+        );
         return (
           <div className={styles.tooltip} style={{ left, top: 4 }}>
             <div className={styles.tooltipTitle}>{long(m.key)}{m.partial ? ' (so far)' : ''}</div>
@@ -634,6 +675,7 @@ function MonthlyChart({ months, projection = null, buckets = {} }) {
               <div><i className={styles.legendProjected} style={{ borderColor: INCOME }} />Expected income <b>{money(proj.projected)}</b></div>
             )}
             {proj && proj.stillDue > 0 && <div className={styles.muted}>{money(proj.stillDue)} in paychecks still due</div>}
+            {proj && dueParts}
             <div><i style={{ background: SPENDING }} />Spending <b>{money(m.spending)}</b></div>
             <div className={styles.tooltipNet}>
               {proj
@@ -646,7 +688,10 @@ function MonthlyChart({ months, projection = null, buckets = {} }) {
         );
       })()}
       {months.some(m => m.partial) && (
-        <div className={styles.chartFoot}>* month in progress{projection ? ' — judged against its expected income (dashed outline)' : ''}</div>
+        <div className={styles.chartFoot}>
+          * month in progress{projection ? ' — judged against its expected income (dashed outline)' : ''}
+          {months.some(m => m.future) && <> · † next month — payroll expected on the pay schedule; other income isn’t projected</>}
+        </div>
       )}
     </div>
   );
