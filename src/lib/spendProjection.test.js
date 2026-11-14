@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { projectMonthSpending, sumDaily } from './spendProjection.js';
+import { projectMonthSpending, sumDaily, withExpected } from './spendProjection.js';
 
 const tx = (date, amount, category) => ({ date, amount, category, description: category });
 const today = new Date(2026, 10, 14); // Nov 14, 2026
@@ -67,5 +67,31 @@ describe('projectMonthSpending', () => {
     expect(fresh).toMatchObject({ basis: [], soFar: 2240, remaining: 0, projected: 2240, lastMonth: null });
     const last = projectMonthSpending({ transactions: ledger(), today: new Date(2026, 10, 30) });
     expect(last.remaining).toBe(0);
+  });
+});
+
+describe('withExpected', () => {
+  const p = projectMonthSpending({ transactions: ledger(), today });
+  const cat = c => p.categories.find(x => x.category === c);
+
+  it('replaces the projection and keeps the usual shape of the days to come', () => {
+    const g = withExpected(cat('Groceries'), 750); // 150 so far, usually 300 more on the 20th
+    expect(g).toMatchObject({ projected: 750, remaining: 600, delta: 350, auto: 450, expected: 750 });
+    expect(g.daily[13].projected).toBe(150);
+    expect(g.daily[18].projected).toBe(150);
+    expect(g.daily[19].projected).toBe(750);
+    expect(g.daily[29].projected).toBe(750);
+    expect(g.daily[5]).toEqual(cat('Groceries').daily[5]);
+  });
+  it('ramps evenly when nothing more was projected, and never goes below what is spent', () => {
+    const gas = withExpected(cat('Gas'), 250); // 90 so far, nothing more projected
+    expect(gas).toMatchObject({ projected: 250, remaining: 160 });
+    expect(gas.daily[13].projected).toBe(90);
+    expect(gas.daily[21].projected).toBe(170);
+    expect(gas.daily[29].projected).toBe(250);
+    expect(withExpected(cat('Rent'), 500)).toMatchObject({ projected: 2000, remaining: 0, expected: 500 });
+  });
+  it('leaves the category alone without a value', () => {
+    expect(withExpected(cat('Rent'), undefined)).toBe(cat('Rent'));
   });
 });

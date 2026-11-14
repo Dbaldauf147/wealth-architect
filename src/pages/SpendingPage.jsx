@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../contexts/DataContext';
 import { useBudgets } from '../hooks/useBudgets';
-import { projectMonthSpending, sumDaily } from '../lib/spendProjection';
+import { projectMonthSpending, sumDaily, withExpected } from '../lib/spendProjection';
 import { BudgetsPage } from './BudgetsPage';
 import { TrendsPage } from './TrendsPage';
 import styles from './OvershotPage.module.css';
@@ -28,6 +28,15 @@ const CAT_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#8b5cf6', '#e0a40b', '#e04
 // Categories switched off on the This month tab: a view preference, kept in
 // this browser only. The page says so whenever any are off.
 const HIDDEN_KEY = 'wa-spend-month-hidden';
+// Your own expected month total per category, in place of the projection:
+// kept in this browser, and standing until cleared.
+const EXPECTED_KEY = 'wa-spend-month-expected';
+function loadExpected() {
+  try {
+    const v = JSON.parse(localStorage.getItem(EXPECTED_KEY) || '{}');
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  } catch { return {}; }
+}
 function loadHidden() {
   try { const v = JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]'); return new Set(Array.isArray(v) ? v : []); } catch { return new Set(); }
 }
@@ -148,15 +157,24 @@ function ThisMonth() {
   const [hidden, setHidden] = useState(loadHidden);
   const saveHidden = next => { try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...next])); } catch { /* private mode */ } return next; };
   const toggleCat = c => setHidden(prev => { const next = new Set(prev); if (next.has(c)) next.delete(c); else next.add(c); return saveHidden(next); });
+  const [expected, setExpected] = useState(loadExpected);
+  const setExpectedFor = (c, raw) => setExpected(prev => {
+    const next = { ...prev };
+    const v = Number(raw);
+    if (raw === '' || raw == null || !(v >= 0)) delete next[c]; else next[c] = Math.round(v * 100) / 100;
+    try { localStorage.setItem(EXPECTED_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+    return next;
+  });
   // The projection over just the categories that are switched on.
   const view = useMemo(() => {
     if (!full) return null;
-    const all = full.categories.map((c, i) => ({ ...c, color: CAT_COLORS[i % CAT_COLORS.length] }));
+    // Colours go by the automatic ranking, so setting a value doesn't recolour anything.
+    const all = full.categories.map((c, i) => ({ ...withExpected(c, expected[c.category]), color: CAT_COLORS[i % CAT_COLORS.length] }));
     const cats = all.filter(c => !hidden.has(c.category));
     const r2 = n => Math.round(n * 100) / 100;
     const total = f => r2(cats.reduce((s2, c) => s2 + c[f], 0));
     return { all, cats, daily: sumDaily(cats), p: { ...full, soFar: total('soFar'), remaining: total('remaining'), projected: total('projected'), typical: total('typical') } };
-  }, [full, hidden]);
+  }, [full, hidden, expected]);
   const p = view?.p || null;
   // Monthly budgets by category name, as the Budgets tab matches them.
   const limits = useMemo(() => {
@@ -255,7 +273,7 @@ function ThisMonth() {
           <div>
             <h2 className={styles.cardTitle}>Projected spending by category</h2>
             <div className={styles.cardHint}>
-              Largest projection first. Untick a category to leave it out of the totals and the chart. The bar is the projection (solid = already spent); the tick is a typical month{hasBudgets ? ', and the budget where there is one' : ''}.
+              Type your own number under Your expected to use it in place of a category’s projection; it stays until you clear it. Untick a category to leave it out of the totals and the chart. The bar is the projection (solid = already spent); the tick is a typical month{hasBudgets ? ', and the budget where there is one' : ''}.
             </div>
           </div>
         </div>
@@ -267,6 +285,7 @@ function ThisMonth() {
                 <th className={styles.num}>Spent so far</th>
                 <th className={styles.num}>Still expected</th>
                 <th className={styles.num}>Projected</th>
+                <th className={styles.num}>Your expected</th>
                 <th className={styles.num}>Typical month</th>
                 <th className={styles.num}>vs typical</th>
                 {hasBudgets && <th className={styles.num}>Budget</th>}
@@ -293,7 +312,19 @@ function ThisMonth() {
                     </td>
                     <td className={styles.num}>{money(r.soFar)}</td>
                     <td className={styles.num}>{r.remaining > 0.5 ? money(r.remaining) : <span className={styles.muted}>—</span>}</td>
-                    <td className={styles.num}><b>{money(r.projected)}</b></td>
+                    <td className={styles.num}>
+                      <b>{money(r.projected)}</b>
+                      {r.expected != null && <div className={own.setNote}>{r.expected < r.soFar ? 'already past your number' : `yours · auto ${money(r.auto)}`}</div>}
+                    </td>
+                    <td className={styles.num}>
+                      <span className={own.expectedCell}>
+                        <span className={styles.muted}>$</span>
+                        <input type="number" min={0} step={10} inputMode="decimal" className={own.expectedInput} data-testid="spend-expected-input"
+                          value={r.expected ?? ''} placeholder={String(Math.round(r.auto ?? r.projected))}
+                          onChange={e => setExpectedFor(r.category, e.target.value)} aria-label={`Your expected ${r.category} spending this month`} />
+                        {r.expected != null && <button type="button" className={own.clearBtn} onClick={() => setExpectedFor(r.category, '')} aria-label={`Clear your expected ${r.category} value`} title="Back to the automatic projection">×</button>}
+                      </span>
+                    </td>
                     <td className={styles.num}>{r.typical > 0.5 ? money(r.typical) : <span className={styles.muted}>—</span>}</td>
                     <td className={`${styles.num} ${r.delta > 0.5 ? own.over : r.delta < -0.5 ? own.under : ''}`} style={r.delta > 0.5 ? { fontWeight: 400 } : undefined}>{hasBasis ? signed(r.delta) : <span className={styles.muted}>—</span>}</td>
                     {hasBudgets && <td className={styles.num}>{r.budget != null ? money(r.budget) : <span className={styles.muted}>—</span>}</td>}
@@ -310,6 +341,7 @@ function ThisMonth() {
                 <td className={styles.num}>{money(p.soFar)}</td>
                 <td className={styles.num}>{money(p.remaining)}</td>
                 <td className={styles.num}>{money(p.projected)}</td>
+                <td className={styles.num}>{Object.keys(expected).some(c => rows.some(r => r.category === c)) && <button type="button" className={own.chipLink} onClick={() => { setExpected({}); try { localStorage.removeItem(EXPECTED_KEY); } catch { /* private mode */ } }} data-testid="spend-expected-clear-all">Clear all</button>}</td>
                 <td className={styles.num}>{money(p.typical)}</td>
                 <td className={styles.num}>{hasBasis ? signed(delta) : ''}</td>
                 {hasBudgets && <td className={styles.num}>{money(budgetTotal)}</td>}
