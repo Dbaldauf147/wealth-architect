@@ -37,6 +37,17 @@ function loadExpected() {
     return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
   } catch { return {}; }
 }
+// Your targets: one for the whole month and one per category. Standing numbers
+// (not tied to a month), kept in this browser like the expected values.
+const TARGETS_KEY = 'wa-spend-month-targets';
+function loadTargets() {
+  try {
+    const v = JSON.parse(localStorage.getItem(TARGETS_KEY) || '{}');
+    const cats = v && typeof v.categories === 'object' && v.categories && !Array.isArray(v.categories) ? v.categories : {};
+    return { total: v && v.total > 0 ? v.total : null, categories: cats };
+  } catch { return { total: null, categories: {} }; }
+}
+const TARGET = 'var(--color-secondary, #0058be)';
 function loadHidden() {
   try { const v = JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]'); return new Set(Array.isArray(v) ? v : []); } catch { return new Set(); }
 }
@@ -76,7 +87,7 @@ function useMeasuredWidth(initial = 320) {
 /* The month by day, stacked by category: solid up to today, faded where it's
    projected. The outline is the total (solid so far, dashed projected) and the
    dotted line is the usual shape of a month for the same categories. */
-function PaceChart({ p, cats, daily, totals }) {
+function PaceChart({ p, cats, daily, totals, target }) {
   const [ref, width] = useMeasuredWidth();
   const [hover, setHover] = useState(null);
   const H = 320;
@@ -85,7 +96,7 @@ function PaceChart({ p, cats, daily, totals }) {
   const innerH = H - pad.top - pad.bottom;
   const hasBasis = p.basis.length > 0;
   // Scaled to whatever is switched on, typical line included.
-  const { max, ticks } = tightAxis(Math.max(totals.projected, totals.soFar, ...(hasBasis ? daily.map(r => r.typical) : [0])));
+  const { max, ticks } = tightAxis(Math.max(totals.projected, totals.soFar, target || 0, ...(hasBasis ? daily.map(r => r.typical) : [0])));
   const x = d => pad.left + (p.daysInMonth > 1 ? ((d - 1) / (p.daysInMonth - 1)) * innerW : 0);
   const y = v => pad.top + innerH - (v / max) * innerH;
   const line = (rows, f) => rows.filter(r => r[f] != null).map((r, i) => `${i ? 'L' : 'M'}${x(r.day).toFixed(1)},${y(r[f]).toFixed(1)}`).join(' ');
@@ -140,6 +151,12 @@ function PaceChart({ p, cats, daily, totals }) {
         {hasBasis && <path d={line(daily, 'typical')} fill="none" stroke={LINE} strokeWidth={1.5} strokeDasharray="1.5 4" strokeLinecap="round" />}
         <path d={line(daily, 'projected')} fill="none" stroke={LINE} strokeWidth={1.75} strokeDasharray="5 4" />
         <path d={line(daily, 'actual')} fill="none" stroke={LINE} strokeWidth={2.25} />
+        {target != null && (
+          <g data-testid="spend-target-line">
+            <line x1={pad.left} x2={width - pad.right} y1={y(target)} y2={y(target)} stroke={TARGET} strokeWidth={1.75} strokeDasharray="10 4" />
+            <text x={pad.left + 6} y={y(target) - 6} className={own.targetLabel} style={{ fill: TARGET }}>Target {money(target)}</text>
+          </g>
+        )}
         {daily.length > 0 && <text x={x(p.daysInMonth) + 6} y={y(totals.projected) + 4} className={styles.axisText} fontWeight={700} style={{ fill: LINE }}>{money(totals.projected)}</text>}
         {h && <line x1={x(h.day)} x2={x(h.day)} y1={pad.top} y2={pad.top + innerH} stroke="var(--color-text-primary)" strokeWidth={1} opacity={0.35} />}
         <line x1={pad.left} x2={width - pad.right} y1={y(0)} y2={y(0)} stroke="var(--color-text-muted)" />
@@ -149,6 +166,7 @@ function PaceChart({ p, cats, daily, totals }) {
           <div className={styles.tooltipTitle}>{shortMonth(p.key)} {h.day}</div>
           <div>{h.actual != null ? 'Spent by then' : 'Projected by then'} <b>{money(h.actual ?? h.projected)}</b></div>
           {hasBasis && <div>Usually by then <b>{money(h.typical)}</b></div>}
+          {target != null && <div>Your target <b>{money(target)}</b></div>}
           {hoverCats.slice(0, 8).map(c => <div key={c.category}><i style={{ background: c.color, opacity: h.actual != null ? 1 : 0.5 }} />{c.category} <b>{money(c.v)}</b></div>)}
           {hoverCats.length > 8 && <div className={styles.muted}>{hoverCats.length - 8} more <b>{money(hoverCats.slice(8).reduce((t, c) => t + c.v, 0))}</b></div>}
         </div>
@@ -171,6 +189,16 @@ function ThisMonth() {
     if (raw === '' || raw == null || !(v >= 0)) delete next[c]; else next[c] = Math.round(v * 100) / 100;
     try { localStorage.setItem(EXPECTED_KEY, JSON.stringify(next)); } catch { /* private mode */ }
     return next;
+  });
+  const [targets, setTargets] = useState(loadTargets);
+  const saveTargets = next => { try { localStorage.setItem(TARGETS_KEY, JSON.stringify(next)); } catch { /* private mode */ } return next; };
+  const amount = raw => { const v = Number(raw); return raw === '' || raw == null || !(v > 0) ? null : Math.round(v * 100) / 100; };
+  const setTotalTarget = raw => setTargets(prev => saveTargets({ ...prev, total: amount(raw) }));
+  const setTargetFor = (c, raw) => setTargets(prev => {
+    const categories = { ...prev.categories };
+    const v = amount(raw);
+    if (v == null) delete categories[c]; else categories[c] = v;
+    return saveTargets({ ...prev, categories });
   });
   // The projection over just the categories that are switched on.
   const view = useMemo(() => {
@@ -195,13 +223,19 @@ function ThisMonth() {
   if (loading && !p) return <div className={styles.empty}>Loading transactions…</div>;
   if (!p || (!p.categories.length)) return <div className={styles.empty}>No spending to project yet.</div>;
 
-  const rows = view.all.map(c => ({ ...c, off: hidden.has(c.category), budget: limits.get(c.category.toLowerCase()) ?? null }));
+  const rows = view.all.map(c => ({ ...c, off: hidden.has(c.category), budget: limits.get(c.category.toLowerCase()) ?? null, target: targets.categories[c.category] > 0 ? targets.categories[c.category] : null }));
   const shown = rows.filter(r => !r.off);
   const offCount = rows.length - shown.length;
   const hasBudgets = rows.some(r => r.budget != null);
   const overBudget = shown.filter(r => r.budget != null && r.projected > r.budget);
   const budgetTotal = shown.reduce((s, r) => s + (r.budget || 0), 0);
   const delta = Math.round((p.projected - p.typical) * 100) / 100;
+  const target = targets.total;
+  const targetGap = target != null ? Math.round((p.projected - target) * 100) / 100 : null;
+  const withTarget = shown.filter(r => r.target != null);
+  const overTarget = withTarget.filter(r => r.projected > r.target + 0.005);
+  const anyCatTarget = rows.some(r => r.target != null);
+  const catTargetTotal = withTarget.reduce((s, r) => s + r.target, 0);
   const hasBasis = p.basis.length > 0;
   const basisText = hasBasis
     ? `${p.basis.length === 1 ? shortMonth(p.basis[0]) : `${shortMonth(p.basis[0])}–${shortMonth(p.basis[p.basis.length - 1])}`}`
@@ -241,6 +275,18 @@ function ThisMonth() {
               <div className={styles.heroStatLabel}>vs a typical month ({money(p.typical)})</div>
             </div>
           )}
+          {target != null && (
+            <div data-testid="spend-vs-target">
+              <div className={`${styles.heroStatValue} ${targetGap > 0.5 ? styles.heroBad : styles.heroGood}`}>{targetGap > 0.5 ? `${money(targetGap)} over` : targetGap < -0.5 ? `${money(-targetGap)} under` : 'On target'}</div>
+              <div className={styles.heroStatLabel}>your target ({money(target)}){p.soFar > target ? ' · already past it' : ''}</div>
+            </div>
+          )}
+          {withTarget.length > 0 && (
+            <div data-testid="spend-targets-over">
+              <div className={`${styles.heroStatValue} ${overTarget.length ? styles.heroBad : styles.heroGood}`}>{overTarget.length} of {withTarget.length}</div>
+              <div className={styles.heroStatLabel}>category target{withTarget.length === 1 ? '' : 's'} projected to go over</div>
+            </div>
+          )}
           {hasBudgets && (
             <div>
               <div className={`${styles.heroStatValue} ${overBudget.length ? styles.heroBad : styles.heroGood}`}>{overBudget.length}</div>
@@ -260,7 +306,25 @@ function ThisMonth() {
             <span><i className={own.legendLine} style={{ borderColor: LINE }} />Spent so far</span>
             <span><i className={`${own.legendLine} ${own.legendDash}`} style={{ borderColor: LINE }} />Projected</span>
             {hasBasis && <span><i className={`${own.legendLine} ${own.legendDot}`} style={{ borderColor: LINE }} />Typical month</span>}
+            {target != null && <span><i className={`${own.legendLine} ${own.legendDash}`} style={{ borderColor: TARGET }} />Target</span>}
           </div>
+        </div>
+        <div className={own.targetRow}>
+          <label htmlFor="spend-target-total">Target for the month</label>
+          <span className={own.expectedCell}>
+            <span className={styles.muted}>$</span>
+            <input id="spend-target-total" type="number" min={0} step={50} inputMode="decimal" className={`${own.expectedInput} ${own.targetInput}`} data-testid="spend-target-input"
+              value={target ?? ''} placeholder="Set a target" onChange={e => setTotalTarget(e.target.value)} />
+            {target != null && <button type="button" className={own.clearBtn} onClick={() => setTotalTarget('')} aria-label="Clear the month target" title="Remove the target">×</button>}
+          </span>
+          {target != null && (
+            <span className={targetGap > 0.5 ? own.overText : own.underText} data-testid="spend-target-status">
+              {targetGap > 0.5 ? `Projected to go over by ${money(targetGap)}` : targetGap < -0.5 ? `Projected to come in ${money(-targetGap)} under` : 'Projected to land right on it'}
+              {p.daysLeft > 0 && target > p.soFar && <span className={styles.muted}> · {money((target - p.soFar) / p.daysLeft)} a day left to stay on it</span>}
+            </span>
+          )}
+          {target != null && offCount > 0 && <span className={styles.muted}>Compared with the {shown.length} categories switched on.</span>}
+          {target == null && anyCatTarget && <button type="button" className={own.chipLink} onClick={() => setTotalTarget(String(catTargetTotal))} data-testid="spend-target-use-sum">Use your category targets ({money(catTargetTotal)})</button>}
         </div>
         <div className={own.chips} data-testid="spend-category-chips">
           {rows.map(r => (
@@ -272,7 +336,7 @@ function ThisMonth() {
           {offCount > 0 && <button type="button" className={own.chipLink} onClick={() => setHidden(saveHidden(new Set()))} data-testid="spend-show-all">Show all</button>}
           {offCount < rows.length && rows.length > 1 && <button type="button" className={own.chipLink} onClick={() => setHidden(saveHidden(new Set(rows.map(r => r.category))))} data-testid="spend-hide-all">Hide all</button>}
         </div>
-        <PaceChart p={p} cats={view.cats} daily={view.daily} totals={p} />
+        <PaceChart p={p} cats={view.cats} daily={view.daily} totals={p} target={target} />
       </section>
 
       <section className={styles.card}>
@@ -280,7 +344,7 @@ function ThisMonth() {
           <div>
             <h2 className={styles.cardTitle}>Projected spending by category</h2>
             <div className={styles.cardHint}>
-              Type your own number under Your expected to use it in place of a category’s projection; it stays until you clear it. Untick a category to leave it out of the totals and the chart. The bar is the projection (solid = already spent); the tick is a typical month{hasBudgets ? ', and the budget where there is one' : ''}.
+              Type your own number under Your expected to use it in place of a category’s projection; it stays until you clear it. Set a Target to see whether a category is heading over it. Untick a category to leave it out of the totals and the chart. The bar is the projection (solid = already spent); the tick is a typical month{hasBudgets ? ', and the budget where there is one' : ''}.
             </div>
           </div>
         </div>
@@ -293,6 +357,7 @@ function ThisMonth() {
                 <th className={styles.num}>Still expected</th>
                 <th className={styles.num}>Projected</th>
                 <th className={styles.num}>Your expected</th>
+                <th className={styles.num}>Target</th>
                 <th className={styles.num}>Typical month</th>
                 <th className={styles.num}>vs typical</th>
                 {hasBudgets && <th className={styles.num}>Budget</th>}
@@ -332,6 +397,20 @@ function ThisMonth() {
                         {r.expected != null && <button type="button" className={own.clearBtn} onClick={() => setExpectedFor(r.category, '')} aria-label={`Clear your expected ${r.category} value`} title="Back to the automatic projection">×</button>}
                       </span>
                     </td>
+                    <td className={styles.num}>
+                      <span className={own.expectedCell}>
+                        <span className={styles.muted}>$</span>
+                        <input type="number" min={0} step={10} inputMode="decimal" className={own.expectedInput} data-testid="spend-cat-target-input"
+                          value={r.target ?? ''} placeholder="—"
+                          onChange={e => setTargetFor(r.category, e.target.value)} aria-label={`Your target for ${r.category} this month`} />
+                        {r.target != null && <button type="button" className={own.clearBtn} onClick={() => setTargetFor(r.category, '')} aria-label={`Clear your ${r.category} target`} title="Remove the target">×</button>}
+                      </span>
+                      {r.target != null && (
+                        <div className={`${own.setNote} ${r.projected > r.target + 0.005 ? own.overText : own.underText}`} data-testid="spend-cat-target-status">
+                          {r.soFar > r.target + 0.005 ? `already over by ${money(r.soFar - r.target)}` : r.projected > r.target + 0.005 ? `heading over by ${money(r.projected - r.target)}` : `${money(r.target - r.projected)} to spare`}
+                        </div>
+                      )}
+                    </td>
                     <td className={styles.num}>{r.typical > 0.5 ? money(r.typical) : <span className={styles.muted}>—</span>}</td>
                     <td className={`${styles.num} ${r.delta > 0.5 ? own.over : r.delta < -0.5 ? own.under : ''}`} style={r.delta > 0.5 ? { fontWeight: 400 } : undefined}>{hasBasis ? signed(r.delta) : <span className={styles.muted}>—</span>}</td>
                     {hasBudgets && <td className={styles.num}>{r.budget != null ? money(r.budget) : <span className={styles.muted}>—</span>}</td>}
@@ -349,6 +428,7 @@ function ThisMonth() {
                 <td className={styles.num}>{money(p.remaining)}</td>
                 <td className={styles.num}>{money(p.projected)}</td>
                 <td className={styles.num}>{Object.keys(expected).some(c => rows.some(r => r.category === c)) && <button type="button" className={own.chipLink} onClick={() => { setExpected({}); try { localStorage.removeItem(EXPECTED_KEY); } catch { /* private mode */ } }} data-testid="spend-expected-clear-all">Clear all</button>}</td>
+                <td className={styles.num} data-testid="spend-cat-target-total">{withTarget.length > 0 && money(catTargetTotal)}</td>
                 <td className={styles.num}>{money(p.typical)}</td>
                 <td className={styles.num}>{hasBasis ? signed(delta) : ''}</td>
                 {hasBudgets && <td className={styles.num}>{money(budgetTotal)}</td>}
