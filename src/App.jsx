@@ -69,7 +69,7 @@ const TransactionsPage = lazy(() => import('./pages/TransactionsPage').then(m =>
 const CardsPage = lazy(() => import('./pages/CardsPage').then(m => ({ default: m.CardsPage })));
 const AssetsPage = lazy(() => import('./pages/AssetsPage').then(m => ({ default: m.AssetsPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
-const BudgetsPage = lazy(() => import('./pages/BudgetsPage').then(m => ({ default: m.BudgetsPage })));
+const SpendingPage = lazy(() => import('./pages/SpendingPage').then(m => ({ default: m.SpendingPage })));
 const RecurringPage = lazy(() => import('./pages/RecurringPage').then(m => ({ default: m.RecurringPage })));
 const CashFlowPage = lazy(() => import('./pages/CashFlowPage').then(m => ({ default: m.CashFlowPage })));
 const IncomePage = lazy(() => import('./pages/IncomePage').then(m => ({ default: m.IncomePage })));
@@ -77,7 +77,6 @@ const CommissionsPage = lazy(() => import('./pages/CommissionsPage').then(m => (
 const OvershotPage = lazy(() => import('./pages/OvershotPage').then(m => ({ default: m.OvershotPage })));
 const CardPromosPage = lazy(() => import('./pages/CardPromosPage').then(m => ({ default: m.CardPromosPage })));
 const SplitwisePage = lazy(() => import('./pages/SplitwisePage').then(m => ({ default: m.SplitwisePage })));
-const TrendsPage = lazy(() => import('./pages/TrendsPage').then(m => ({ default: m.TrendsPage })));
 const EatingOutPage = lazy(() => import('./pages/EatingOutPage').then(m => ({ default: m.EatingOutPage })));
 const NetWorthPage = lazy(() => import('./pages/NetWorthPage').then(m => ({ default: m.NetWorthPage })));
 const ShortTermLoanPage = lazy(() => import('./pages/ShortTermLoanPage').then(m => ({ default: m.ShortTermLoanPage })));
@@ -156,9 +155,8 @@ const NAV_ITEMS = [
   { id: 'overshot', label: 'Overshot', icon: 'balance' },
   { id: 'networth', label: 'Net Worth', icon: 'show_chart' },
   { id: 'stocks', label: 'Stock Performance', icon: 'candlestick_chart' },
-  { id: 'trends', label: 'Spending Trends', icon: 'trending_up' },
   { id: 'eatingout', label: 'Eating Out', icon: 'restaurant' },
-  { id: 'budgets', label: 'Budgets', icon: 'savings' },
+  { id: 'budgets', label: 'Budgets & Trends', icon: 'savings' },
   { id: 'recurring', label: 'Recurring', icon: 'autorenew' },
   { id: 'home', label: 'Buying a Home', icon: 'home_work' },
   { id: 'assets', label: 'Assets & Liabilities', icon: 'account_balance' },
@@ -308,7 +306,8 @@ export function App() {
   }, []);
 
   // CSR Benefits is a tab of Card Promotions, so its link lights up that item.
-  const navActive = view === 'benefits' ? 'promos' : view;
+  // Spending Trends is a tab of Budgets & Trends; its old link still opens it.
+  const navActive = view === 'benefits' ? 'promos' : view === 'trends' ? 'budgets' : view;
 
   function navigate(id) {
     window.location.hash = id;
@@ -325,9 +324,9 @@ export function App() {
       case 'overshot': return <OvershotPage />;
       case 'networth': return <NetWorthPage />;
       case 'stocks': return <StockPerformancePage />;
-      case 'trends': return <TrendsPage />;
+      case 'trends': return <SpendingPage key="trends" initialTab="trends" />;
       case 'eatingout': return <EatingOutPage />;
-      case 'budgets': return <BudgetsPage />;
+      case 'budgets': return <SpendingPage key="budgets" />;
       case 'recurring': return <RecurringPage />;
       case 'assets': return <AssetsPage />;
       case 'cards': return <CardsPage />;
