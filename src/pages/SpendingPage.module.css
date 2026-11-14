@@ -218,3 +218,39 @@ tr td.under {
   stroke-width: 3px;
   stroke-linejoin: round;
 }
+
+/* A category picked on the chart: its target sits top right, over the legend. */
+.headRight {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.focusTarget {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 13px;
+}
+
+.focusTarget label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.focusTarget label i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.targetRow[hidden] {
+  display: none;
+}

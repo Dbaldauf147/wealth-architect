@@ -87,7 +87,7 @@ function useMeasuredWidth(initial = 320) {
 /* The month by day, stacked by category: solid up to today, faded where it's
    projected. The outline is the total (solid so far, dashed projected) and the
    dotted line is the usual shape of a month for the same categories. */
-function PaceChart({ p, cats, daily, totals, target }) {
+function PaceChart({ p, cats, daily, totals, target, onPick, focused }) {
   const [ref, width] = useMeasuredWidth();
   const [hover, setHover] = useState(null);
   const H = 320;
@@ -126,7 +126,7 @@ function PaceChart({ p, cats, daily, totals, target }) {
   const hoverCats = h ? cats.map(c => ({ ...c, v: c.daily[hover].actual ?? c.daily[hover].projected ?? 0 })).filter(c => c.v > 0.5).sort((a, b) => b.v - a.v) : [];
   return (
     <div ref={ref} className={styles.chartWrap} data-testid="spend-pace-chart">
-      <svg width={width} height={H} role="img" aria-label="Cumulative spending this month by category: so far and projected" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+      <svg width={width} height={H} role="img" aria-label={focused ? `Cumulative ${focused} spending this month: so far and projected` : 'Cumulative spending this month by category: so far and projected'} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
         <defs>
           <clipPath id="spend-past"><rect x={pad.left} y={0} width={Math.max(0, xToday - pad.left)} height={H} /></clipPath>
           <clipPath id="spend-future"><rect x={xToday} y={0} width={Math.max(0, width - xToday)} height={H} /></clipPath>
@@ -141,10 +141,10 @@ function PaceChart({ p, cats, daily, totals, target }) {
           <text key={r.day} x={x(r.day)} y={H - 8} textAnchor="middle" className={styles.axisText} fontWeight={r.day === p.day ? 700 : undefined}>{r.day}</text>
         ))}
         <g clipPath="url(#spend-past)">
-          {bands.map(b => <path key={b.category} data-band={b.category} d={area(b)} fill={b.color} fillOpacity={0.9} stroke="var(--color-surface)" strokeWidth={0.75} />)}
+          {bands.map(b => <path key={b.category} data-band={b.category} d={area(b)} fill={b.color} fillOpacity={0.9} stroke="var(--color-surface)" strokeWidth={0.75} onClick={() => onPick?.(b.category)} style={onPick ? { cursor: 'pointer' } : undefined} />)}
         </g>
         <g clipPath="url(#spend-future)">
-          {bands.map(b => <path key={b.category} data-band-projected={b.category} d={area(b)} fill={b.color} fillOpacity={0.38} stroke="var(--color-surface)" strokeWidth={0.75} />)}
+          {bands.map(b => <path key={b.category} data-band-projected={b.category} d={area(b)} fill={b.color} fillOpacity={0.38} stroke="var(--color-surface)" strokeWidth={0.75} onClick={() => onPick?.(b.category)} style={onPick ? { cursor: 'pointer' } : undefined} />)}
         </g>
         <line x1={xToday} x2={xToday} y1={pad.top} y2={pad.top + innerH} stroke="var(--color-text-muted)" strokeDasharray="2 3" />
         <text x={xToday} y={pad.top - 5} textAnchor="middle" className={styles.axisText}>today</text>
@@ -168,6 +168,7 @@ function PaceChart({ p, cats, daily, totals, target }) {
           {hasBasis && <div>Usually by then <b>{money(h.typical)}</b></div>}
           {target != null && <div>Your target <b>{money(target)}</b></div>}
           {hoverCats.slice(0, 8).map(c => <div key={c.category}><i style={{ background: c.color, opacity: h.actual != null ? 1 : 0.5 }} />{c.category} <b>{money(c.v)}</b></div>)}
+          {onPick && <div className={styles.muted}>{focused ? 'Click the chart to go back to all categories' : 'Click a category to see it on its own'}</div>}
           {hoverCats.length > 8 && <div className={styles.muted}>{hoverCats.length - 8} more <b>{money(hoverCats.slice(8).reduce((t, c) => t + c.v, 0))}</b></div>}
         </div>
       )}
@@ -200,6 +201,9 @@ function ThisMonth() {
     if (v == null) delete categories[c]; else categories[c] = v;
     return saveTargets({ ...prev, categories });
   });
+  // A category picked on the chart: the chart shows it alone, with its own
+  // target. Not kept between visits.
+  const [focus, setFocus] = useState(null);
   // The projection over just the categories that are switched on.
   const view = useMemo(() => {
     if (!full) return null;
@@ -236,6 +240,10 @@ function ThisMonth() {
   const overTarget = withTarget.filter(r => r.projected > r.target + 0.005);
   const anyCatTarget = rows.some(r => r.target != null);
   const catTargetTotal = withTarget.reduce((s, r) => s + r.target, 0);
+  // Only a category that is switched on can be shown alone.
+  const focusRow = shown.find(r => r.category === focus) || null;
+  const focusCats = focusRow ? view.cats.filter(c => c.category === focusRow.category) : null;
+  const focusGap = focusRow?.target != null ? Math.round((focusRow.projected - focusRow.target) * 100) / 100 : null;
   const hasBasis = p.basis.length > 0;
   const basisText = hasBasis
     ? `${p.basis.length === 1 ? shortMonth(p.basis[0]) : `${shortMonth(p.basis[0])}–${shortMonth(p.basis[p.basis.length - 1])}`}`
@@ -300,16 +308,40 @@ function ThisMonth() {
         <div className={styles.cardHead}>
           <div>
             <h2 className={styles.cardTitle}>Where the month is heading</h2>
-            <div className={styles.cardHint}>Running total by day, a colour per category: solid is what’s been spent, faded is what’s projected from today on. Click a category to switch it off everywhere on this tab.</div>
+            <div className={styles.cardHint}>Running total by day, a colour per category: solid is what’s been spent, faded is what’s projected from today on. Click a category in the chart to see it on its own, with its target; click its name below to switch it off everywhere on this tab.</div>
           </div>
+          <div className={own.headRight}>
+          {focusRow && (
+            <div className={own.focusTarget} data-testid="spend-focus-target">
+              <label htmlFor="spend-focus-target-input"><i style={{ background: focusRow.color }} />{focusRow.category} target</label>
+              <span className={own.expectedCell}>
+                <span className={styles.muted}>$</span>
+                <input id="spend-focus-target-input" type="number" min={0} step={10} inputMode="decimal" className={`${own.expectedInput} ${own.targetInput}`} data-testid="spend-focus-target-input"
+                  value={focusRow.target ?? ''} placeholder="Set a target" onChange={e => setTargetFor(focusRow.category, e.target.value)} />
+                {focusRow.target != null && <button type="button" className={own.clearBtn} onClick={() => setTargetFor(focusRow.category, '')} aria-label={`Clear your ${focusRow.category} target`} title="Remove the target">×</button>}
+              </span>
+              {focusRow.target != null && (
+                <span className={focusGap > 0.005 ? own.overText : own.underText} data-testid="spend-focus-target-status">
+                  {focusRow.soFar > focusRow.target + 0.005 ? `Already over by ${money(focusRow.soFar - focusRow.target)}` : focusGap > 0.005 ? `Heading over by ${money(focusGap)}` : `${money(-focusGap)} to spare`}
+                </span>
+              )}
+            </div>
+          )}
           <div className={styles.legend}>
             <span><i className={own.legendLine} style={{ borderColor: LINE }} />Spent so far</span>
             <span><i className={`${own.legendLine} ${own.legendDash}`} style={{ borderColor: LINE }} />Projected</span>
             {hasBasis && <span><i className={`${own.legendLine} ${own.legendDot}`} style={{ borderColor: LINE }} />Typical month</span>}
-            {target != null && <span><i className={`${own.legendLine} ${own.legendDash}`} style={{ borderColor: TARGET }} />Target</span>}
+            {(focusRow ? focusRow.target : target) != null && <span><i className={`${own.legendLine} ${own.legendDash}`} style={{ borderColor: TARGET }} />Target</span>}
+          </div>
           </div>
         </div>
-        <div className={own.targetRow}>
+        {focusRow && (
+          <div className={own.targetRow} data-testid="spend-focus-note">
+            <span>Showing only <b>{focusRow.category}</b>: {money(focusRow.soFar)} spent, {money(focusRow.projected)} projected.</span>
+            <button type="button" className={own.chipLink} onClick={() => setFocus(null)} data-testid="spend-focus-clear">← All categories</button>
+          </div>
+        )}
+        <div className={own.targetRow} hidden={!!focusRow}>
           <label htmlFor="spend-target-total">Target for the month</label>
           <span className={own.expectedCell}>
             <span className={styles.muted}>$</span>
@@ -336,7 +368,9 @@ function ThisMonth() {
           {offCount > 0 && <button type="button" className={own.chipLink} onClick={() => setHidden(saveHidden(new Set()))} data-testid="spend-show-all">Show all</button>}
           {offCount < rows.length && rows.length > 1 && <button type="button" className={own.chipLink} onClick={() => setHidden(saveHidden(new Set(rows.map(r => r.category))))} data-testid="spend-hide-all">Hide all</button>}
         </div>
-        <PaceChart p={p} cats={view.cats} daily={view.daily} totals={p} target={target} />
+        {focusRow
+          ? <PaceChart p={p} cats={focusCats} daily={sumDaily(focusCats)} totals={focusRow} target={focusRow.target} focused={focusRow.category} onPick={() => setFocus(null)} />
+          : <PaceChart p={p} cats={view.cats} daily={view.daily} totals={p} target={target} onPick={setFocus} />}
       </section>
 
       <section className={styles.card}>
