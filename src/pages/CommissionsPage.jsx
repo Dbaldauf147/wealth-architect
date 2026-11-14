@@ -161,7 +161,7 @@ function PayScheduleCard({ schedule, takeHome }) {
                 <td className={styles.nowrap}>
                   {p.status === 'received'
                     ? <span className={own.statusReceived}>Received {cents(p.received)}</span>
-                    : <span className={own.statusExpected}>Expected</span>}
+                    : <span className={own.statusExpected} title={p.late ? 'This payday has passed with no deposit in your transactions yet. It still counts as expected for the month.' : undefined}>{p.late ? 'Expected · not in yet' : 'Expected'}</span>}
                 </td>
               </tr>
             ))}

@@ -71,14 +71,15 @@ export function baseSalary(paychecks, today = new Date()) {
 /**
  * Every payday from the start of this month through `months` months: the
  * mid-month paycheck (base) and the month-end one (base + commission).
- * Paydays already in this month show what actually landed.
+ * Paydays already in this month show what actually landed; one that has gone
+ * by with nothing on record yet stays expected, with `late` set.
  *
  * @param base       baseSalary() output
  * @param paychecks  computeIncome().paychecks
  * @param expected   expectedPayouts() — commission still to be paid
  * @param takeHome   share of pre-tax commission that lands (commissionTakeHome), or null
  * @returns [{ date, dateKey, kind: 'mid'|'end', base, commissionPreTax, commissionTakeHome,
- *             total, projected, status: 'received'|'expected', received, earnedMonth, rows }]
+ *             total, projected, status: 'received'|'expected', late, received, earnedMonth, rows }]
  */
 export function paySchedule({ base, paychecks, expected, takeHome, today = new Date(), months = 12 }) {
   if (!base) return [];
@@ -95,8 +96,10 @@ export function paySchedule({ base, paychecks, expected, takeHome, today = new D
         ? businessDayOnOrBefore(new Date(y, m - 1, Math.min(base.day, new Date(y, m, 0).getDate())))
         : businessDayOnOrBefore(monthEnd(key));
       const landed = inMonth.filter(p => (kind === 'mid' ? isMid(p) : !isMid(p))).sort((a, b) => b.amount - a.amount)[0] || null;
-      // A payday that has gone by without a deposit isn't expected any more.
-      if (!landed && date < t0) continue;
+      // Two paychecks land every month, so a payday that has gone by without
+      // a deposit on record is still expected (a deposit can take a few days
+      // to show up in the ledger): it's kept, marked late.
+      const late = !landed && date < t0;
       const payout = kind === 'end' ? (expected || []).find(p => p.payMonth === key) || null : null;
       const preTax = payout ? payout.amount : 0;
       const commissionTakeHome = round2(preTax * rate);
@@ -112,6 +115,7 @@ export function paySchedule({ base, paychecks, expected, takeHome, today = new D
         earnedMonth: payout ? payout.earnedMonth : kind === 'end' ? addMonths(key, -1) : null,
         rows: payout ? payout.rows : [],
         status: landed ? 'received' : 'expected',
+        late,
         received: landed ? round2(landed.amount) : null,
       };
       out.push(row);
@@ -341,8 +345,9 @@ export function payByMonth({ rows, paychecks, base, takeHome, range = 'around', 
       const [y, m] = pt.payMonth.split('-').map(Number);
       const midDate = businessDayOnOrBefore(new Date(y, m - 1, Math.min(base.day, new Date(y, m, 0).getDate())));
       const endDate = businessDayOnOrBefore(new Date(y, m, 0));
-      if (!has('mid') && midDate >= t0) expectedSlots++;
-      if (!has('end') && endDate >= t0) expectedSlots++;
+      // This month's count even once their day has passed: both land every month.
+      if (!has('mid') && (midDate >= t0 || pt.payMonth === nowKey)) expectedSlots++;
+      if (!has('end') && (endDate >= t0 || pt.payMonth === nowKey)) expectedSlots++;
     }
     const endPending = pt.payMonth >= nowKey && !has('end');
     const baseActual = round2(landed.reduce((s, l) => s + l.base, 0));
