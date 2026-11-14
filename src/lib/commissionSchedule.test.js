@@ -92,11 +92,14 @@ describe('commission chart', () => {
 });
 
 describe('paySchedule past paydays', () => {
-  it('drops a payday that went by with no deposit', () => {
+  it('still expects a payday that went by with no deposit yet, marked late', () => {
     const base = baseSalary(paychecks, today);
     const later = new Date(2026, 10, 20);
     const s = paySchedule({ base, paychecks, expected: [], takeHome: 0.5, today: later, months: 1 });
-    expect(s.map(p => p.kind)).toEqual(['end']);
+    expect(s.map(p => `${p.kind} ${p.status} ${p.late}`)).toEqual(['mid expected true', 'end expected false']);
+    // Once it lands it's received, not late.
+    const landed = paySchedule({ base, paychecks: [...paychecks, pc(2026, 11, 16, 3000)], expected: [], takeHome: 0.5, today: later, months: 1 });
+    expect(landed[0]).toMatchObject({ kind: 'mid', status: 'received', late: false });
   });
 });
 
