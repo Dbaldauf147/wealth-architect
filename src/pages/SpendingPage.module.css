@@ -79,3 +79,65 @@ tr td.under {
   font-weight: 700;
   border-top: 2px solid var(--color-surface-alt);
 }
+
+.legendDot {
+  border-top-style: dotted;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-ghost, rgba(0, 0, 0, 0.12));
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chip i,
+.catName i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+  flex: none;
+}
+
+.chipOff {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.chipLink {
+  border: none;
+  background: none;
+  padding: 5px 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-secondary, #0058be);
+  cursor: pointer;
+}
+
+.catName {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.rowOff td {
+  opacity: 0.45;
+}

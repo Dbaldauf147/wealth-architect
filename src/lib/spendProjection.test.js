@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { projectMonthSpending } from './spendProjection.js';
+import { projectMonthSpending, sumDaily } from './spendProjection.js';
 
 const tx = (date, amount, category) => ({ date, amount, category, description: category });
 const today = new Date(2026, 10, 14); // Nov 14, 2026
@@ -52,6 +52,15 @@ describe('projectMonthSpending', () => {
     expect(p.daily[14].actual).toBeNull();
     expect(p.daily[19]).toMatchObject({ day: 20, projected: 2540 });
     expect(p.daily[29]).toMatchObject({ day: 30, projected: 2740, typical: 2600 });
+  });
+  it('carries each category day by day, and they add up to the month', () => {
+    expect(cat('Groceries').daily[5]).toMatchObject({ day: 6, actual: 150, projected: null });
+    expect(cat('Groceries').daily[19]).toMatchObject({ day: 20, actual: null, projected: 450, typical: 400 });
+    expect(cat('Travel').daily[29]).toMatchObject({ projected: 200 });
+    expect(sumDaily(p.categories)).toEqual(p.daily);
+    const noRent = sumDaily(p.categories.filter(c => c.category !== 'Rent'));
+    expect(noRent[13]).toMatchObject({ actual: 240, projected: 240 });
+    expect(noRent[29]).toMatchObject({ projected: 740, typical: 600 });
   });
   it('projects nothing more without history, or on the last day', () => {
     const fresh = projectMonthSpending({ transactions: ledger().filter(t => t.date.startsWith('2026-11')), today });
