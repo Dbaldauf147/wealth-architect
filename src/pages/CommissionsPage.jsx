@@ -6,7 +6,7 @@ import { computeIncome, commissionTakeHome, monthKeysEnding, monthKeyFor } from 
 import {
   baseSalary, paySchedule, commissionRows, chartPoints, rawSheetRows, chartSheetRows,
   expectedVsActual, expectedVsActualTotals, expectedVsActualSheetRows,
-  payByMonth, payByMonthSheetRows, payByMonthPaycheckRows, dealHistory, dealHistorySheetRows, addMonths, gapReasonSheetRows,
+  payByMonth, payByMonthSheetRows, payByMonthPaycheckRows, dealHistory, dealHistorySheetRows, monthEndBase, addMonths, gapReasonSheetRows,
   CHART_RANGES, STATUSES,
 } from '../lib/commissionSchedule';
 import { downloadXlsx } from '../lib/xlsx';
@@ -584,8 +584,17 @@ const DEAL_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#8b5cf6', '#e0a40b', '#e0
    ones in that month's month-end paycheck), each deal's payouts across 24 pay
    months — the last 12 and the next 12, or around the paycheck if it's further
    out — so the paycheck can be read against its deals' past and future. */
-function PaycheckDealsModal({ slot, point, rows, takeHome, onClose }) {
+// Whether the popup's chart stacks base salary under the commission: a view
+// preference, kept in this browser only.
+const SHOW_BASE_KEY = 'wa-commission-deal-base';
+const BASE_COLOR = '#475569';
+function PaycheckDealsModal({ slot, point, rows, takeHome, paychecks, base, onClose }) {
   const [ref, width] = useMeasuredWidth();
+  const [showBase, setShowBase] = useState(() => { try { return localStorage.getItem(SHOW_BASE_KEY) === '1'; } catch { return false; } });
+  const toggleBase = () => setShowBase(v => {
+    try { localStorage.setItem(SHOW_BASE_KEY, v ? '0' : '1'); } catch { /* private mode */ }
+    return !v;
+  });
   const rate = takeHome ?? 0.6;
   const nowKey = monthKeyFor(new Date());
   const from = useMemo(() => {
@@ -594,6 +603,9 @@ function PaycheckDealsModal({ slot, point, rows, takeHome, onClose }) {
   }, [slot.payMonth, nowKey]);
   const history = useMemo(() => dealHistory({ rows, deals: point.rows, takeHome, from, months: 24 }), [rows, point.rows, takeHome, from]);
   const colorOf = Object.fromEntries(history.deals.map((d, i) => [d.key, DEAL_COLORS[i % DEAL_COLORS.length]]));
+  const baseBy = useMemo(() => monthEndBase({ paychecks, base, from, months: 24 }), [paychecks, base, from]);
+  const hasBase = Object.keys(baseBy).length > 0;
+  const baseAt = p => (showBase && baseBy[p.payMonth]) || null;
   const figured = useData().commissionReview?.figured || {};
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };
@@ -605,7 +617,7 @@ function PaycheckDealsModal({ slot, point, rows, takeHome, onClose }) {
   const pad = { top: 12, right: 8, bottom: 26, left: 52 };
   const innerW = width - pad.left - pad.right;
   const innerH = H - pad.top - pad.bottom;
-  const max = niceMax(Math.max(1, ...history.points.map(p => p.takeHome)));
+  const max = niceMax(Math.max(1, ...history.points.map(p => p.takeHome + (baseAt(p)?.amount || 0))));
   const step = innerW / history.points.length;
   const barW = Math.max(4, Math.min(26, step * 0.62));
   const y = v => pad.top + innerH - (v / max) * innerH;
@@ -659,9 +671,15 @@ function PaycheckDealsModal({ slot, point, rows, takeHome, onClose }) {
                 <span key={d.key} className={own.chip} style={{ cursor: 'default', ...(figured[reviewKey(d)] ? { color: '#00684a', fontWeight: 700 } : null) }}><i style={{ background: colorOf[d.key] }} /><span title={dealDisplay(d).full}>{figured[reviewKey(d)] ? '✓ ' : ''}{dealLabel(d)}</span></span>
               ))}
               <span className={own.chip} style={{ cursor: 'default' }}><i style={{ background: 'transparent', border: '1.5px dashed var(--color-text-secondary)' }} />Projected</span>
+              {hasBase && (
+                <button type="button" className={`${own.chip} ${showBase ? '' : own.chipOff}`} aria-pressed={showBase} onClick={toggleBase} data-testid="toggle-base-salary"
+                  title={showBase ? 'Hide base salary: show commission only' : 'Stack the month-end paycheck’s base salary under the commission'}>
+                  <i style={{ background: BASE_COLOR }} />Base salary
+                </button>
+              )}
             </div>
             <div ref={ref} className={styles.chartWrap} data-testid="deal-history-chart">
-              <svg width={width} height={H} role="img" aria-label="Take-home commission from these deals by pay month">
+              <svg width={width} height={H} role="img" aria-label={`Take-home commission from these deals by pay month${showBase ? ', on top of base salary' : ''}`}>
                 {[0, 0.25, 0.5, 0.75, 1].map(f => f * max).map(t => (
                   <g key={t}>
                     <line x1={pad.left} x2={width - pad.right} y1={y(t)} y2={y(t)} stroke="var(--color-surface-alt)" />
@@ -671,11 +689,16 @@ function PaycheckDealsModal({ slot, point, rows, takeHome, onClose }) {
                 {history.points.map((p, i) => {
                   const x0 = pad.left + step * i + step / 2 - barW / 2;
                   const isThis = p.payMonth === point.payMonth;
-                  let acc = 0;
+                  const b = baseAt(p);
+                  let acc = b ? b.amount : 0;
                   return (
                     <g key={p.payMonth} data-month={p.payMonth}>
-                      <title>{`${monthLabel(p.payMonth)} month-end: ${cents(p.takeHome)} take-home (${cents(p.amount)} pre-tax)${p.status === 'projected' ? ', projected' : ''}`}</title>
+                      <title>{`${monthLabel(p.payMonth)} month-end: ${cents(p.takeHome)} take-home (${cents(p.amount)} pre-tax)${p.status === 'projected' ? ', projected' : ''}${b ? ` + ${cents(b.amount)} base salary${b.status === 'projected' ? ' (expected)' : ''} = ${cents(p.takeHome + b.amount)}` : ''}`}</title>
                       {isThis && <rect x={pad.left + step * i} y={pad.top} width={step} height={innerH} fill="var(--color-surface-alt)" />}
+                      {b && b.amount > 0 && (
+                        <rect data-base={b.status} x={x0} y={y(b.amount)} width={barW} height={Math.max(0, y(0) - y(b.amount) - 1)} rx={2} fill={BASE_COLOR}
+                          fillOpacity={b.status === 'projected' ? 0.28 : 1} stroke={b.status === 'projected' ? BASE_COLOR : 'none'} strokeDasharray={b.status === 'projected' ? '3 2' : undefined} />
+                      )}
                       {history.deals.map(d => {
                         const v = p.byDeal[d.key];
                         if (!v || !(v.amount > 0)) return null;
@@ -983,7 +1006,7 @@ function CommissionChartCard({ commissions, takeHome, paychecks, base }) {
         const point = payPoints.find(p => p.payMonth === popup.payMonth);
         // Per month, a click means the month: show it through its month-end paycheck.
         const slot = popup.kind ? popup : point?.slots[1];
-        return point && slot ? <PaycheckDealsModal slot={slot} point={point} rows={rows} takeHome={takeHome} onClose={() => setPopup(null)} /> : null;
+        return point && slot ? <PaycheckDealsModal slot={slot} point={point} rows={rows} takeHome={takeHome} paychecks={paychecks} base={base} onClose={() => setPopup(null)} /> : null;
       })()}
     </section>
   );
