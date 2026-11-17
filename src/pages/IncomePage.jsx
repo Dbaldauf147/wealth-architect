@@ -4,6 +4,7 @@ import { computeIncome, monthKeysEnding, monthKeyFor, commissionTakeHome, foreca
 import { expectedPayouts, isPayroll } from '../lib/commissions';
 import { useCommissions } from '../hooks/useCommissions';
 import { CommissionsIncomeCard, ExpectedCommissionsCard } from '../components/CommissionsIncomeCard';
+import { CommissionsPage } from './CommissionsPage';
 import styles from './IncomePage.module.css';
 
 /* Just the income: where it comes from, how regularly, how it's trending.
@@ -80,7 +81,34 @@ function monthsSpanned(transactions, today) {
   return monthKeysEnding(last, (ly - fy) * 12 + (lm - fm) + 1);
 }
 
-export function IncomePage() {
+// Commissions lives here as a tab: it's the other half of the paycheck.
+const TABS = [
+  { id: 'income', label: 'Income' },
+  { id: 'commissions', label: 'Commissions' },
+];
+
+// Each tab has its own address (#income, #commissions), so a reload, a link
+// or the sidebar's Income item always lands on the tab it names.
+function openTab(id) { window.location.hash = id; }
+
+export function IncomePage({ initialTab = 'income' }) {
+  const tab = TABS.some(t => t.id === initialTab) ? initialTab : 'income';
+  return (
+    <div className={styles.wrap}>
+      <div className={styles.tabs} role="tablist" aria-label="Income and commissions">
+        {TABS.map(t => (
+          <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} className={`${styles.tab} ${tab === t.id ? styles.tabActive : ''}`} onClick={() => openTab(t.id)} data-testid={`income-tab-${t.id}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === 'income' && <IncomeOverview />}
+      {tab === 'commissions' && <CommissionsPage />}
+    </div>
+  );
+}
+
+function IncomeOverview() {
   const { transactions, incomeCategories, loading } = useData();
   const [range, setRange] = useState(12);
   const [showAll, setShowAll] = useState(false);
