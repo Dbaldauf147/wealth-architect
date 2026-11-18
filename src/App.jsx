@@ -72,7 +72,6 @@ const SpendingPage = lazy(() => import('./pages/SpendingPage').then(m => ({ defa
 const RecurringPage = lazy(() => import('./pages/RecurringPage').then(m => ({ default: m.RecurringPage })));
 const CashFlowPage = lazy(() => import('./pages/CashFlowPage').then(m => ({ default: m.CashFlowPage })));
 const IncomePage = lazy(() => import('./pages/IncomePage').then(m => ({ default: m.IncomePage })));
-const CommissionsPage = lazy(() => import('./pages/CommissionsPage').then(m => ({ default: m.CommissionsPage })));
 const OvershotPage = lazy(() => import('./pages/OvershotPage').then(m => ({ default: m.OvershotPage })));
 const CardPromosPage = lazy(() => import('./pages/CardPromosPage').then(m => ({ default: m.CardPromosPage })));
 const SplitwisePage = lazy(() => import('./pages/SplitwisePage').then(m => ({ default: m.SplitwisePage })));
@@ -149,7 +148,6 @@ const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: 'dashboard' },
   { id: 'transactions', label: 'Transactions', icon: 'receipt_long' },
   { id: 'income', label: 'Income', icon: 'account_balance_wallet' },
-  { id: 'commissions', label: 'Commissions', icon: 'handshake' },
   { id: 'cashflow', label: 'Cash Flow', icon: 'payments' },
   { id: 'overshot', label: 'Overshot', icon: 'balance' },
   { id: 'networth', label: 'Net Worth', icon: 'show_chart' },
@@ -306,7 +304,8 @@ export function App() {
   // CSR Benefits is a tab of Card Promotions, so its link lights up that item.
   // Spending Trends is a tab of Budgets & Trends; its old link still opens it.
   // Assets & Liabilities is a tab of Net Worth; same again.
-  const navActive = view === 'benefits' ? 'promos' : view === 'trends' ? 'budgets' : view === 'assets' ? 'networth' : view;
+  // Commissions is a tab of Income.
+  const navActive = view === 'benefits' ? 'promos' : view === 'trends' ? 'budgets' : view === 'assets' ? 'networth' : view === 'commissions' ? 'income' : view;
 
   function navigate(id) {
     window.location.hash = id;
@@ -317,8 +316,8 @@ export function App() {
   function renderPage() {
     switch (view) {
       case 'transactions': return <TransactionsPage />;
-      case 'income': return <IncomePage />;
-      case 'commissions': return <CommissionsPage />;
+      case 'income': return <IncomePage key="income" />;
+      case 'commissions': return <IncomePage key="commissions" initialTab="commissions" />;
       case 'cashflow': return <CashFlowPage />;
       case 'overshot': return <OvershotPage />;
       case 'networth': return <NetWorthPage key="networth" />;
