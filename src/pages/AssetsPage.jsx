@@ -14,7 +14,7 @@ function loadJSON(key, fallback) {
 }
 function saveJSON(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
 
-export function AssetsPage() {
+export function AssetsPage({ embedded = false }) {
   const { balances, loading, accountNicknames, accountGroups } = useData();
   const { setAccountNickname, addCustomAsset, removeCustomAsset, addCustomLiability, removeCustomLiability } = useDataActions();
   const nicknames = accountNicknames || {};
@@ -126,13 +126,13 @@ export function AssetsPage() {
 
   return (
     <div className={styles.page}>
-      {/* Page Header */}
-      <div className={styles.pageHeader}>
+      {/* Page Header — the Net Worth tab bar names it when embedded there */}
+      {!embedded && <div className={styles.pageHeader}>
         <div>
           <h1 className={styles.pageTitle}>Assets & Liabilities</h1>
           <div className={styles.pageSubtitle}>{today}</div>
         </div>
-      </div>
+      </div>}
 
       {/* Net Worth Hero */}
       <div className={styles.heroCard}>

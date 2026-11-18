@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useData } from '../contexts/DataContext';
 import { NetWorthSnapshot } from '../components/NetWorthSnapshot';
+import { AssetsPage } from './AssetsPage';
 import styles from './NetWorthPage.module.css';
 
 function fmt(n) {
@@ -63,18 +64,20 @@ const VIEW_OPTIONS = [
   { id: 'breakdown', label: 'Assets vs Liabilities' },
 ];
 
-// Two ways to read the same balances: the line over time, and a
-// month-against-month table of where the money actually sits.
+// Three ways to read the same balances: the line over time, a
+// month-against-month table of where the money actually sits, and today's
+// balance sheet account by account (formerly its own Assets & Liabilities page).
 const PAGE_TABS = [
   { id: 'trend', label: 'Trend', icon: 'show_chart' },
   { id: 'snapshot', label: 'Monthly Snapshot', icon: 'table_rows' },
+  { id: 'accounts', label: 'Assets & Liabilities', icon: 'account_balance' },
 ];
 
-export function NetWorthPage() {
+export function NetWorthPage({ initialTab = 'trend' }) {
   const { balances, balanceHistory, loading } = useData();
   const [rangeId, setRangeId] = useState('1y');
   const [viewId, setViewId] = useState('networth');
-  const [tabId, setTabId] = useState('trend');
+  const [tabId, setTabId] = useState(PAGE_TABS.some(t => t.id === initialTab) ? initialTab : 'trend');
 
   // Walk the balance history forward, maintaining the latest known balance for
   // each account. At every snapshot date emit a net-worth row using the
@@ -281,14 +284,6 @@ export function NetWorthPage() {
     return { rows, inChart, missing, missingCustom, missingMismatch, missingNoHistory, total: balances.netWorth ?? 0 };
   }, [balances, balanceHistory]);
 
-  if (loading && (!balanceHistory || balanceHistory.length === 0)) {
-    return (
-      <div className={styles.page}>
-        <div className={styles.emptyState}>Loading balance history…</div>
-      </div>
-    );
-  }
-
   const tabBar = (
     <div className={styles.tabBar}>
       {PAGE_TABS.map(t => (
@@ -297,6 +292,7 @@ export function NetWorthPage() {
           type="button"
           className={`${styles.tab} ${tabId === t.id ? styles.tabActive : ''}`}
           onClick={() => setTabId(t.id)}
+          data-testid={`networth-tab-${t.id}`}
         >
           <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{t.icon}</span>
           {t.label}
@@ -304,6 +300,26 @@ export function NetWorthPage() {
       ))}
     </div>
   );
+
+  // Today's balance sheet doesn't need the history, so it isn't held up
+  // waiting for it.
+  if (tabId === 'accounts') {
+    return (
+      <div className={styles.page}>
+        {tabBar}
+        <AssetsPage embedded />
+      </div>
+    );
+  }
+
+  if (loading && (!balanceHistory || balanceHistory.length === 0)) {
+    return (
+      <div className={styles.page}>
+        <div className={styles.emptyState}>Loading balance history…</div>
+      </div>
+    );
+  }
+
 
   if (tabId === 'snapshot') {
     return (
