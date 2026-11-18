@@ -15,6 +15,12 @@
    commission arrives inside the month-end paycheck, taxed, so it's whatever
    a paycheck carries above the typical plain one (splitPaychecks).
 
+   Dividends and interest are left out of the monthly figures entirely: they
+   are what savings and investments earn, not what you earn, and a quarterly
+   dividend or a year-end interest payment makes months look better than the
+   paycheck behind them. They're reported on their own (`investmentIncome`)
+   so nothing disappears, and Cash Flow's Income still counts them.
+
    Months are bucketed with cashFlowMonthKey, so rent received at the end of a
    month lands on the month it pays for, exactly as on Cash Flow.
 
@@ -27,6 +33,16 @@ const DAY = 86400000;
 const DEFAULT_INCOME = ['paycheck', 'income', 'tax refund/payment'];
 const MOVING = new Set(['transfer', 'credit card payment', 'credit card payments', 'investments', 'retirement']);
 const round2 = n => Math.round(n * 100) / 100;
+// Dividends and interest: by category or subcategory name, or a description
+// that says so ("Cash dividend of $94.26 from Vug", "Interest earned").
+const INVESTMENT_NAME = /^(dividends?|interest)( income| earned| paid)?$/i;
+const INVESTMENT_TEXT = /\b(dividends?|interest)\b/i;
+export function isInvestmentIncome(t) {
+  if (!t || isPayroll(t)) return false;
+  if (INVESTMENT_NAME.test(String(t.category || '').trim())) return true;
+  if (INVESTMENT_NAME.test(String(t.subcategory || '').trim())) return true;
+  return INVESTMENT_TEXT.test(`${t.description || ''} ${t.fullDescription || ''}`);
+}
 // A paycheck this little over base is payroll noise, not commission.
 const NOISE = 50;
 // Share of a pre-tax commission that reaches the account, until the ledger
@@ -208,6 +224,7 @@ export function computeIncome({ transactions, incomeCategories, monthKeys, today
 
   const income = [];
   const credits = [];
+  const investment = [];
   let priorTotal = 0;
   const yearAgo = {};  // monthKey (shifted +12) -> total, for same-month-last-year
   const allIncomeByMonth = {};
@@ -220,6 +237,11 @@ export function computeIncome({ transactions, incomeCategories, monthKeys, today
     const key = cashFlowMonthKey(t);
     if (!key) continue;
     const isIncome = incomeSet.has(cat);
+    if (isIncome && isInvestmentIncome(t)) {
+      const date = new Date(t.date);
+      if (inWindow.has(key) && !isNaN(date)) investment.push({ t, date, key, amount });
+      continue;
+    }
     if (isIncome) {
       allIncomeByMonth[key] = (allIncomeByMonth[key] || 0) + amount;
       if (inPrior.has(key)) priorTotal += amount;
@@ -254,6 +276,7 @@ export function computeIncome({ transactions, incomeCategories, monthKeys, today
     const bySource = {};
     for (const r of rows) bySource[sourceOf(r)] = round2((bySource[sourceOf(r)] || 0) + r.amount);
     const creditTotal = round2(credits.filter(r => r.key === key).reduce((s, r) => s + r.amount, 0));
+    const investmentTotal = round2(investment.filter(r => r.key === key).reduce((s, r) => s + r.amount, 0));
     const total = round2(rows.reduce((s, r) => s + r.amount, 0));
     // Base salary, commission, and everything else (by source).
     const parts = { base: 0, commission: 0, other: 0 };
@@ -272,7 +295,8 @@ export function computeIncome({ transactions, incomeCategories, monthKeys, today
       parts,
       otherBySource,
       credits: creditTotal,
-      cashFlowIncome: round2(total + creditTotal),
+      investmentIncome: investmentTotal,
+      cashFlowIncome: round2(total + creditTotal + investmentTotal),
       lastYear: yearAgo[key],
       partial: key === nowKey,
       count: rows.length,
@@ -361,6 +385,13 @@ export function computeIncome({ transactions, incomeCategories, monthKeys, today
         date: r.date, description: r.t.description, category: r.t.category || 'Uncategorized', amount: r.amount,
       })),
       count: credits.length,
+    },
+    investmentIncome: {
+      total: round2(investment.reduce((s, r) => s + r.amount, 0)),
+      top: [...investment].sort((a, b) => b.date - a.date).slice(0, 12).map(r => ({
+        date: r.date, description: r.t.description, category: r.t.subcategory ? `${r.t.category} › ${r.t.subcategory}` : (r.t.category || 'Income'), amount: r.amount,
+      })),
+      count: investment.length,
     },
     summary: {
       total,

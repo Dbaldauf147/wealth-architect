@@ -158,3 +158,39 @@ describe('base salary and commission', () => {
     expect(f.months[0]).toMatchObject({ paychecks: 0, commission: 0 });
   });
 });
+
+describe('computeIncome — dividends and interest', () => {
+  const keys = monthKeysEnding('2026-06', 6);
+  const today = d(2026, 6, 10);
+  const txns = [
+    ...ledger(),
+    tx('03/31/2026', 94.26, 'Income', 'Cash dividend of $94.26 from Vug', { account: 'Brokerage' }),
+    tx('03/31/2026', 12.5, 'Income', 'Interest earned', { subcategory: 'Interest' }),
+    tx('05/15/2026', 40, 'Dividends', 'VTI DIV'),
+    tx('04/30/2026', 8, 'Income', 'Monthly payment', { subcategory: 'Dividends' }),
+  ];
+  const r = computeIncome({ transactions: txns, incomeCategories: ['Paycheck', 'Income', 'Tax Refund/Payment', 'Dividends'], monthKeys: keys, today });
+  const m = Object.fromEntries(r.months.map(x => [x.key, x]));
+
+  it('keeps them out of the monthly buckets and totals', () => {
+    expect(m['2026-03'].total).toBe(2000 * 2 + 1500);
+    expect(m['2026-03'].parts.other).toBe(1500);
+    expect(m['2026-04'].bySource).not.toHaveProperty('Income › Dividends');
+    expect(m['2026-05'].bySource).not.toHaveProperty('Dividends');
+    expect(r.sources.map(s => s.source)).not.toContain('Dividends');
+  });
+
+  it('reports them separately and still reconciles to Cash Flow', () => {
+    expect(r.investmentIncome.count).toBe(4);
+    expect(r.investmentIncome.total).toBe(154.76);
+    expect(m['2026-03'].investmentIncome).toBe(106.76);
+    expect(m['2026-03'].cashFlowIncome).toBe(m['2026-03'].total + 120 + 106.76);
+  });
+
+  it('never treats a paycheck as interest', () => {
+    const pay = tx('06/05/2026', 2000, 'Paycheck', 'SPECIAL INTEREST GROUP PAYROLL PPD ID: 5');
+    const r2 = computeIncome({ transactions: [pay], incomeCategories: ['Paycheck'], monthKeys: keys, today });
+    expect(r2.investmentIncome.count).toBe(0);
+    expect(r2.months.at(-1).total).toBe(2000);
+  });
+});

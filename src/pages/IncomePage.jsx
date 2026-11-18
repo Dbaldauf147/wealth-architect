@@ -133,7 +133,7 @@ function IncomeOverview() {
   if (loading && !result) return <div className={styles.empty}>Loading transactions…</div>;
   if (!result) return <div className={styles.empty}>No transactions yet.</div>;
 
-  const { months, sources, sourceOrder, summary, current, deposits, credits } = result;
+  const { months, sources, sourceOrder, summary, current, deposits, credits, investmentIncome } = result;
   // Same colours as the chart: payroll in base-salary blue, the rest in other-income green.
   const payrollSources = new Set(deposits.filter(x => isPayroll(x)).map(x => x.source));
   const colorOf = src => (payrollSources.has(src) ? PARTS[0].color : sourceOrder.includes(src) ? PARTS[2].color : OTHER);
@@ -186,7 +186,7 @@ function IncomeOverview() {
         <div className={styles.controlsNote}>
           Counting {summary.categories.map(c => `“${c}”`).join(', ')}
           {summary.usingDefaults ? ' (Cash Flow’s defaults — set your own in the Income bucket on Transactions)' : ' — the Income bucket on Transactions'}.
-          Transfers and investments never count.
+          Transfers and investments never count, and dividends and interest are left out of the monthly figures.
         </div>
       </div>
 
@@ -328,6 +328,31 @@ function IncomeOverview() {
           </button>
         )}
       </section>
+
+      {investmentIncome.count > 0 && (
+        <details className={styles.card} data-testid="income-investment">
+          <summary className={styles.summary}>
+            <span className={styles.cardTitle}>Dividends &amp; interest: {money(investmentIncome.total)}</span>
+            <span className={styles.muted}> — {investmentIncome.count} in the range, left out of the monthly figures above. Cash Flow still counts them in its Income.</span>
+          </summary>
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
+              <thead><tr><th>Date</th><th>Description</th><th>Category</th><th className={styles.num}>Amount</th></tr></thead>
+              <tbody>
+                {investmentIncome.top.map((x, i) => (
+                  <tr key={i}>
+                    <td className={styles.nowrap}>{dayY(x.date)}</td>
+                    <td>{x.description}</td>
+                    <td className={styles.muted}>{x.category}</td>
+                    <td className={styles.num}>{cents(x.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {investmentIncome.count > investmentIncome.top.length && <div className={styles.muted} style={{ marginTop: 8 }}>The {investmentIncome.top.length} most recent of {investmentIncome.count}.</div>}
+        </details>
+      )}
 
       {credits.count > 0 && (
         <details className={styles.card}>
