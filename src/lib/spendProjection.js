@@ -1,4 +1,4 @@
-/* Projected spending for the month in progress — the Budgets & Trends page's
+/* Projected spending for the month in progress — the Spending page's
    "This month" tab.
 
    No straight-line extrapolation: rent and the big bills land early, so

@@ -6,7 +6,7 @@ import BudgetChart from '../components/BudgetChart';
 import styles from './BudgetsPage.module.css';
 import {
   CHART_WINDOWS, WINDOW_DAYS, rangeWindows, spendByWindow, bandsFor, seriesFor,
-  windowIndexFor,
+  windowIndexFor, predictability, predictabilityLabel,
 } from '../lib/normalRange';
 
 const CATEGORY_ICONS = {
@@ -86,6 +86,14 @@ function weekLabelOf(ws) {
 }
 
 // Inline mini line chart with a shaded ±25% normal-range band and dashed avg line.
+// Predictability colour: steady reads green, swinging reads amber then red.
+function predictabilityColor(p) {
+  if (p == null) return 'var(--color-text-tertiary)';
+  if (p >= 80) return '#16a34a';
+  if (p >= 50) return '#e8a317';
+  return '#ba1a1a';
+}
+
 function RangeSparkline({ series, low, high, avg }) {
   const w = 180;
   const h = 56;
@@ -421,7 +429,7 @@ export function BudgetsPage() {
       keyFor: t => (inScope(t) ? t.category : null),
     });
 
-    const withSeries = values => ({ ...bandsFor(values), series: seriesFor(values, windows) });
+    const withSeries = values => ({ ...bandsFor(values), series: seriesFor(values, windows), predictability: predictability(values) });
 
     const grouped = new Map();
     for (const [key, values] of bySub) {
@@ -852,11 +860,12 @@ export function BudgetsPage() {
                           <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>Normal Range</th>
                           <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>Last 30 Days</th>
                           <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }}>Δ vs Avg</th>
+                          <th style={{ padding: '6px 8px', fontWeight: 600, textAlign: 'right' }} title="How steady this spend is from one 30-day period to the next: 100% means the same every period, lower means it swings">Predictability</th>
                           <th style={{ padding: '6px 8px', fontWeight: 600 }}>Trend (6 × 30d)</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {b.items.map(({ kind, sub, cat, avg, low, high, current, baselineWindows, status, series }) => {
+                        {b.items.map(({ kind, sub, cat, avg, low, high, current, baselineWindows, status, series, predictability: pred }) => {
                           const delta = current - avg;
                           const deltaPct = avg > 0 ? (delta / avg) * 100 : 0;
                           const deltaColor = status === 'over' ? '#ba1a1a' : status === 'under' ? '#e8a317' : 'var(--color-text-tertiary)';
@@ -918,13 +927,17 @@ export function BudgetsPage() {
                                     ? `${delta >= 0 ? '+' : '−'}${fmt(Math.abs(delta))} (${delta >= 0 ? '+' : '−'}${Math.abs(Math.round(deltaPct))}%)`
                                     : '—'}
                                 </td>
+                                <td style={{ padding: '8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: predictabilityColor(pred) }}
+                                    title={pred == null ? 'Needs at least 3 months of history' : `${predictabilityLabel(pred)} — based on ${series.length} × 30-day periods`}>
+                                  {pred == null ? '—' : `${pred}%`}
+                                </td>
                                 <td style={{ padding: '8px' }}>
                                   <RangeSparkline series={series} low={low} high={high} avg={avg} />
                                 </td>
                               </tr>
                               {isExpanded && (
                                 <tr style={{ background: 'var(--color-surface-alt, #f7f7f7)' }}>
-                                  <td colSpan={6} style={{ padding: '10px 14px 14px 28px' }}>
+                                  <td colSpan={7} style={{ padding: '10px 14px 14px 28px' }}>
                                     <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginBottom: 6, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
                                       {matchingTxns.length} {matchingTxns.length === 1 ? 'transaction' : 'transactions'} · last {WINDOW_DAYS} days · largest first · totalling {fmt(matchingTxns.reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0))} · {isCat ? `all subcategories of ${cat}` : `${cat} · ${sub}`}
                                     </div>
