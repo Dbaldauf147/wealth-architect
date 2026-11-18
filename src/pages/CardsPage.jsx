@@ -1,6 +1,8 @@
 import { Fragment, useCallback, useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
 import { buildCardSchedule } from '../lib/cardSchedule';
+import { detectPaychecks, projectPaychecks, paycheckDetail } from '../lib/upcomingCash';
+import { payerKey } from '../lib/income';
 import { computeCardLookback } from '../lib/cashflowExport';
 import { comparePaymentForCard, buildChargeSheets, buildPaymentHistory, auditPrediction } from '../lib/paymentReconcile';
 import { resolveCloseDay, ordinal } from '../lib/statementWindows';
@@ -217,7 +219,7 @@ function HistoryAuditDetail({ audit }) {
 }
 
 export function CardsPage() {
-  const { transactions, balances, accountNicknames, accountNumbers, accountGroups, loading, hiddenCards, paymentReminders, statementCloseDays, privacyMode } = useData();
+  const { transactions, balances, accountNicknames, accountNumbers, accountGroups, loading, hiddenCards, paymentReminders, statementCloseDays, privacyMode, incomeCategories } = useData();
   const { setAccountNickname, toggleHideCard } = useDataActions();
   const [view, setView] = useState('schedule');
   const [scheduleView, setScheduleView] = useState('calendar');
@@ -750,6 +752,13 @@ export function CardsPage() {
     return { dots, weekMarks };
   }, [schedule]);
 
+  // Regular paychecks — the same detection the Overshot page's cash plan uses,
+  // so both pages expect the same deposit on the same day.
+  const paychecks = useMemo(
+    () => (transactions?.length ? detectPaychecks({ transactions, incomeCategories, today: new Date() }) : []),
+    [transactions, incomeCategories],
+  );
+
   // Two-month calendar window. `calendarOffset` shifts the window in months so
   // the user can cycle back through history (or forward); offset 0 is the
   // default current + next month. Past cells show actual payments pulled from
@@ -783,6 +792,7 @@ export function CardsPage() {
           inMonth,
           isToday: sameDay(cellDate, now),
           payments: [],
+          paychecks: [],
         };
         cells.push(cell);
         if (inMonth) cellIndex.set(cellKey(cellDate), cell);
@@ -811,8 +821,40 @@ export function CardsPage() {
         if (cell) cell.payments.push({ card: s.card, color: s.color, amount: s.estimatedNextAmount, actual: false });
       }
     }
+
+    // Paychecks: deposits already landed from each regular payer (solid), and
+    // the ones expected from today to the end of the window (dashed).
+    if (paychecks.length) {
+      const keys = new Map(paychecks.map(p => [payerKey(p.rows[0].description), p.payer]));
+      for (const t of transactions || []) {
+        const amount = Number(t.amount);
+        if (!(amount > 0) || !t.date) continue;
+        const payer = keys.get(payerKey(t.description));
+        if (!payer) continue;
+        // A bare 2026-11-14 is UTC midnight — the 13th here. Read it as a local day.
+        const iso = /^\d{4}-\d{2}-\d{2}$/.test(String(t.date));
+        const date = new Date(iso ? `${t.date}T00:00:00` : t.date);
+        if (isNaN(date) || date.getTime() > now.getTime()) continue;
+        const cell = cellIndex.get(cellKey(date));
+        if (cell) cell.paychecks.push({ payer, amount, actual: true });
+      }
+      // Projected from the start of this month, so a payday that's gone by
+      // without its deposit showing up still shows — as overdue, not as nothing.
+      // A month whose deposit already landed (on any day) isn't projected.
+      const last = months[months.length - 1].cells.filter(c => c.inMonth).pop().date;
+      for (const p of projectPaychecks(paychecks, new Date(now.getFullYear(), now.getMonth(), 1), last)) {
+        const cell = cellIndex.get(cellKey(p.date));
+        // Already landed today? Then the solid chip is enough.
+        if (!cell || cell.paychecks.some(x => x.actual && x.payer === p.payer)) continue;
+        const overdue = p.date.getTime() < todayMid.getTime();
+        cell.paychecks.push({
+          payer: p.payer, amount: p.amount, actual: false,
+          detail: (overdue ? 'Not in your transactions yet.\n' : '') + paycheckDetail(p.slot),
+        });
+      }
+    }
     return months;
-  }, [schedule, calendarOffset]);
+  }, [schedule, calendarOffset, paychecks, transactions]);
 
   // Color legend for the calendar — every card with payment activity, so it
   // stays stable as the user navigates the month window.
@@ -1269,7 +1311,7 @@ export function CardsPage() {
             </div>
             <div className={styles.chartSubtitle}>
               {scheduleView === 'calendar'
-                ? 'Solid = actual payments · Dashed = projected from each card’s cadence'
+                ? 'Solid = actual · Dashed = projected from each card’s cadence and your usual paydays · Green = paychecks'
                 : 'Projected from each card’s historical payment cadence'}
             </div>
           </div>
@@ -1350,8 +1392,14 @@ export function CardsPage() {
               <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_right</span>
             </button>
           </div>
-          {calendarLegend.length > 0 && (
+          {(calendarLegend.length > 0 || paychecks.length > 0) && (
             <div className={styles.calendarLegend}>
+              {paychecks.length > 0 && (
+                <div className={styles.legendItem}>
+                  <span className={styles.legendSwatch} style={{ background: 'var(--color-success)' }} />
+                  <span className={styles.legendLabel}>Paycheck</span>
+                </div>
+              )}
               {calendarLegend.map(s => (
                 <div key={s.card} className={styles.legendItem}>
                   <span className={styles.legendSwatch} style={{ background: s.color }} />
@@ -1377,6 +1425,16 @@ export function CardsPage() {
                     return (
                       <div key={ci} className={classes.join(' ')}>
                         <div className={styles.calendarDayNum}>{c.dayNum}</div>
+                        {c.inMonth && c.paychecks.map((p, pi) => (
+                          <div
+                            key={`pay${pi}`}
+                            data-testid="calendar-paycheck"
+                            className={`${styles.calendarChip} ${styles.calendarChipPaycheck} ${p.actual ? '' : styles.calendarChipProjected}`}
+                            title={`${p.payer} paycheck — ${fmt(p.amount)} ${p.actual ? 'deposited' : 'expected'} on ${fmtDate(c.date)}${p.detail ? `\n${p.detail}` : ''}`}
+                          >
+                            +{fmt(p.amount)}
+                          </div>
+                        ))}
                         {c.inMonth && c.payments.map((p, pi) => (
                           <div
                             key={pi}

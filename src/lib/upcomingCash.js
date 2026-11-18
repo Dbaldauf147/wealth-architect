@@ -172,7 +172,9 @@ export function projectPaychecks(paychecks, today, until) {
         for (; d <= until; d = step(d)) out.push({ date: businessDayOnOrBefore(d), payer: p.payer, account: p.account, slot, amount: slot.amount });
         continue;
       }
-      for (let y = t0.getFullYear(), m = t0.getMonth(), i = 0; i < 4; i++) {
+      // Every month from this one through `until` (the calendar can look a
+      // year ahead; the cash plan only a few weeks).
+      for (let y = t0.getFullYear(), m = t0.getMonth(); new Date(y, m, 1) <= until;) {
         const d = slotDate(slot, y, m);
         // This month's deposit already landed, or the date's gone by.
         const already = slot.last.date.getFullYear() === y && slot.last.date.getMonth() === m;
