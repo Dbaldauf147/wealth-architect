@@ -67,7 +67,6 @@ import { useNavBadges } from './hooks/useNavBadges';
 const OverviewPage = lazy(() => import('./pages/OverviewPage').then(m => ({ default: m.OverviewPage })));
 const TransactionsPage = lazy(() => import('./pages/TransactionsPage').then(m => ({ default: m.TransactionsPage })));
 const CardsPage = lazy(() => import('./pages/CardsPage').then(m => ({ default: m.CardsPage })));
-const AssetsPage = lazy(() => import('./pages/AssetsPage').then(m => ({ default: m.AssetsPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const SpendingPage = lazy(() => import('./pages/SpendingPage').then(m => ({ default: m.SpendingPage })));
 const RecurringPage = lazy(() => import('./pages/RecurringPage').then(m => ({ default: m.RecurringPage })));
@@ -159,7 +158,6 @@ const NAV_ITEMS = [
   { id: 'budgets', label: 'Budgets & Trends', icon: 'savings' },
   { id: 'recurring', label: 'Recurring', icon: 'autorenew' },
   { id: 'home', label: 'Buying a Home', icon: 'home_work' },
-  { id: 'assets', label: 'Assets & Liabilities', icon: 'account_balance' },
   { id: 'cards', label: 'Cards Overview', icon: 'credit_card' },
   { id: 'promos', label: 'Card Promotions', icon: 'redeem' },
   { id: 'splitwise', label: 'Splitwise', icon: 'group' },
@@ -307,7 +305,8 @@ export function App() {
 
   // CSR Benefits is a tab of Card Promotions, so its link lights up that item.
   // Spending Trends is a tab of Budgets & Trends; its old link still opens it.
-  const navActive = view === 'benefits' ? 'promos' : view === 'trends' ? 'budgets' : view;
+  // Assets & Liabilities is a tab of Net Worth; same again.
+  const navActive = view === 'benefits' ? 'promos' : view === 'trends' ? 'budgets' : view === 'assets' ? 'networth' : view;
 
   function navigate(id) {
     window.location.hash = id;
@@ -322,13 +321,13 @@ export function App() {
       case 'commissions': return <CommissionsPage />;
       case 'cashflow': return <CashFlowPage />;
       case 'overshot': return <OvershotPage />;
-      case 'networth': return <NetWorthPage />;
+      case 'networth': return <NetWorthPage key="networth" />;
       case 'stocks': return <StockPerformancePage />;
       case 'trends': return <SpendingPage key="trends" initialTab="trends" />;
       case 'eatingout': return <EatingOutPage />;
       case 'budgets': return <SpendingPage key="budgets" />;
       case 'recurring': return <RecurringPage />;
-      case 'assets': return <AssetsPage />;
+      case 'assets': return <NetWorthPage key="assets" initialTab="accounts" />;
       case 'cards': return <CardsPage />;
       case 'benefits': return <CardPromosPage key="csr" mode="csr" />;
       case 'promos': return <CardPromosPage key="promos" mode="promos" />;
