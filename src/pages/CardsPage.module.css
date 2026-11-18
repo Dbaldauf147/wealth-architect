@@ -784,6 +784,16 @@
   border-style: dashed;
 }
 
+/* Money in: green, solid when deposited, dashed when expected. */
+.calendarChipPaycheck {
+  background: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.calendarChipPaycheck.calendarChipProjected {
+  color: var(--color-success);
+}
+
 .scheduleRow {
   cursor: pointer;
 }

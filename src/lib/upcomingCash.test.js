@@ -87,6 +87,11 @@ describe('projectPaychecks', () => {
     expect(projectPaychecks(p, today, d(2026, 11, 20)).map(x => x.date))
       .toEqual([d(2026, 10, 16), d(2026, 10, 30), d(2026, 11, 13)]);
   });
+  it('projects month-based pay as far ahead as asked, not just a few months', () => {
+    const far = projectPaychecks(paychecks, today, d(2027, 5, 31));
+    expect(far.filter(x => x.date.getFullYear() === 2027 && x.date.getMonth() === 4).map(x => x.date))
+      .toEqual([d(2027, 5, 14), d(2027, 5, 31)]);   // May 15 is a Saturday
+  });
   it('moves a weekend to the Friday before', () => {
     expect(businessDayOnOrBefore(d(2026, 8, 15))).toEqual(d(2026, 8, 14));
     expect(businessDayOnOrBefore(d(2026, 10, 15))).toEqual(d(2026, 10, 15));
