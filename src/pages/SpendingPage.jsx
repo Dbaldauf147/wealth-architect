@@ -480,7 +480,7 @@ export function SpendingPage({ initialTab = 'month' }) {
   const [tab, setTab] = useState(TABS.some(t => t.id === initialTab) ? initialTab : 'month');
   return (
     <div className={own.wrap}>
-      <div className={own.tabs} role="tablist" aria-label="Budgets and trends">
+      <div className={own.tabs} role="tablist" aria-label="Spending">
         {TABS.map(t => (
           <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} className={`${own.tab} ${tab === t.id ? own.tabActive : ''}`} onClick={() => setTab(t.id)} data-testid={`spending-tab-${t.id}`}>
             {t.label}

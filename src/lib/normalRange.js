@@ -155,3 +155,35 @@ export function seriesFor(values, windows) {
 /** How the current window is described wherever this appears. */
 export const WINDOW_LABEL = 'last 30 days';
 export const BASELINE_LABEL = 'previous three 30-day periods';
+
+/**
+ * How predictable a key's spending is, 0–100, from its per-window totals
+ * (`values[0]` newest). 100 means every 30-day period cost the same; the score
+ * falls as the periods spread apart: 100 × (1 − coefficient of variation),
+ * floored at 0.
+ *
+ * Empty windows count — a category bought every other month genuinely is hard
+ * to predict — except the ones older than its first spend, which are just
+ * before the history starts. Fewer than three windows of history is too
+ * little to call, so that returns null.
+ */
+export function predictability(values, { minWindows = 3 } = {}) {
+  const list = (values || []).map(v => Number(v) || 0);
+  let oldest = list.length - 1;
+  while (oldest >= 0 && list[oldest] <= 0) oldest--;
+  const span = list.slice(0, oldest + 1);
+  if (span.length < minWindows) return null;
+  const mean = span.reduce((s, v) => s + v, 0) / span.length;
+  if (mean <= 0) return null;
+  const variance = span.reduce((s, v) => s + (v - mean) ** 2, 0) / span.length;
+  const cv = Math.sqrt(variance) / mean;
+  return Math.max(0, Math.round(100 * (1 - cv)));
+}
+
+/** Plain-words reading of a predictability score. */
+export function predictabilityLabel(score) {
+  if (score == null) return 'Not enough history';
+  if (score >= 80) return 'Very predictable';
+  if (score >= 50) return 'Somewhat predictable';
+  return 'Unpredictable';
+}

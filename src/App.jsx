@@ -153,7 +153,7 @@ const NAV_ITEMS = [
   { id: 'networth', label: 'Net Worth', icon: 'show_chart' },
   { id: 'stocks', label: 'Stock Performance', icon: 'candlestick_chart' },
   { id: 'eatingout', label: 'Eating Out', icon: 'restaurant' },
-  { id: 'budgets', label: 'Budgets & Trends', icon: 'savings' },
+  { id: 'budgets', label: 'Spending', icon: 'savings' },
   { id: 'recurring', label: 'Recurring', icon: 'autorenew' },
   { id: 'home', label: 'Buying a Home', icon: 'home_work' },
   { id: 'cards', label: 'Cards Overview', icon: 'credit_card' },
@@ -165,7 +165,7 @@ const NAV_ITEMS = [
 const BOTTOM_NAV = [
   { id: 'overview', label: 'Overview', icon: 'dashboard' },
   { id: 'transactions', label: 'Txns', icon: 'receipt_long' },
-  { id: 'budgets', label: 'Budgets', icon: 'savings' },
+  { id: 'budgets', label: 'Spending', icon: 'savings' },
   { id: 'cards', label: 'Cards', icon: 'credit_card' },
   { id: 'settings', label: 'Settings', icon: 'settings' },
 ];
@@ -302,7 +302,7 @@ export function App() {
   }, []);
 
   // CSR Benefits is a tab of Card Promotions, so its link lights up that item.
-  // Spending Trends is a tab of Budgets & Trends; its old link still opens it.
+  // Spending Trends is a tab of Spending; its old link still opens it.
   // Assets & Liabilities is a tab of Net Worth; same again.
   // Commissions is a tab of Income.
   const navActive = view === 'benefits' ? 'promos' : view === 'trends' ? 'budgets' : view === 'assets' ? 'networth' : view === 'commissions' ? 'income' : view;
