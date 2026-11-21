@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   parseHsaPaste, parseHsaDate, parseHsaMoney, classifyHsa, mergeHsaRows, summarizeHsa, hsaLimit, hsaYears,
 } from './hsa';
@@ -65,6 +66,36 @@ describe('parseHsaPaste', () => {
     const text = '03/01/2026  Walgreens  -$15.00  $500.00\n03/02/2026 Contribution $100.00 $600.00';
     const { rows } = parseHsaPaste(text.replace(/ {2}/g, '\t'));
     expect(rows.map(r => [r.amount, r.kind])).toEqual([[-15, 'spending'], [100, 'contribution']]);
+  });
+
+  it('reads an Inspira paste where each row wraps onto a second line', () => {
+    const text = readFileSync(new URL('./__fixtures__/hsa-inspira.txt', import.meta.url), 'utf8');
+    const { rows, skipped } = parseHsaPaste(text);
+    expect(skipped).toBe(0);
+    expect(rows.map(r => [r.date, r.description, r.amount, r.kind])).toEqual([
+      ['2026-11-20', 'Debit Card Purchase - PY *SPEAR WILLIAMSBURG BROOKLYN NY', -25, 'spending'],
+      ['2026-11-13', 'Employer Contribution - on 11/13/2026', 31.25, 'contribution'],
+      ['2026-11-13', 'Employee Payroll Contribution - on 11/13/2026', 31.25, 'contribution'],
+      ['2026-10-31', 'Interest Payment', 0.01, 'other'],
+      ['2026-10-30', 'Debit Card Purchase - CAPSULE PHARMACY NEW YORK NY', -1.84, 'spending'],
+      ['2026-01-15', 'Employer Contribution - on 01/15/2026', 731.25, 'contribution'],
+    ]);
+    // The same rows copied without the header or the links give the same ids,
+    // and the pending row keeps its id once it has a posted date.
+    const bare = text.split('\n').slice(1).join('\n').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+    expect(parseHsaPaste(bare).rows.map(r => r.id)).toEqual(rows.map(r => r.id));
+    const posted = text.replace('Pending on hold', '11/24/2026');
+    expect(parseHsaPaste(posted).rows[0].id).toBe(rows[0].id);
+  });
+
+  it('reads Inspira rows that arrive on one line each', () => {
+    const text = 'Origination Date\tDate Posted\tDescription\tAmount\tAction\n'
+      + '10/29/2026\t11/02/2026\tDebit Card Purchase - TD PODIATRY P.C. NEW YORK NY\t($275.00)\tView\n'
+      + '09/30/2026\t09/30/2026\tInterest Payment\t$0.01\tView';
+    expect(parseHsaPaste(text).rows.map(r => [r.date, r.amount, r.kind])).toEqual([
+      ['2026-10-29', -275, 'spending'],
+      ['2026-09-30', 0.01, 'other'],
+    ]);
   });
 
   it('gives identical rows on one day distinct ids, stable across pastes', () => {

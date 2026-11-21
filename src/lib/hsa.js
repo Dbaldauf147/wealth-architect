@@ -84,7 +84,7 @@ export function parseHsaMoney(s) {
 }
 
 const HEADER = {
-  date: /^(transaction |posted |post |effective )?date$|^date\b/i,
+  date: /^(transaction |origination |posted |post |effective )?date$|^date\b/i,
   description: /desc|memo|payee|merchant|details|name|transaction$/i,
   type: /^(transaction )?type$|^category$|^activity$/i,
   amount: /^(transaction )?amount$|^amount\b/i,
@@ -137,6 +137,10 @@ function assignIds(rows) {
    figure is the transaction; a later one is usually a running balance. */
 const DATE_AT_START = /^\s*(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}\/\d{2,4}|[A-Za-z]{3}[a-z]*\.?\s+\d{1,2},?\s+\d{4})/;
 const MONEY = /\(?[-−–]?\s*\$\s*[\d,]*\d(?:\.\d{1,2})?\)?|\(?[-−–]?[\d,]*\d\.\d{2}\)?/g;
+/* What may sit between the transaction date and the description: a second
+   (posted) date, or a pending marker where that date will be. Dropped so a
+   row keeps the same description — and so the same id — once it posts. */
+const POSTED_CELL = /^\s*(?:\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{1,2}-\d{1,2}|pending(?: on hold)?)\s+/i;
 function parseLoose(lines) {
   const rows = [];
   for (const line of lines) {
@@ -144,7 +148,7 @@ function parseLoose(lines) {
     if (!dm) continue;
     const date = parseHsaDate(dm[1]);
     if (!date) continue;
-    const rest = line.slice(dm[0].length).replace(/\t/g, ' ');
+    const rest = line.slice(dm[0].length).replace(/\t/g, ' ').replace(POSTED_CELL, ' ');
     const money = [...rest.matchAll(MONEY)];
     if (!money.length) continue;
     const amount = parseHsaMoney(money[0][0]);
@@ -155,16 +159,45 @@ function parseLoose(lines) {
   return rows;
 }
 
+/* Markdown links — [Interest Payment](https://…) — come along when a table
+   is copied through something that keeps links; only the text matters. */
+const stripLinks = (line) => line.replace(/\[([^\]]*)\]\([^)\s]*\)/g, '$1');
+
+/* Some sites (Inspira, for one) put a line break inside a cell, so one
+   transaction arrives as two lines: "date, date, description" and then
+   "amount, View". A line that doesn't start with a date is glued back onto
+   the row above it while that row is still short — fewer cells than the
+   header, or (without a header) no dollar figure yet. */
+function joinWrapped(lines, headerCells) {
+  const out = [];
+  let shortRow = false;
+  for (const line of lines) {
+    if (out.length && shortRow && !DATE_AT_START.test(line)) {
+      const sep = line.includes('\t') || out[out.length - 1].includes('\t') ? '\t' : ' ';
+      out[out.length - 1] = `${out[out.length - 1]}${sep}${line}`;
+    } else {
+      out.push(line);
+    }
+    const last = out[out.length - 1];
+    shortRow = DATE_AT_START.test(last) && (headerCells
+      ? splitLine(last).length < headerCells
+      : ![...last.replace(DATE_AT_START, '').replace(POSTED_CELL, ' ').matchAll(MONEY)].length);
+  }
+  return out;
+}
+
 /* Text pasted from the provider → { rows, skipped }. Each row is classified;
    `skipped` counts non-blank lines that weren't a transaction. */
 export function parseHsaPaste(text) {
-  const lines = String(text || '').split(/\r?\n/).filter(l => l.trim());
+  let lines = String(text || '').split(/\r?\n/).filter(l => l.trim()).map(stripLinks);
   let headerAt = -1;
   let cols = null;
   for (let i = 0; i < Math.min(lines.length, 15); i++) {
     const c = findColumns(splitLine(lines[i]));
     if (c) { headerAt = i; cols = c; break; }
   }
+  const headerCells = cols ? splitLine(lines[headerAt]).length : 0;
+  lines = [...lines.slice(0, headerAt + 1), ...joinWrapped(lines.slice(headerAt + 1), headerCells)];
 
   let raw;
   if (cols) {
