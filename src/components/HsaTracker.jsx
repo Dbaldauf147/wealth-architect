@@ -1,59 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { useMemo, useState } from 'react';
 import { parseHsaPaste, mergeHsaRows, summarizeHsa, hsaYears, hsaLimit, HSA_KINDS } from '../lib/hsa';
 
 /* The HSA sub-tab of Cards: paste activity from the HSA provider's site, see
-   contributions against the IRS limit and what was spent.
-
-   Stored in its own doc, hsa/default, not config/default: it's a growing
-   list of transactions, and keeping it apart means it can never be caught in
-   that doc's merge rules. A localStorage copy makes it show instantly and
-   survive being offline; Firestore wins whenever it answers. */
-
-const REF = ['hsa', 'default'];
-const CACHE = 'hsa:v1';
-const EMPTY = { rows: [], coverage: 'self', catchUp: false };
-
-function readCache() {
-  try { return { ...EMPTY, ...(JSON.parse(localStorage.getItem(CACHE)) || {}) }; }
-  catch { return EMPTY; }
-}
-function writeCache(v) {
-  try { localStorage.setItem(CACHE, JSON.stringify(v)); } catch { /* Firestore still has it */ }
-}
-
-function useHsa() {
-  const [data, setData] = useState(readCache);
-  const [error, setError] = useState(null);
-  // What save() builds on — kept outside render so two quick edits in one
-  // tick both land.
-  const latest = useRef(data);
-
-  useEffect(() => onSnapshot(
-    doc(db, ...REF),
-    (snap) => {
-      if (snap.metadata.hasPendingWrites) return;
-      const next = { ...EMPTY, ...(snap.exists() ? snap.data() : {}) };
-      latest.current = next;
-      setData(next);
-      writeCache(next);
-      setError(null);
-    },
-    (err) => setError(err.message),
-  ), []);
-
-  const save = useCallback((patch) => {
-    const next = { ...latest.current, ...patch };
-    latest.current = next;
-    setData(next);
-    writeCache(next);
-    setDoc(doc(db, ...REF), { ...JSON.parse(JSON.stringify(next)), updatedAt: new Date().toISOString() })
-      .catch(err => setError(`Couldn't save to the cloud: ${err.message}`));
-  }, []);
-
-  return { ...data, save, error };
-}
+   contributions against the IRS limit and what was spent. The data comes
+   from useHsa(), owned by CardsPage so the Alerts badge reads the same copy. */
 
 const fmt = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n || 0);
 const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -67,8 +17,8 @@ const num = { textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
 const btn = { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px', border: 'none', borderRadius: 8, background: 'var(--color-primary, #1d4ed8)', color: '#fff', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' };
 const ghostBtn = { ...btn, background: 'transparent', color: 'var(--color-text-secondary)', border: '1px solid var(--border-ghost)' };
 
-export default function HsaTracker() {
-  const { rows, coverage, catchUp, save, error } = useHsa();
+export default function HsaTracker({ hsa }) {
+  const { rows, coverage, catchUp, save, error } = hsa;
   const years = useMemo(() => {
     const ys = hsaYears(rows);
     const now = new Date().getFullYear();

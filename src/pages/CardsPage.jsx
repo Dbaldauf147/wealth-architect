@@ -13,6 +13,8 @@ import {
 import { readStatementFile, isoDay } from '../lib/statementFile';
 import { StatementCell, StatementAuditReport } from '../components/StatementAudit';
 import HsaTracker from '../components/HsaTracker';
+import { useHsa } from '../hooks/useHsa';
+import { hsaAlerts } from '../lib/hsa';
 import styles from './CardsPage.module.css';
 
 function fmt(n) {
@@ -255,6 +257,9 @@ export function CardsPage() {
   const { setAccountNickname, toggleHideCard, setCalendarColor } = useDataActions();
   const paycheckColor = calendarColors?.[PAYCHECK_COLOR_KEY] || DEFAULT_PAYCHECK_COLOR;
   const [view, setView] = useState('schedule');
+  const hsa = useHsa();
+  // Everything the Alerts tab lists; its length is the red badge on the tab.
+  const alerts = useMemo(() => hsaAlerts(hsa.rows, new Date()), [hsa.rows]);
   const [scheduleView, setScheduleView] = useState('calendar');
   const [calendarOffset, setCalendarOffset] = useState(0); // 2-month window shift, in months
   const [expanded, setExpanded] = useState(() => new Set());
@@ -951,11 +956,13 @@ export function CardsPage() {
                 ? 'Past credit card payments and the charges each one covered'
                 : view === 'hsa'
                 ? 'HSA contributions and spending, pasted from your HSA provider'
+                : view === 'alerts'
+                ? 'Things that need your attention'
                 : 'Projected payment dates and the charges feeding each one'}
             </div>
           </div>
           <div style={{ display: 'inline-flex', gap: 2, background: 'var(--color-surface-alt)', padding: 2, borderRadius: 10 }}>
-            {[{ key: 'optimizer', label: 'Optimizer' }, { key: 'schedule', label: 'Schedule' }, { key: 'lookback', label: 'Look Back' }, { key: 'hsa', label: 'HSA' }].map(t => (
+            {[{ key: 'optimizer', label: 'Optimizer' }, { key: 'schedule', label: 'Schedule' }, { key: 'lookback', label: 'Look Back' }, { key: 'hsa', label: 'HSA' }, { key: 'alerts', label: 'Alerts', badge: alerts.length }].map(t => (
               <button
                 key={t.key}
                 onClick={() => setView(t.key)}
@@ -972,13 +979,50 @@ export function CardsPage() {
                 }}
               >
                 {t.label}
+                {t.badge > 0 && (
+                  <span
+                    data-testid="alerts-badge"
+                    aria-label={`${t.badge} alert${t.badge === 1 ? '' : 's'}`}
+                    style={{ marginLeft: 6, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8, background: '#ba1a1a', color: '#fff', fontSize: 10, fontWeight: 700, lineHeight: 1 }}
+                  >
+                    {t.badge}
+                  </span>
+                )}
               </button>
             ))}
           </div>
         </div>
       </div>
 
-      {view === 'hsa' && <HsaTracker />}
+      {view === 'hsa' && <HsaTracker hsa={hsa} />}
+
+      {view === 'alerts' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {alerts.length === 0 ? (
+            <div className={styles.matrixCard} style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--color-text-secondary)', fontSize: 13 }}>
+              <span className="material-symbols-outlined" style={{ color: '#16a34a' }}>check_circle</span>
+              No alerts — everything is up to date.
+            </div>
+          ) : alerts.map(a => (
+            <div key={a.id} data-testid="alert" className={styles.matrixCard} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, borderLeft: '3px solid #ba1a1a' }}>
+              <span className="material-symbols-outlined" style={{ color: '#ba1a1a' }}>error</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{a.title}</div>
+                <div style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{a.detail}</div>
+              </div>
+              {a.source === 'hsa' && (
+                <button
+                  type="button"
+                  onClick={() => setView('hsa')}
+                  style={{ padding: '6px 12px', border: '1px solid var(--border-ghost)', borderRadius: 8, background: 'var(--color-surface)', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)', whiteSpace: 'nowrap' }}
+                >
+                  Go to HSA
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {view === 'optimizer' && (<>
       {/* Optimization Alert Hero */}

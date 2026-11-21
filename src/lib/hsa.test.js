@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-  parseHsaPaste, parseHsaDate, parseHsaMoney, classifyHsa, mergeHsaRows, summarizeHsa, hsaLimit, hsaYears,
+  parseHsaPaste, parseHsaDate, parseHsaMoney, classifyHsa, mergeHsaRows, summarizeHsa, hsaLimit, hsaYears, hsaAlerts, pastFullMonths,
 } from './hsa';
 
 describe('parseHsaDate / parseHsaMoney', () => {
@@ -140,5 +140,29 @@ describe('hsaLimit', () => {
     expect(hsaLimit(2026, 'self')).toBe(4400);
     expect(hsaLimit(2026, 'family', true)).toBe(9750);
     expect(hsaLimit(2030, 'self')).toBe(4400); // latest known
+  });
+});
+
+describe('hsaAlerts', () => {
+  const today = new Date(2026, 10, 21); // Nov 21 2026
+  const row = (date) => ({ id: date, date, amount: 10, kind: 'contribution' });
+
+  it('looks at the two full months before this one', () => {
+    expect(pastFullMonths(today).map(m => m.key)).toEqual(['2026-09', '2026-10']);
+    expect(pastFullMonths(new Date(2026, 0, 5)).map(m => m.key)).toEqual(['2025-11', '2025-12']);
+  });
+  it('is quiet when both months have rows', () => {
+    expect(hsaAlerts([row('2026-09-15'), row('2026-10-15')], today)).toEqual([]);
+  });
+  it('alerts when either month is empty, naming it', () => {
+    const [a] = hsaAlerts([row('2026-09-15'), row('2026-11-02')], today);
+    expect(a.title).toBe('HSA data missing for October 2026');
+    expect(a.missing).toEqual(['2026-10']);
+    expect(a.detail).toContain('2026-11-02');
+  });
+  it('alerts with both months when there is no data at all', () => {
+    const [a] = hsaAlerts([], today);
+    expect(a.title).toBe('HSA data missing for September 2026 and October 2026');
+    expect(a.detail).toMatch(/No HSA activity/);
   });
 });
