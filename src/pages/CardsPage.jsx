@@ -88,6 +88,37 @@ const CARD_COLORS = [
   '#475569', '#0891b2', '#c026d3', '#ea580c', '#059669',
 ];
 
+// calendarColors key for paycheck chips; card names are the other keys.
+const PAYCHECK_COLOR_KEY = '__paycheck';
+const DEFAULT_PAYCHECK_COLOR = '#16a34a';
+
+/* A legend swatch that is also a color picker. The native input sits over
+   the swatch, invisible, so clicking the swatch opens the picker. */
+function ColorSwatch({ color, label, custom, onChange, onReset }) {
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+      <span className={styles.legendSwatch} style={{ background: color, cursor: 'pointer', boxShadow: '0 0 0 1px rgba(0,0,0,0.12)' }} />
+      <input
+        type="color"
+        aria-label={`Color for ${label}`}
+        title={`Choose a color for ${label}`}
+        value={/^#[0-9a-f]{6}$/i.test(color) ? color : '#000000'}
+        onChange={e => onChange(e.target.value)}
+        style={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', width: 14, height: 14, opacity: 0, cursor: 'pointer', padding: 0, border: 'none' }}
+      />
+      {custom && (
+        <button
+          type="button"
+          aria-label={`Reset color for ${label}`}
+          title="Back to the default color"
+          onClick={onReset}
+          style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', color: 'var(--color-text-tertiary)', fontSize: 11, lineHeight: 1 }}
+        >↺</button>
+      )}
+    </span>
+  );
+}
+
 // Tolerant matching across Tiller's Balances vs Transactions tabs. The two
 // tabs commonly write the same card differently — e.g. "Cash Rewards
 // (xxxx9568)" in Balances and "Cash Rewards 9568" in Transactions, or
@@ -220,8 +251,9 @@ function HistoryAuditDetail({ audit }) {
 }
 
 export function CardsPage() {
-  const { transactions, balances, accountNicknames, accountNumbers, accountGroups, loading, hiddenCards, paymentReminders, statementCloseDays, privacyMode, incomeCategories } = useData();
-  const { setAccountNickname, toggleHideCard } = useDataActions();
+  const { transactions, balances, accountNicknames, accountNumbers, accountGroups, loading, hiddenCards, paymentReminders, statementCloseDays, privacyMode, incomeCategories, calendarColors } = useData();
+  const { setAccountNickname, toggleHideCard, setCalendarColor } = useDataActions();
+  const paycheckColor = calendarColors?.[PAYCHECK_COLOR_KEY] || DEFAULT_PAYCHECK_COLOR;
   const [view, setView] = useState('schedule');
   const [scheduleView, setScheduleView] = useState('calendar');
   const [calendarOffset, setCalendarOffset] = useState(0); // 2-month window shift, in months
@@ -275,7 +307,8 @@ export function CardsPage() {
   // Derive credit card accounts from liabilities. Tiller's Balances tab
   // sometimes lists the same card on multiple rows; dedup by parsed identity
   // so each card renders once. Colors are assigned from this stable full
-  // list so toggling hide/show doesn't reshuffle a card's color.
+  // list so toggling hide/show doesn't reshuffle a card's color — unless the
+  // user picked one on the Payment Calendar legend, which wins everywhere.
   const allCreditCards = useMemo(() => {
     if (!balances?.liabilities) return [];
     const seen = new Set();
@@ -288,11 +321,12 @@ export function CardsPage() {
         name: l.name,
         balance: l.balance,
         updated: l.updated,
-        color: CARD_COLORS[out.length % CARD_COLORS.length],
+        color: calendarColors?.[l.name] || CARD_COLORS[out.length % CARD_COLORS.length],
+        customColor: !!calendarColors?.[l.name],
       });
     }
     return out;
-  }, [balances]);
+  }, [balances, calendarColors]);
 
   // The list every downstream computation uses. When showHidden is on, the
   // full list is exposed so the user sees what hiding currently affects;
@@ -1316,7 +1350,7 @@ export function CardsPage() {
             </div>
             <div className={styles.chartSubtitle}>
               {scheduleView === 'calendar'
-                ? 'Solid = actual · Dashed = projected from each card’s cadence and your usual paydays · Green = paychecks'
+                ? 'Solid = actual · Dashed = projected from each card’s cadence and your usual paydays · +$ chips = paychecks'
                 : 'Projected from each card’s historical payment cadence'}
             </div>
           </div>
@@ -1401,19 +1435,32 @@ export function CardsPage() {
             <div className={styles.calendarLegend}>
               {paychecks.length > 0 && (
                 <div className={styles.legendItem}>
-                  <span className={styles.legendSwatch} style={{ background: 'var(--color-success)' }} />
+                  <ColorSwatch
+                    color={paycheckColor}
+                    label="Paycheck"
+                    custom={!!calendarColors?.[PAYCHECK_COLOR_KEY]}
+                    onChange={hex => setCalendarColor(PAYCHECK_COLOR_KEY, hex)}
+                    onReset={() => setCalendarColor(PAYCHECK_COLOR_KEY, null)}
+                  />
                   <span className={styles.legendLabel}>Paycheck</span>
                 </div>
               )}
               {calendarLegend.map(s => (
                 <div key={s.card} className={styles.legendItem}>
-                  <span className={styles.legendSwatch} style={{ background: s.color }} />
+                  <ColorSwatch
+                    color={s.color}
+                    label={displayName(s.card)}
+                    custom={!!calendarColors?.[s.card]}
+                    onChange={hex => setCalendarColor(s.card, hex)}
+                    onReset={() => setCalendarColor(s.card, null)}
+                  />
                   <span className={styles.legendLabel} title={cardNumberTitle(s.card)}>{displayName(s.card)}</span>
                 </div>
               ))}
+              <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>Click a color to change it</span>
             </div>
           )}
-          <div className={styles.calendarWrap}>
+          <div className={styles.calendarWrap} style={{ '--paycheck-color': paycheckColor }}>
             {calendarMonths.map((m, mi) => (
               <div key={mi} className={styles.calendarMonth}>
                 <div className={styles.calendarMonthTitle}>{m.label}</div>

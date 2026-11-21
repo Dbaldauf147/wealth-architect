@@ -372,6 +372,10 @@ const saveTxnColumnWidths = (v) => saveJSON('txnColumnWidths', v);
 // (the page fills in its default column set when this is null).
 const loadCategoryColors = () => loadJSON('categoryColors', {});
 const saveCategoryColors = (v) => saveJSON('categoryColors', v);
+// Colors chosen for the Cards page's Payment Calendar: { [card name]: '#hex' },
+// plus a '__paycheck' entry for paycheck chips. Unset = the default.
+const loadCalendarColors = () => loadJSON('calendarColors', {});
+const saveCalendarColors = (v) => saveJSON('calendarColors', v);
 const loadVisibleColumns = () => loadJSON('visibleColumns', null);
 const saveVisibleColumns = (v) => saveJSON('visibleColumns', v);
 // Active saved-view selection (string name; '' = none). Stored as a raw string
@@ -529,6 +533,7 @@ function mergedDiffersFromRemote(merged, remote) {
     [merged.savedTxnViews, remote.savedTxnViews],
     [merged.txnColumnWidths, remote.txnColumnWidths],
     [merged.categoryColors, remote.categoryColors],
+    [merged.calendarColors, remote.calendarColors],
   ];
   if ((merged.rangeExcludedSeeded === true) !== (remote.rangeExcludedSeeded === true)) return true;
   for (const [a, b] of maps) {
@@ -602,7 +607,7 @@ const EMPTY_LOCALS = {
   hiddenCategories: new Set(), rangeExcludedCategories: [], rangeExcludedSeeded: false, shortTermLoan: null, robinhoodTrades: null,
   organizedCategories: new Set(), incomeCategories: new Set(), savedTxnViews: {},
   chartHiddenCats: new Set(), chartHiddenSubs: new Set(), txnColumnWidths: {},
-  categoryColors: {}, visibleColumns: null, activeTxnView: '', showAccounts: null,
+  categoryColors: {}, calendarColors: {}, visibleColumns: null, activeTxnView: '', showAccounts: null,
   pareto8020View: null, hiddenTransactionIds: new Set(), rentDupeDismissed: new Set(),
 };
 
@@ -657,6 +662,7 @@ function readLocalConfig() {
     chartHiddenSubs: loadChartHiddenSubs(),
     txnColumnWidths: loadTxnColumnWidths(),
     categoryColors: loadCategoryColors(),
+    calendarColors: loadCalendarColors(),
     visibleColumns: loadVisibleColumns(),
     activeTxnView: loadActiveTxnView(),
     showAccounts: loadShowAccounts(),
@@ -754,6 +760,7 @@ function mergeConfig(remote, locals) {
     chartHiddenSubs: unionSet(locals.chartHiddenSubs, remote.chartHiddenSubs),
     txnColumnWidths: unionMap(locals.txnColumnWidths, remote.txnColumnWidths),
     categoryColors: unionMap(locals.categoryColors, remote.categoryColors),
+    calendarColors: unionMap(locals.calendarColors, remote.calendarColors),
     visibleColumns: locals.visibleColumns ?? remote.visibleColumns ?? null,
     activeTxnView: locals.activeTxnView || remote.activeTxnView || '',
     showAccounts: locals.showAccounts ?? remote.showAccounts ?? true,
@@ -813,6 +820,7 @@ function buildSyncPayload(v) {
     chartHiddenSubs: [...v.chartHiddenSubs],
     txnColumnWidths: v.txnColumnWidths,
     categoryColors: v.categoryColors,
+    calendarColors: v.calendarColors || {},
     visibleColumns: v.visibleColumns ?? null,
     activeTxnView: v.activeTxnView || '',
     showAccounts: v.showAccounts ?? true,
@@ -883,6 +891,7 @@ export function DataProvider({ children }) {
   const [chartHiddenSubs, setChartHiddenSubsState] = useState(loadChartHiddenSubs);
   const [columnWidths, setColumnWidthsState] = useState(loadTxnColumnWidths);
   const [categoryColors, setCategoryColorsState] = useState(loadCategoryColors);
+  const [calendarColors, setCalendarColorsState] = useState(loadCalendarColors);
   const [visibleColumns, setVisibleColumnsState] = useState(loadVisibleColumns);
   const [activeTxnView, setActiveTxnViewState] = useState(loadActiveTxnView);
   const [showAccounts, setShowAccountsState] = useState(() => loadShowAccounts() ?? true);
@@ -1008,6 +1017,7 @@ export function DataProvider({ children }) {
     setChartHiddenSubsState(m.chartHiddenSubs); saveChartHiddenSubs(m.chartHiddenSubs);
     setColumnWidthsState(m.txnColumnWidths); saveTxnColumnWidths(m.txnColumnWidths);
     setCategoryColorsState(m.categoryColors); saveCategoryColors(m.categoryColors);
+    setCalendarColorsState(m.calendarColors || {}); saveCalendarColors(m.calendarColors || {});
     setVisibleColumnsState(m.visibleColumns); saveVisibleColumns(m.visibleColumns);
     setActiveTxnViewState(m.activeTxnView); saveActiveTxnView(m.activeTxnView);
     setShowAccountsState(m.showAccounts); saveShowAccounts(m.showAccounts);
@@ -1134,7 +1144,7 @@ export function DataProvider({ children }) {
       customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, splitwisePrefs, commissionReview, weeklyEmailSections, weeklyEmailDay,
       customCategories, hiddenCategories, rangeExcludedCategories, rangeExcludedSeeded, shortTermLoan, robinhoodTrades, organizedCategories,
       incomeCategories, savedTxnViews, chartHiddenCats, chartHiddenSubs, txnColumnWidths: columnWidths,
-      categoryColors, visibleColumns, activeTxnView, showAccounts, pareto8020View,
+      categoryColors, calendarColors, visibleColumns, activeTxnView, showAccounts, pareto8020View,
       hiddenTransactionIds: hiddenIds,
       rentDupeDismissed,
     };
@@ -1205,6 +1215,7 @@ export function DataProvider({ children }) {
     chartHiddenSubs,
     columnWidths,
     categoryColors,
+    calendarColors,
     visibleColumns,
     activeTxnView,
     showAccounts,
@@ -2129,6 +2140,19 @@ export function DataProvider({ children }) {
     });
   }, []);
 
+  // hex falsy = back to the default color.
+  const setCalendarColor = useCallback((key, hex) => {
+    if (!key) return;
+    setCalendarColorsState(prev => {
+      if (!hex && !(key in prev)) return prev;
+      const next = { ...prev };
+      if (hex) next[key] = hex;
+      else delete next[key];
+      saveCalendarColors(next);
+      return next;
+    });
+  }, []);
+
   const resetCategoryColor = useCallback((name) => {
     if (!name) return;
     setCategoryColorsState(prev => {
@@ -2666,6 +2690,7 @@ export function DataProvider({ children }) {
     setColumnWidths,
     setCategoryColor,
     resetCategoryColor,
+    setCalendarColor,
     setVisibleColumns,
     setActiveTxnView,
     setShowAccounts,
@@ -2747,6 +2772,7 @@ export function DataProvider({ children }) {
     setColumnWidths,
     setCategoryColor,
     resetCategoryColor,
+    setCalendarColor,
     setVisibleColumns,
     setActiveTxnView,
     setShowAccounts,
@@ -2796,6 +2822,7 @@ export function DataProvider({ children }) {
     chartHiddenSubs,
     columnWidths,
     categoryColors,
+    calendarColors,
     visibleColumns,
     activeTxnView,
     showAccounts,
@@ -2862,6 +2889,7 @@ export function DataProvider({ children }) {
     chartHiddenSubs,
     columnWidths,
     categoryColors,
+    calendarColors,
     visibleColumns,
     activeTxnView,
     showAccounts,
