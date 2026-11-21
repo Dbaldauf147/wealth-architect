@@ -1,0 +1,13 @@
+Origination Date	Date Posted	Description	Amount	Action
+11/20/2026	Pending on hold	[Debit Card Purchase - PY *SPEAR WILLIAMSBURG BROOKLYN NY](https://mybenefits.inspirafinancial.com/Accounts/HSA/HsaTransactionsDetails?transactionId=zy6XunYqLpFUWFAw1eZr9Q%253d%253d&transactionTypeId=68)
+($25.00)	[View](https://mybenefits.inspirafinancial.com/Accounts/HSA/HsaTransactionsDetails?transactionId=zy6XunYqLpFUWFAw1eZr9Q%253d%253d&transactionTypeId=68)
+11/13/2026	11/16/2026	[Employer Contribution - on 11/13/2026](https://mybenefits.inspirafinancial.com/Accounts/HSA/HsaTransactionsDetails?transactionId=AxBz8T6bt12jqONJDxg7bw%253d%253d&transactionTypeId=8)
+$31.25	[View](https://mybenefits.inspirafinancial.com/Accounts/HSA/HsaTransactionsDetails?transactionId=AxBz8T6bt12jqONJDxg7bw%253d%253d&transactionTypeId=8)
+11/13/2026	11/16/2026	[Employee Payroll Contribution - on 11/13/2026](https://mybenefits.inspirafinancial.com/Accounts/HSA/HsaTransactionsDetails?transactionId=AxBz8T6bt116RReZRPKCXA%253d%253d&transactionTypeId=38)
+$31.25	[View](https://mybenefits.inspirafinancial.com/Accounts/HSA/HsaTransactionsDetails?transactionId=AxBz8T6bt116RReZRPKCXA%253d%253d&transactionTypeId=38)
+10/31/2026	10/31/2026	[Interest Payment](https://mybenefits.inspirafinancial.com/Accounts/HSA/HsaTransactionsDetails?transactionId=H3a5fiPoOLLxKo8Pe5IULA%253d%253d&transactionTypeId=14)
+$0.01	[View](https://mybenefits.inspirafinancial.com/Accounts/HSA/HsaTransactionsDetails?transactionId=H3a5fiPoOLLxKo8Pe5IULA%253d%253d&transactionTypeId=14)
+10/30/2026	11/03/2026	[Debit Card Purchase - CAPSULE PHARMACY NEW YORK NY](https://mybenefits.inspirafinancial.com/Accounts/HSA/HsaTransactionsDetails?transactionId=nvx9TybToUO6es%252bkOytgcg%253d%253d&transactionTypeId=68)
+($1.84)	[View](https://mybenefits.inspirafinancial.com/Accounts/HSA/HsaTransactionsDetails?transactionId=nvx9TybToUO6es%252bkOytgcg%253d%253d&transactionTypeId=68)
+01/15/2026	01/20/2026	[Employer Contribution - on 01/15/2026](https://mybenefits.inspirafinancial.com/Accounts/HSA/HsaTransactionsDetails?transactionId=9JAazUZ%2fVpw2pLfj5D8S1Q%3d%3d&transactionTypeId=8)
+$731.25	[View](https://mybenefits.inspirafinancial.com/Accounts/HSA/HsaTransactionsDetails?transactionId=9JAazUZ%2fVpw2pLfj5D8S1Q%3d%3d&transactionTypeId=8)
