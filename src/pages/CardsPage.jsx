@@ -12,6 +12,7 @@ import {
 } from '../lib/statementAudit';
 import { readStatementFile, isoDay } from '../lib/statementFile';
 import { StatementCell, StatementAuditReport } from '../components/StatementAudit';
+import HsaTracker from '../components/HsaTracker';
 import styles from './CardsPage.module.css';
 
 function fmt(n) {
@@ -914,11 +915,13 @@ export function CardsPage() {
                 ? 'Spending breakdown, portfolio matrix, and reward optimization'
                 : view === 'lookback'
                 ? 'Past credit card payments and the charges each one covered'
+                : view === 'hsa'
+                ? 'HSA contributions and spending, pasted from your HSA provider'
                 : 'Projected payment dates and the charges feeding each one'}
             </div>
           </div>
           <div style={{ display: 'inline-flex', gap: 2, background: 'var(--color-surface-alt)', padding: 2, borderRadius: 10 }}>
-            {[{ key: 'optimizer', label: 'Optimizer' }, { key: 'schedule', label: 'Schedule' }, { key: 'lookback', label: 'Look Back' }].map(t => (
+            {[{ key: 'optimizer', label: 'Optimizer' }, { key: 'schedule', label: 'Schedule' }, { key: 'lookback', label: 'Look Back' }, { key: 'hsa', label: 'HSA' }].map(t => (
               <button
                 key={t.key}
                 onClick={() => setView(t.key)}
@@ -940,6 +943,8 @@ export function CardsPage() {
           </div>
         </div>
       </div>
+
+      {view === 'hsa' && <HsaTracker />}
 
       {view === 'optimizer' && (<>
       {/* Optimization Alert Hero */}
