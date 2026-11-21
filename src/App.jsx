@@ -66,6 +66,7 @@ import { useNavBadges } from './hooks/useNavBadges';
 // exports from each page module.
 const OverviewPage = lazy(() => import('./pages/OverviewPage').then(m => ({ default: m.OverviewPage })));
 const TransactionsPage = lazy(() => import('./pages/TransactionsPage').then(m => ({ default: m.TransactionsPage })));
+const AlertsPage = lazy(() => import('./pages/AlertsPage').then(m => ({ default: m.AlertsPage })));
 const CardsPage = lazy(() => import('./pages/CardsPage').then(m => ({ default: m.CardsPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const SpendingPage = lazy(() => import('./pages/SpendingPage').then(m => ({ default: m.SpendingPage })));
@@ -147,6 +148,7 @@ function PageFallback() {
 const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: 'dashboard' },
   { id: 'transactions', label: 'Transactions', icon: 'receipt_long' },
+  { id: 'alerts', label: 'Alerts', icon: 'notifications' },
   { id: 'income', label: 'Income', icon: 'account_balance_wallet' },
   { id: 'cashflow', label: 'Cash Flow', icon: 'payments' },
   { id: 'overshot', label: 'Overshot', icon: 'balance' },
@@ -173,6 +175,7 @@ const BOTTOM_NAV = [
 const BADGE_TITLES = {
   transactions: 'Uncategorized transactions over $20 in the last 30 days',
   eatingout: 'Restaurant charges with a suggested Prep Day place',
+  alerts: 'Alerts that need your attention',
 };
 
 function NavBadge({ count, title, compact = false }) {
@@ -328,6 +331,7 @@ export function App() {
       case 'recurring': return <RecurringPage />;
       case 'assets': return <NetWorthPage key="assets" initialTab="accounts" />;
       case 'cards': return <CardsPage />;
+      case 'alerts': return <AlertsPage />;
       case 'benefits': return <CardPromosPage key="csr" mode="csr" />;
       case 'promos': return <CardPromosPage key="promos" mode="promos" />;
       case 'splitwise': return <SplitwisePage />;
