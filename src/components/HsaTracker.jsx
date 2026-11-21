@@ -3,7 +3,7 @@ import { parseHsaPaste, mergeHsaRows, summarizeHsa, hsaYears, hsaLimit, HSA_KIND
 
 /* The HSA sub-tab of Cards: paste activity from the HSA provider's site, see
    contributions against the IRS limit and what was spent. The data comes
-   from useHsa(), owned by CardsPage so the Alerts badge reads the same copy. */
+   from useHsa(), owned by CardsPage and passed down. */
 
 const fmt = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n || 0);
 const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
