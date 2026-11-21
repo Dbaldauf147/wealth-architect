@@ -74,6 +74,12 @@ service cloud.firestore {
     match /portfolios/{doc} {
       allow read, write: if true;
     }
+    // HSA activity pasted on the Cards page's HSA tab (hsa/default): the
+    // transactions plus the coverage setting used for the IRS limit. Written
+    // by the browser, open like /portfolios because there is no auth yet.
+    match /hsa/{doc} {
+      allow read, write: if true;
+    }
     match /{document=**} {
       allow read, write: if false;
     }
