@@ -239,3 +239,36 @@ export function summarizeHsa(rows, year) {
 export function hsaYears(rows) {
   return [...new Set((rows || []).map(r => Number(r.date.slice(0, 4))))].sort((a, b) => b - a);
 }
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/* The last `count` full calendar months before `today`, oldest first, as
+   { key: 'YYYY-MM', label: 'October 2026' }. The current month isn't
+   included — it's still in progress, so it isn't "missing" yet. */
+export function pastFullMonths(today = new Date(), count = 2) {
+  const out = [];
+  for (let i = count; i >= 1; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    out.push({ key: `${d.getFullYear()}-${pad(d.getMonth() + 1)}`, label: `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}` });
+  }
+  return out;
+}
+
+/* Alerts for the Cards page's Alerts tab. One alert when any of the past two
+   full months has no HSA rows at all — the usual sign that the latest
+   activity hasn't been pasted in. Returns [] when everything is current. */
+export function hsaAlerts(rows, today = new Date()) {
+  const have = new Set((rows || []).map(r => r.date.slice(0, 7)));
+  const missing = pastFullMonths(today, 2).filter(m => !have.has(m.key));
+  if (!missing.length) return [];
+  const latest = (rows || []).reduce((max, r) => (r.date > max ? r.date : max), '');
+  return [{
+    id: 'hsa-missing-months',
+    source: 'hsa',
+    title: `HSA data missing for ${missing.map(m => m.label).join(' and ')}`,
+    detail: latest
+      ? `The newest HSA transaction is from ${latest}. Paste the latest activity from your HSA provider on the HSA tab.`
+      : 'No HSA activity has been pasted in yet. Paste it from your HSA provider on the HSA tab.',
+    missing: missing.map(m => m.key),
+  }];
+}
