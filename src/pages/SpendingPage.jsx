@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../contexts/DataContext';
 import { useBudgets } from '../hooks/useBudgets';
 import { projectMonthSpending, sumDaily, withExpected } from '../lib/spendProjection';
+import { monthKeyOf, parseDefault, parseMonth, sameSet } from '../lib/monthFilter';
 import { BudgetsPage } from './BudgetsPage';
 import { TrendsPage } from './TrendsPage';
 import styles from './OvershotPage.module.css';
@@ -26,8 +27,11 @@ const LINE = 'var(--color-text-primary)';
 // categorical dataviz slots, then a second round of distinct hues).
 const CAT_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#8b5cf6', '#e0a40b', '#e0457b', '#0ea5b7', '#6b7280', '#84cc16', '#b45309', '#4f46e5', '#be185d', '#0f766e', '#a16207'];
 // Categories switched off on the This month tab: a view preference, kept in
-// this browser only. The page says so whenever any are off.
+// this browser only. The page says so whenever any are off. Two layers
+// (lib/monthFilter): your default, which stands, and this month's filter,
+// which is dropped when the month turns over.
 const HIDDEN_KEY = 'wa-spend-month-hidden';
+const MONTH_HIDDEN_KEY = 'wa-spend-month-hidden-this-month';
 // Your own expected month total per category, in place of the projection:
 // kept in this browser, and standing until cleared.
 const EXPECTED_KEY = 'wa-spend-month-expected';
@@ -48,9 +52,9 @@ function loadTargets() {
   } catch { return { total: null, categories: {} }; }
 }
 const TARGET = 'var(--color-secondary, #0058be)';
-function loadHidden() {
-  try { const v = JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]'); return new Set(Array.isArray(v) ? v : []); } catch { return new Set(); }
-}
+const readKey = k => { try { return localStorage.getItem(k); } catch { return null; } };
+function loadDefaultHidden() { return new Set(parseDefault(readKey(HIDDEN_KEY))); }
+function loadHidden() { return new Set(parseMonth(readKey(MONTH_HIDDEN_KEY), monthKeyOf()) ?? parseDefault(readKey(HIDDEN_KEY))); }
 const money = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
 const signed = n => (n > 0 ? '+' : n < 0 ? '−' : '') + money(Math.abs(n));
 const axis = n => (n >= 1000 ? `$${Math.round(n / 100) / 10}k` : `$${Math.round(n)}`);
@@ -180,8 +184,19 @@ function ThisMonth() {
   const { transactions, loading } = useData();
   const { budgets } = useBudgets();
   const full = useMemo(() => (transactions?.length ? projectMonthSpending({ transactions, today: new Date() }) : null), [transactions]);
+  // `hidden` is what this month shows; it starts from the default and any
+  // change is saved for this month only.
+  const [defaultHidden, setDefaultHidden] = useState(loadDefaultHidden);
   const [hidden, setHidden] = useState(loadHidden);
-  const saveHidden = next => { try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...next])); } catch { /* private mode */ } return next; };
+  const saveHidden = next => { try { localStorage.setItem(MONTH_HIDDEN_KEY, JSON.stringify({ month: monthKeyOf(), hidden: [...next] })); } catch { /* private mode */ } return next; };
+  const saveAsDefault = () => {
+    try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...hidden])); localStorage.removeItem(MONTH_HIDDEN_KEY); } catch { /* private mode */ }
+    setDefaultHidden(new Set(hidden));
+  };
+  const backToDefault = () => {
+    try { localStorage.removeItem(MONTH_HIDDEN_KEY); } catch { /* private mode */ }
+    setHidden(new Set(defaultHidden));
+  };
   const toggleCat = c => setHidden(prev => { const next = new Set(prev); if (next.has(c)) next.delete(c); else next.add(c); return saveHidden(next); });
   const [expected, setExpected] = useState(loadExpected);
   const setExpectedFor = (c, raw) => setExpected(prev => {
@@ -368,6 +383,13 @@ function ThisMonth() {
           {offCount > 0 && <button type="button" className={own.chipLink} onClick={() => setHidden(saveHidden(new Set()))} data-testid="spend-show-all">Show all</button>}
           {offCount < rows.length && rows.length > 1 && <button type="button" className={own.chipLink} onClick={() => setHidden(saveHidden(new Set(rows.map(r => r.category))))} data-testid="spend-hide-all">Hide all</button>}
         </div>
+        {!sameSet(hidden, defaultHidden) && (
+          <div className={own.filterNote} data-testid="spend-filter-month">
+            <span>This filter is for {longMonth(p.key).split(' ')[0]} only. It goes back to your default on the 1st.</span>
+            <button type="button" className={own.chipLink} onClick={saveAsDefault} data-testid="spend-filter-save-default">Save as default</button>
+            <button type="button" className={own.chipLink} onClick={backToDefault} data-testid="spend-filter-reset">Back to default</button>
+          </div>
+        )}
         {focusRow
           ? <PaceChart p={p} cats={focusCats} daily={sumDaily(focusCats)} totals={focusRow} target={focusRow.target} focused={focusRow.category} onPick={() => setFocus(null)} />
           : <PaceChart p={p} cats={view.cats} daily={view.daily} totals={p} target={target} onPick={setFocus} />}
