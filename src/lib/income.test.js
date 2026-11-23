@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeIncome, payerKey, payerName, cadenceOf, monthKeysEnding, splitPaychecks, commissionTakeHome, forecastPayroll } from './income.js';
+import { computeIncome, isRentReceived, payerKey, payerName, cadenceOf, monthKeysEnding, splitPaychecks, commissionTakeHome, forecastPayroll } from './income.js';
 
 const tx = (date, amount, category, description, extra = {}) => ({ date, amount, category, description, account: 'Checking', ...extra });
 const d = (y, m, day) => new Date(y, m - 1, day);
@@ -192,5 +192,39 @@ describe('computeIncome — dividends and interest', () => {
     const r2 = computeIncome({ transactions: [pay], incomeCategories: ['Paycheck'], monthKeys: keys, today });
     expect(r2.investmentIncome.count).toBe(0);
     expect(r2.months.at(-1).total).toBe(2000);
+  });
+});
+
+describe('computeIncome — rent received', () => {
+  const keys = monthKeysEnding('2026-11', 3);
+  const today = d(2026, 11, 23);
+  const joo = 'Zelle payment from, Joo Yeon Seo, for, "rent"; Conf# abc123';
+  const txns = [
+    tx('10/15/2026', 2664, 'Paycheck', 'SUMMIT ENERGY DES:PAYROLL'),
+    tx('11/13/2026', 2664, 'Paycheck', 'SUMMIT ENERGY DES:PAYROLL'),
+    tx('09/01/2026', 2400, 'Rent', joo),
+    tx('10/01/2026', 2400, 'Rent', joo),
+    tx('11/02/2026', 2200, 'Rent', joo),
+    tx('11/02/2026', 200, 'Rent', joo),
+    tx('11/02/2026', -5510.15, 'Rent', 'Zelle payment to, Ye Tian Landlord, for, "rent"'),
+    tx('11/05/2026', 60, 'Travel', 'Enterprise Rent-A-Car refund'),
+    tx('11/06/2026', 900, '', 'Zelle payment from, Sam, for, "rent"'),
+    tx('11/07/2026', 500, 'Transfer', 'Zelle payment from, Me, for, "rent"'),
+  ];
+  const r = computeIncome({ transactions: txns, incomeCategories: ['Paycheck', 'Income'], monthKeys: keys, today });
+  const m = Object.fromEntries(r.months.map(x => [x.key, x]));
+
+  it('counts rent coming in as income even though Rent is not in the bucket', () => {
+    expect(m['2026-11'].bySource).toEqual({ Paycheck: 2664, 'Rent received': 3300 });
+    expect(m['2026-11'].parts.other).toBe(3300);
+    expect(m['2026-10'].total).toBe(2664 + 2400);
+    expect(r.sources.find(s => s.source === 'Rent received').payers[0].name).toBe('Zelle payment from, Joo Yeon Seo');
+  });
+
+  it('leaves rent paid, refunds that merely mention rent, and transfers alone', () => {
+    expect(r.credits.top.map(c => c.description)).toEqual(['Enterprise Rent-A-Car refund']);
+    expect(isRentReceived(txns[6])).toBe(false);
+    expect(isRentReceived(txns[9])).toBe(false);
+    expect(m['2026-11'].cashFlowIncome).toBe(2664 + 3300 + 60);
   });
 });
