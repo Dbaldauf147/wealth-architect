@@ -7,6 +7,10 @@
    investments) is never income, even if its category sits in the bucket,
    which is titled "Income & Investments".
 
+   Rent you receive is income too, whatever the bucket says: a roommate's or
+   tenant's share usually sits in the same "Rent" category as the rent you pay,
+   where it would otherwise read as a refund (isRentReceived).
+
    Cash Flow counts every other positive amount as income too — refunds and
    credits in spending categories. Those are reported separately here as
    "refunds & credits", and the two together reconcile to Cash Flow's Income.
@@ -26,7 +30,7 @@
 
    Pure: no React, no DOM. */
 
-import { cashFlowMonthKey } from './cashflowExport.js';
+import { cashFlowMonthKey, isRentIncome } from './cashflowExport.js';
 import { isPayroll } from './commissions.js';
 
 const DAY = 86400000;
@@ -42,6 +46,18 @@ export function isInvestmentIncome(t) {
   if (INVESTMENT_NAME.test(String(t.category || '').trim())) return true;
   if (INVESTMENT_NAME.test(String(t.subcategory || '').trim())) return true;
   return INVESTMENT_TEXT.test(`${t.description || ''} ${t.fullDescription || ''}`);
+}
+// Rent coming in: a positive amount filed under Rent, or one nobody has
+// categorised whose description says rent (a Zelle 'for "rent"'). A described
+// "rent" inside some other category stays there — a Rent-A-Car refund in
+// Travel is a refund.
+const UNFILED = new Set(['', 'uncategorized', 'uncategorised']);
+export const RENT_SOURCE = 'Rent received';
+export function isRentReceived(t) {
+  if (!isRentIncome(t)) return false;
+  const cat = String(t.category || '').trim().toLowerCase();
+  const sub = String(t.subcategory || '').trim().toLowerCase();
+  return cat === 'rent' || sub === 'rent' || UNFILED.has(cat);
 }
 // A paycheck this little over base is payroll noise, not commission.
 const NOISE = 50;
@@ -236,7 +252,8 @@ export function computeIncome({ transactions, incomeCategories, monthKeys, today
     if (MOVING.has(cat)) continue;
     const key = cashFlowMonthKey(t);
     if (!key) continue;
-    const isIncome = incomeSet.has(cat);
+    const inBucket = incomeSet.has(cat);
+    const isIncome = inBucket || isRentReceived(t);
     if (isIncome && isInvestmentIncome(t)) {
       const date = new Date(t.date);
       if (inWindow.has(key) && !isNaN(date)) investment.push({ t, date, key, amount });
@@ -251,7 +268,7 @@ export function computeIncome({ transactions, incomeCategories, monthKeys, today
     if (!inWindow.has(key)) continue;
     const date = new Date(t.date);
     if (isNaN(date)) continue;
-    const row = { t, date, key, amount };
+    const row = { t, date, key, amount, rent: !inBucket && isIncome };
     (isIncome ? income : credits).push(row);
   }
   for (const k of monthKeys) {
@@ -264,6 +281,7 @@ export function computeIncome({ transactions, incomeCategories, monthKeys, today
 
   // Sources: category › subcategory.
   const sourceOf = r => {
+    if (r.rent) return RENT_SOURCE;
     const cat = r.t.category || 'Income';
     return r.t.subcategory ? `${cat} › ${r.t.subcategory}` : cat;
   };

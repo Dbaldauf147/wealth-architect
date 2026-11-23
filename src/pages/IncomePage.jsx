@@ -186,7 +186,7 @@ function IncomeOverview() {
         <div className={styles.controlsNote}>
           Counting {summary.categories.map(c => `“${c}”`).join(', ')}
           {summary.usingDefaults ? ' (Cash Flow’s defaults — set your own in the Income bucket on Transactions)' : ' — the Income bucket on Transactions'}.
-          Transfers and investments never count, and dividends and interest are left out of the monthly figures.
+          Rent you receive counts too, whatever its category. Transfers and investments never count, and dividends and interest are left out of the monthly figures.
         </div>
       </div>
 
