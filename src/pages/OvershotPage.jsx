@@ -13,6 +13,7 @@ import { expectedPayouts, monthLabel } from '../lib/commissions';
 import { computeIncome, commissionTakeHome, monthKeysEnding, monthKeyFor as incomeMonthKey } from '../lib/income';
 import { baseSalary, paySchedule } from '../lib/commissionSchedule';
 import { projectedMonth } from '../lib/overIncomeAlert';
+import { monthOutlook } from '../lib/monthOutlook';
 import styles from './OvershotPage.module.css';
 
 /* When spending overtakes income. Same income/spending definitions as Cash
@@ -31,6 +32,7 @@ const BUCKETS = [
 const CRITICAL = '#d03b3b';
 const CASH_PREF_KEY = 'wa-overshot-cash-accounts';
 const RENT_PREF_KEY = 'wa-overshot-subtract-rent';
+const DETAIL_CATS_PREF_KEY = 'wa-overshot-month-categories';
 
 const RANGES = [
   { months: 6, label: '6M' },
@@ -79,6 +81,8 @@ export function OvershotPage() {
   const [surplusMode, setSurplusMode] = useState('cash'); // 'cash' | 'flow'
   // The monthly chart with rent taken out of both sides: a view preference,
   // kept in this browser only.
+  // The month clicked on the chart, opened as actual beside projected.
+  const [picked, setPicked] = useState(null);
   const [noRent, setNoRent] = useState(() => { try { return localStorage.getItem(RENT_PREF_KEY) === '1'; } catch { return false; } });
   const toggleNoRent = () => setNoRent(v => {
     try { localStorage.setItem(RENT_PREF_KEY, v ? '0' : '1'); } catch { /* private mode */ }
@@ -152,6 +156,11 @@ export function OvershotPage() {
     const schedule = paySchedule({ base, paychecks, expected: expectedPayouts(commissions, now), takeHome, today: now });
     return { base, takeHome, months: expectedIncomeMonths({ schedule, typicalSpending: result?.pace?.typicalSpending ?? null, months: 6 }) };
   }, [transactions, paychecks, commissions, commissionPayouts, result]);
+
+  const outlook = useMemo(() => {
+    if (!picked || !transactions?.length) return null;
+    return monthOutlook({ transactions, incomeCategories, commissions, key: picked, today: new Date() });
+  }, [picked, transactions, incomeCategories, commissions]);
 
   // Each month's surplus split into invested and kept, beside what the cash
   // position actually did (needs the month-end before the window too).
@@ -236,7 +245,7 @@ export function OvershotPage() {
           <div>
             <h2 className={styles.cardTitle}>Income vs spending, by month</h2>
             <div className={styles.cardHint}>
-              Shaded months are the ones where spending overtook income. Each income bar is split into base salary, commission and other income; hover a month for what the other income was.
+              Shaded months are the ones where spending overtook income. Each income bar is split into base salary, commission and other income; hover a month for what the other income was, and click one to set its actual figures beside what was projected.
               {projection && <> The month in progress shows its expected income as an outline: what has come in plus the paychecks still due on the Commissions tab’s schedule, base salary and commission apart. Next month is projected the same way.</>}
             </div>
           </div>
@@ -256,7 +265,9 @@ export function OvershotPage() {
           </div>
         </div>
         {noRent && <div className={styles.cardHint} style={{ marginBottom: 8 }} data-testid="overshot-rent-note">Rent is subtracted: each month’s rent is taken off spending and the same amount off income (base salary first), so the gap between the bars is unchanged.</div>}
-        <MonthlyChart months={shownChart.months} projection={shownChart.projection} buckets={shownChart.buckets} expected={shownChart.expected} />
+        <MonthlyChart months={shownChart.months} projection={shownChart.projection} buckets={shownChart.buckets} expected={shownChart.expected}
+          selected={picked} onSelect={key => setPicked(p => (p === key ? null : key))} />
+        {outlook && <MonthDetail outlook={outlook} rentSubtracted={noRent} onClose={() => setPicked(null)} />}
       </section>
 
       <SurplusSplit months={split} transactions={transactions} />
@@ -520,7 +531,7 @@ function PaceCard({ pace }) {
 }
 
 /* Paired bars per month; months over income get a shaded band and a label. */
-function MonthlyChart({ months: actualMonths, projection = null, buckets = {}, expected = [] }) {
+function MonthlyChart({ months: actualMonths, projection = null, buckets = {}, expected = [], selected = null, onSelect = null }) {
   const [ref, width] = useMeasuredWidth(320);
   const [hover, setHover] = useState(null);
   const H = 280;
@@ -616,6 +627,10 @@ function MonthlyChart({ months: actualMonths, projection = null, buckets = {}, e
           const projTop = proj && proj.projected > m.income ? y(proj.projected) : null;
           return (
             <g key={m.key}>
+              {selected === m.key && (
+                <rect data-testid="overshot-selected-month" x={cx - step / 2 + 1} y={pad.top - 2} width={step - 2} height={innerH + 2} rx={3}
+                  fill="none" stroke="var(--color-text-secondary)" strokeWidth={1.5} />
+              )}
               {isOver && (
                 <>
                   <rect x={cx - step / 2 + 1} y={pad.top} width={step - 2} height={innerH} fill={CRITICAL} opacity={proj ? 0.05 : 0.08} rx={3} />
@@ -641,8 +656,17 @@ function MonthlyChart({ months: actualMonths, projection = null, buckets = {}, e
                 width={step}
                 height={innerH}
                 fill="transparent"
+                data-testid="overshot-month-hit"
+                data-month={m.key}
+                role={onSelect ? 'button' : undefined}
+                tabIndex={onSelect ? 0 : undefined}
+                aria-label={onSelect ? `${long(m.key)}: actual and projected` : undefined}
+                aria-pressed={onSelect ? selected === m.key : undefined}
+                style={onSelect ? { cursor: 'pointer' } : undefined}
                 onMouseEnter={() => setHover(i)}
                 onMouseLeave={() => setHover(null)}
+                onClick={onSelect ? () => onSelect(m.key) : undefined}
+                onKeyDown={onSelect ? e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(m.key); } } : undefined}
               />
             </g>
           );
@@ -715,6 +739,113 @@ function MonthlyChart({ months: actualMonths, projection = null, buckets = {}, e
           {months.some(m => m.future) && <> · † next month — payroll expected on the pay schedule; other income isn’t projected</>}
         </div>
       )}
+    </div>
+  );
+}
+
+/* One month opened up: actual beside projected, income on the left and
+   spending on the right, on one scale. Category rows are optional and the
+   choice sticks. What "projected" means for the month is said in the hint
+   (lib/monthOutlook). */
+function MonthDetail({ outlook, rentSubtracted, onClose }) {
+  const [cats, setCats] = useState(() => { try { return localStorage.getItem(DETAIL_CATS_PREF_KEY) === '1'; } catch { return false; } });
+  const toggleCats = () => setCats(v => {
+    try { localStorage.setItem(DETAIL_CATS_PREF_KEY, v ? '0' : '1'); } catch { /* storage unavailable */ }
+    return !v;
+  });
+  const { status, income, spending, net, basis } = outlook;
+  const actualLabel = status === 'current' ? 'So far' : 'Actual';
+  const projectedLabel = status === 'past' ? 'Expected going in' : status === 'current' ? 'Projected for the month' : 'Projected';
+  const max = Math.max(income.actual, income.projected || 0, spending.actual, spending.projected || 0, 1);
+  const typicalNote = basis.length ? `the average of ${basis.map(short).join(', ')}` : 'no earlier months to average';
+  const hint = status === 'current'
+    ? 'Projected income is what has come in plus the paychecks still due on the pay schedule, and other income (rent received, say) at its usual amount if it hasn’t arrived. Projected spending is what’s spent plus each category’s usual charges from today to month-end.'
+    : status === 'next'
+      ? `Nothing has happened yet. Income is the pay schedule plus other income at its usual amount; spending is a typical month, ${typicalNote}.`
+      : `Expected going in: the pay the schedule planned for the month, other income at its usual amount, and a typical month’s spending at the time (${typicalNote}).`;
+  const sides = [
+    { id: 'income', label: 'Income', color: INCOME, data: income, good: 1 },
+    { id: 'spending', label: 'Spending', color: SPENDING, data: spending, good: -1 },
+  ];
+  return (
+    <div className={styles.detail} data-testid="overshot-month-detail" data-month={outlook.key}>
+      <div className={styles.detailHead}>
+        <div>
+          <h3 className={styles.cardTitle}>{long(outlook.key)}: actual and projected</h3>
+          <div className={styles.cardHint}>{hint}{rentSubtracted && ' Rent is not subtracted here.'}</div>
+        </div>
+        <div className={styles.detailActions}>
+          <span className={styles.segment}>
+            <button type="button" className={`${styles.segmentBtn} ${cats ? styles.segmentActive : ''}`} aria-pressed={cats} onClick={toggleCats} data-testid="overshot-detail-categories">
+              {cats ? '✓ ' : ''}By category
+            </button>
+          </span>
+          <button type="button" className={styles.detailClose} onClick={onClose} aria-label="Close month detail" data-testid="overshot-detail-close">
+            <span className="material-symbols-outlined">close</span>
+          </button>
+        </div>
+      </div>
+      <div className={styles.detailGrid}>
+        {sides.map(side => {
+          const d = side.data;
+          const diff = d.projected == null || status === 'next' ? null : d.actual - d.projected;
+          return (
+            <div key={side.id} data-testid={`overshot-detail-${side.id}`}>
+              <div className={styles.detailSideTitle}>{side.label}</div>
+              <div className={styles.detailBars}>
+                {status !== 'next' && (
+                  <>
+                    <span>{actualLabel}</span>
+                    <div className={styles.detailTrack}><div style={{ width: `${(d.actual / max) * 100}%`, background: side.color }} /></div>
+                    <b data-testid={`overshot-detail-${side.id}-actual`}>{money(d.actual)}</b>
+                  </>
+                )}
+                <span>{projectedLabel}</span>
+                <div className={styles.detailTrack}>
+                  {d.projected != null && <div className={styles.detailProjected} style={{ width: `${(d.projected / max) * 100}%`, borderColor: side.color, background: `color-mix(in srgb, ${side.color} 18%, transparent)` }} />}
+                </div>
+                <b data-testid={`overshot-detail-${side.id}-projected`}>{d.projected == null ? '—' : money(d.projected)}</b>
+              </div>
+              {diff != null && Math.abs(diff) >= 0.5 && (
+                <div className={styles.muted}>
+                  {status === 'current'
+                    ? `${money(Math.max(0, -diff))} still to come`
+                    : `${money(Math.abs(diff))} ${diff > 0 ? 'more' : 'less'} than expected`}
+                </div>
+              )}
+              {d.projected == null && (
+                <div className={styles.muted}>{side.id === 'income' ? 'No pay schedule on record for this month.' : 'No earlier months to project from.'}</div>
+              )}
+              {cats && d.rows.length > 0 && (
+                <div className={styles.tableWrap} style={{ marginTop: 10 }}>
+                  <table className={styles.table} data-testid={`overshot-detail-${side.id}-rows`}>
+                    <thead>
+                      <tr><th>Category</th>{status !== 'next' && <th className={styles.num}>{actualLabel}</th>}<th className={styles.num}>Projected</th>{status === 'past' && <th className={styles.num}>Difference</th>}</tr>
+                    </thead>
+                    <tbody>
+                      {d.rows.map(r => {
+                        const gap = r.projected == null ? null : r.actual - r.projected;
+                        return (
+                          <tr key={r.name}>
+                            <td>{r.name}</td>
+                            {status !== 'next' && <td className={styles.num}>{money(r.actual)}</td>}
+                            <td className={styles.num}>{r.projected == null ? '—' : money(r.projected)}</td>
+                            {status === 'past' && <td className={`${styles.num} ${gap != null && gap * side.good < -0.5 ? styles.negText : ''}`}>{gap == null || Math.abs(gap) < 0.5 ? '—' : signed(gap)}</td>}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className={styles.detailNet} data-testid="overshot-detail-net">
+        {status !== 'next' && <span>{status === 'current' ? 'Net so far' : 'Net'} <b className={net.actual < 0 ? styles.negText : ''}>{signed(net.actual)}</b></span>}
+        <span>{status === 'past' ? 'Expected net' : 'Projected net'} <b className={net.projected < 0 ? styles.negText : ''}>{net.projected == null ? '—' : signed(net.projected)}</b></span>
+      </div>
     </div>
   );
 }
