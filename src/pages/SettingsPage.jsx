@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useData, useDataActions } from '../contexts/DataContext';
+import { useCommissions } from '../hooks/useCommissions';
 import { buildWeeklySummary, lastCompletedWeek } from '../lib/weeklySummary';
 import { renderWeeklyEmailHtml, WEEKLY_EMAIL_SECTIONS } from '../lib/renderWeeklyEmail';
 import { previewPaymentReminder, renderPaymentReminderHtml, paymentWorkbookFilename } from '../lib/paymentReminder';
@@ -21,7 +22,8 @@ function relTime(date) {
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export function SettingsPage() {
-  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay, rangeExcludedCategories, cardPromos, statementCloseDays } = useData();
+  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay, rangeExcludedCategories, cardPromos, statementCloseDays, incomeCategories } = useData();
+  const { commissions } = useCommissions();
   const { refresh, updatePaymentReminderPrefs, updateCalendarSyncPrefs, updateWeeklyEmailSections, updateWeeklyEmailDay, toggleRangeExcludedCategory } = useDataActions();
   // Send day is synced via DataContext (Firestore) so the cron reads it; fall
   // back to Monday for display when nothing has been chosen yet, matching the
@@ -44,9 +46,11 @@ export function SettingsPage() {
       accountGroups: accountGroups || {},
       rangeExcludedCategories: rangeExcludedCategories || [],
       cardPromos,
+      incomeCategories: [...(incomeCategories || [])],
+      commissions,
     });
     return renderWeeklyEmailHtml(summary, { sections: weeklyEmailSections });
-  }, [transactions, accountNicknames, accountGroups, weeklyEmailSections, rangeExcludedCategories, cardPromos]);
+  }, [transactions, accountNicknames, accountGroups, weeklyEmailSections, rangeExcludedCategories, cardPromos, incomeCategories, commissions]);
 
   // Which categories the "Above Normal Range" section is allowed to report on.
   // Every category with spend in the last 30 days gets a switch — the ones

@@ -95,3 +95,38 @@ describe('buildWeeklySummary window consistency', () => {
     expect(s.monthCompare.thisMonthLabel).toMatch(/August/);
   });
 });
+
+describe('monthProjection', () => {
+  const t = (date, amount, category, description = category) => ({ date, amount, category, description, account: 'Checking' });
+  const PAY = 'Summit Energy Se Des:payroll, ID:CERx5369 Ppd';
+  const txns = [];
+  for (const m of [8, 9, 10, 11]) {
+    txns.push(t(`${m}/2/2026`, -5500, 'Rent', 'Zelle payment to, Landlord, for, "rent"'));
+    txns.push(t(`${m}/2/2026`, 2400, 'Rent', 'Zelle payment from, Roommate, for, "rent"'));
+    txns.push(t(`${m}/15/2026`, 2664, 'Paycheck', PAY));
+    for (let i = 0; i < 8; i++) txns.push(t(`${m}/${20 + i}/2026`, -50 - i, `Cat ${i}`));
+    txns.push(t(`${m}/30/2026`, 2664, 'Paycheck', PAY));
+  }
+
+  it('projects the month the week ended in, cut to the largest categories', async () => {
+    const { monthProjection } = await import('./weeklySummary.js');
+    const p = monthProjection({ transactions: txns, incomeCategories: ['Paycheck'], commissions: [], asOf: new Date(2026, 10, 15, 23, 59, 59, 999) });
+    expect(p).toMatchObject({ key: '2026-11', label: 'November 2026', status: 'current', commissionsKnown: true });
+    expect(p.income.rows.map(r => r.name)).toEqual(['Base salary', 'Rent received']);
+    expect(p.income.projected).toBe(5328 + 2400);
+    // Rent and the six largest of the eight small categories, then one fold-in row.
+    expect(p.spending.rows).toHaveLength(7);
+    expect(p.spending.rows[0]).toMatchObject({ name: 'Rent', actual: 5500, projected: 5500 });
+    expect(p.spending.rows[6]).toMatchObject({ name: 'Everything else', other: true });
+    // Nothing dated after the week's end is counted.
+    expect(p.spending.actual).toBe(5500);
+  });
+
+  it('moves on to the new month when the week ends on a month’s last day', async () => {
+    const { monthProjection } = await import('./weeklySummary.js');
+    const p = monthProjection({ transactions: txns.filter(x => !x.date.startsWith('11/')), incomeCategories: ['Paycheck'], commissions: null, asOf: new Date(2026, 9, 31, 23, 59, 59, 999) });
+    expect(p).toMatchObject({ key: '2026-11', status: 'current', commissionsKnown: false });
+    expect(p.income.actual).toBe(0);
+    expect(p.income.projected).toBe(5328 + 2400);
+  });
+});

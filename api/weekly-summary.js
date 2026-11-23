@@ -7,6 +7,7 @@ import { buildWeeklySummary, lastCompletedWeek } from '../src/lib/weeklySummary.
 import { renderWeeklyEmailHtml } from '../src/lib/renderWeeklyEmail.js';
 import { upcomingCardPayments, findPayingAccount } from '../src/lib/paymentReminder.js';
 import { summarizeNextCardBill } from '../src/lib/nextCardBill.js';
+import { readTrackerCommissions } from './_lib/trackerCommissions.js';
 import {
   applyRulesToTransactions,
   applySubcategoryRulesToTransactions,
@@ -212,6 +213,13 @@ export default async function handler(req, res) {
       );
     }
 
+    // The commission still to be paid, for the month's projected income. If the
+    // tracker can't be read the email still goes: the projection then carries
+    // base salary only and says so.
+    let commissions = null;
+    try { commissions = await readTrackerCommissions(); }
+    catch (err) { console.warn('weekly-summary: tracker unreadable:', err?.message || err); }
+
     const { start, end } = lastCompletedWeek();
     const summary = buildWeeklySummary({
       transactions,
@@ -225,6 +233,8 @@ export default async function handler(req, res) {
       // falls back to the seed benefits — from a deliberately empty list.
       cardPromos: (config && config.cardPromos) || null,
       promoTags: (config && config.promoTags) || null,
+      incomeCategories: (config && Array.isArray(config.incomeCategories)) ? config.incomeCategories : [],
+      commissions,
     });
 
     summary.nextCardBill = await buildNextCardBill(transactions, config, process.env.WEEKLY_EMAIL_TZ || 'America/New_York');

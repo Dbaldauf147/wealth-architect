@@ -7,6 +7,7 @@
 import { rangeWindows, spendByWindow, bandsFor, seriesFor } from './normalRange.js';
 import { findSuboptimalCharges, detectCardKey, CARD_LABELS } from './cardRewards.js';
 import { summarizeCardPromos, SEED_PROMOS } from './cardPromos.js';
+import { monthOutlook, topRows } from './monthOutlook.js';
 
 function parseDate(v) {
   if (!v) return null;
@@ -469,7 +470,45 @@ export function monthlyTrends({ transactions, weekEnd }) {
    mail was sent — an email could state a weekly total smaller than one of the
    top merchants it listed for that same week. `asOf` stays overridable so a
    caller can still ask what the world looked like at some other moment. */
-export function buildWeeklySummary({ transactions, start, end, asOf = end, accountNicknames = {}, accountGroups = {}, rangeExcludedCategories = [], cardMap = {}, cardPromos = null, promoTags = null }) {
+const MONTH_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/**
+ * The month's projected income and spending for the email's two stacked
+ * charts — the same figures as a clicked month on Overshot (lib/monthOutlook).
+ *
+ * It looks at the ledger as it stood at `asOf`. When `asOf` is the last day
+ * of a month there is nothing left of it to project, so the month that
+ * starts the next morning is projected instead.
+ *
+ * @param commissions  the Commissions table, or null when it couldn't be read
+ *                     (the projection then carries base salary only, and says so)
+ * @returns null without a ledger, else
+ *   { key, label, status, commissionsKnown, stillDue, net,
+ *     income:   { actual, projected, rows: [{ name, actual, projected, other? }] },
+ *     spending: { actual, projected, rows: [...] } }   rows cut to the largest few
+ */
+export function monthProjection({ transactions, incomeCategories = [], commissions = null, asOf = new Date() }) {
+  const cutoff = asOf.getTime();
+  const seen = (transactions || []).filter(t => { const d = parseDate(t.date); return d && d.getTime() <= cutoff; });
+  const next = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate() + 1, 12);
+  const today = next.getMonth() !== asOf.getMonth() ? next : asOf;
+  const o = monthOutlook({ transactions: seen, incomeCategories, commissions: commissions || [], today });
+  if (!o) return null;
+  const [y, m] = o.key.split('-').map(Number);
+  return {
+    key: o.key,
+    label: `${MONTH_LONG[m - 1]} ${y}`,
+    status: o.status,
+    commissionsKnown: commissions != null,
+    stillDue: o.stillDue,
+    net: o.net,
+    // Payroll first, in its fixed order, so the stack reads the same every week.
+    income: { ...o.income, rows: [...o.income.rows.filter(r => r.payroll), ...topRows(o.income.rows.filter(r => !r.payroll), 4, 'Other income')] },
+    spending: { ...o.spending, rows: topRows(o.spending.rows, 6) },
+  };
+}
+
+export function buildWeeklySummary({ transactions, start, end, asOf = end, accountNicknames = {}, accountGroups = {}, rangeExcludedCategories = [], cardMap = {}, cardPromos = null, promoTags = null, incomeCategories = [], commissions = null }) {
   const inRange = (transactions || []).filter(t => withinRange(t, start, end) && !isTransferLike(t));
   // Prior week of the same length for week-over-week comparison
   const spanMs = end.getTime() - start.getTime();
@@ -598,6 +637,7 @@ export function buildWeeklySummary({ transactions, start, end, asOf = end, accou
     aboveRange,
     suboptimalCards,
     cardPromos: promoSummary,
+    monthProjection: monthProjection({ transactions, incomeCategories, commissions, asOf }),
     fmt,
   };
 }

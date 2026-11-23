@@ -215,6 +215,71 @@ function renderWeekCompareSvg(wc) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VB_W} ${VB_H}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block;max-width:100%;height:auto;">${gridLines}${yLabels}${xLabels}${normalLine}${thisLine}${priorDot}${todayDot}</svg>`;
 }
 
+// Categorical slots, in fixed order (dataviz reference palette; adjacent pairs
+// validated for colour-blind separation). Three of them sit under 3:1 against
+// white, which is why every chart using them has a legend table with the
+// figures beside it. The fold-in "everything else" row is always the gray.
+const SERIES = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6'];
+const SERIES_OTHER = '#94a3b8';
+// Base salary and commission keep their colour whether or not the other is there.
+const INCOME_FIXED = { 'Base salary': SERIES[0], Commission: SERIES[1] };
+
+/** Rows with a colour each: by name where one is reserved, otherwise the next free slot. */
+function colourRows(rows, fixed = {}) {
+  const free = SERIES.filter(c => !Object.values(fixed).includes(c));
+  let i = 0;
+  return rows.map(r => ({ ...r, color: r.other ? SERIES_OTHER : fixed[r.name] || free[i++ % free.length] }));
+}
+
+const PROJ = { w: 560, h: 150, pad: { top: 10, right: 70, bottom: 26, left: 66 } };
+
+// Two horizontal stacked bars on one dollar axis: what has happened so far in
+// the month, and where the month is projected to land. Segments are the
+// categories, in the same order and colour in both bars, 2px apart.
+function renderProjectionSvg(rows, { actual, projected, showActual }) {
+  const { w, h, pad } = PROJ;
+  const cW = w - pad.left - pad.right;
+  const bars = [
+    ...(showActual ? [{ label: 'So far', field: 'actual', total: actual }] : []),
+    { label: 'Projected', field: 'projected', total: projected },
+  ];
+  const scale = niceScale(Math.max(...bars.map(b => b.total), 1), 4);
+  const x = v => pad.left + (v / scale.yMax) * cW;
+  const barH = 30;
+  const band = (h - pad.top - pad.bottom) / bars.length;
+  const font = `font-family="-apple-system,'Segoe UI',sans-serif"`;
+
+  const grid = scale.ticks.map((t, i) => `
+    <line x1="${x(t).toFixed(1)}" x2="${x(t).toFixed(1)}" y1="${pad.top}" y2="${h - pad.bottom}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="${i === 0 ? '0' : '2 4'}" />
+    <text x="${x(t).toFixed(1)}" y="${h - pad.bottom + 15}" text-anchor="middle" font-size="10" fill="#94a3b8" ${font}>${fmtAxisDollar(t, scale.step)}</text>`).join('');
+
+  const drawn = bars.map((b, bi) => {
+    const top = pad.top + band * bi + (band - barH) / 2;
+    const segs = rows.map(r => ({ color: r.color, v: Math.max(0, r[b.field] || 0) })).filter(s2 => s2.v > 0);
+    let acc = 0;
+    const rects = segs.map((s2, i) => {
+      const x0 = x(acc) + (i > 0 ? 2 : 0);
+      acc += s2.v;
+      const x1 = x(acc);
+      const wd = Math.max(0, x1 - x0);
+      if (wd <= 0) return '';
+      // Rounded at the data end only.
+      if (i === segs.length - 1) {
+        const r = Math.min(4, wd, barH / 2);
+        return `<path d="M${x0.toFixed(1)},${top} H${(x1 - r).toFixed(1)} Q${x1.toFixed(1)},${top} ${x1.toFixed(1)},${top + r} V${top + barH - r} Q${x1.toFixed(1)},${top + barH} ${(x1 - r).toFixed(1)},${top + barH} H${x0.toFixed(1)} Z" fill="${s2.color}" />`;
+      }
+      return `<rect x="${x0.toFixed(1)}" y="${top}" width="${wd.toFixed(1)}" height="${barH}" fill="${s2.color}" />`;
+    }).join('');
+    const mid = top + barH / 2 + 4;
+    return `
+    <text x="${pad.left - 8}" y="${mid}" text-anchor="end" font-size="11" fill="#475569" ${font}>${b.label}</text>
+    ${rects}
+    <text x="${(x(b.total) + 6).toFixed(1)}" y="${mid}" font-size="11" font-weight="700" fill="#111111" ${font}>${money(Math.round(b.total)).replace(/\.00$/, '')}</text>`;
+  }).join('');
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block;max-width:100%;height:auto;">${grid}${drawn}</svg>`;
+}
+
 // Inline range sparkline mirroring the Budgets page "Normal Range Tracker"
 // graphic: a shaded green ±25% band, dashed average line, the 6-month spend
 // line, and dots with the current month accented (red when above range).
@@ -317,6 +382,7 @@ function renderNextCardBill(bill) {
 // stable key persisted in config; `label` is what the Settings UI shows.
 export const WEEKLY_EMAIL_SECTIONS = [
   { id: 'spendCharts', label: 'Spend charts (weekly + monthly)' },
+  { id: 'monthProjection', label: 'Month projection (income + spending)' },
   { id: 'aboveRange', label: 'Above Normal Range' },
   { id: 'suboptimalCards', label: 'Suboptimal Card Usage' },
   { id: 'cardPromos', label: 'Card Promotions' },
@@ -334,8 +400,9 @@ const LEGACY_SECTION_MAP = { monthCompare: 'spendCharts', weekCompare: 'spendCha
 
 // Reconcile a stored [{id, enabled}] config with the canonical list: keep the
 // stored order/enabled for known ids (migrating legacy ids), drop unknown ids,
-// and append any new sections (enabled) at the end so a future-added section
-// still shows up.
+// and slot any new section in (enabled) right after the section it follows in
+// the canonical list, so a section added later shows up where it was designed
+// to sit rather than at the bottom of an existing layout.
 export function normalizeEmailSections(stored) {
   const known = new Set(WEEKLY_EMAIL_SECTIONS.map(s => s.id));
   const out = [];
@@ -348,9 +415,12 @@ export function normalizeEmailSections(stored) {
       seen.add(id);
     }
   }
-  for (const s of WEEKLY_EMAIL_SECTIONS) {
-    if (!seen.has(s.id)) out.push({ id: s.id, enabled: true });
-  }
+  WEEKLY_EMAIL_SECTIONS.forEach((s, i) => {
+    if (seen.has(s.id)) return;
+    const prev = i > 0 ? out.findIndex(o => o.id === WEEKLY_EMAIL_SECTIONS[i - 1].id) : -1;
+    out.splice(prev + 1, 0, { id: s.id, enabled: true });
+    seen.add(s.id);
+  });
   return out;
 }
 
@@ -365,7 +435,7 @@ export function normalizeEmailSections(stored) {
 export function renderWeeklyEmailHtml(summary, opts = {}) {
   const chart = opts.chart || ((key, svg) => svg);
   const sections = normalizeEmailSections(opts.sections);
-  const { topCategories, topMerchants, uncategorized, monthlyTrends, monthCompare, weekCompare, aboveRange, suboptimalCards, cardPromos } = summary;
+  const { topCategories, topMerchants, uncategorized, monthlyTrends, monthCompare, weekCompare, aboveRange, suboptimalCards, cardPromos, monthProjection } = summary;
 
   const catBarMax = topCategories.length ? topCategories[0].amount : 1;
 
@@ -452,6 +522,70 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
         <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
           ${inner}
           <div style="font-size:11px;color:#94a3b8;margin-top:8px;">Excludes transfers, card payments, rent, investments, and retirement.</div>
+        </div>
+      </td>
+    </tr>`;
+  })();
+
+  // The month's projected income and projected spending, each one stacked
+  // chart with its categories listed underneath (the chart's legend and its
+  // table view in one). Same figures as a clicked month on Overshot.
+  parts.monthProjection = (() => {
+    const mp = monthProjection;
+    if (!mp) return '';
+    const showActual = mp.status !== 'next';
+    const side = (key, title, data, fixed, emptyNote) => {
+      if (data.projected == null) return `
+          <div style="font-size:15px;font-weight:700;letter-spacing:0.03em;text-transform:uppercase;color:#334155;margin-bottom:10px;">${title}</div>
+          <div style="font-size:13px;color:#64748b;">${emptyNote}</div>`;
+      const rows = colourRows(data.rows, fixed);
+      const num = 'padding:5px 0 5px 12px;font-size:12px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;';
+      const head = 'padding:0 0 4px 12px;font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#94a3b8;text-align:right;white-space:nowrap;';
+      const legend = rows.map(r => `
+            <tr>
+              <td style="padding:5px 8px 5px 0;width:10px;"><div style="width:10px;height:10px;border-radius:3px;background:${r.color};"></div></td>
+              <td style="padding:5px 0;font-size:12px;color:#111;">${escapeHtml(r.name)}</td>
+              ${showActual ? `<td style="${num}color:#64748b;">${money(r.actual)}</td>` : ''}
+              <td style="${num}color:#111;font-weight:600;">${money(r.projected || 0)}</td>
+            </tr>`).join('');
+      return `
+          <div style="font-size:15px;font-weight:700;letter-spacing:0.03em;text-transform:uppercase;color:#334155;margin-bottom:10px;">${title}</div>
+          ${chart(key, renderProjectionSvg(rows, { actual: data.actual, projected: data.projected, showActual }), { w: PROJ.w, h: PROJ.h })}
+          <table role="presentation" width="100%" style="border-collapse:collapse;margin-top:8px;">
+            <tr>
+              <td></td><td></td>
+              ${showActual ? `<td style="${head}">So far</td>` : ''}
+              <td style="${head}">Projected</td>
+            </tr>${legend}
+            <tr>
+              <td style="border-top:1px solid #e2e8f0;"></td>
+              <td style="padding:6px 0;font-size:12px;font-weight:700;color:#111;border-top:1px solid #e2e8f0;">Total</td>
+              ${showActual ? `<td style="${num}color:#64748b;border-top:1px solid #e2e8f0;">${money(data.actual)}</td>` : ''}
+              <td style="${num}color:#111;font-weight:700;border-top:1px solid #e2e8f0;">${money(data.projected)}</td>
+            </tr>
+          </table>`;
+    };
+    const incomeCell = side('incomeProjectionChart', 'Projected income', mp.income, INCOME_FIXED, 'No pay schedule to project income from yet.');
+    const spendCell = side('spendProjectionChart', 'Projected spending', mp.spending, {}, 'No earlier months to project spending from yet.');
+    const net = mp.net.projected;
+    const netLine = net == null ? '' : `
+          <div style="font-size:14px;color:#475569;margin-top:14px;">Projected to end ${escapeHtml(mp.label)} <strong style="color:${net < 0 ? '#b91c1c' : '#16a34a'};">${net < 0 ? '▼' : '▲'} ${money(Math.abs(net))} ${net < 0 ? 'over income' : 'under income'}</strong>.</div>`;
+    const notes = [
+      'Income: what has arrived, the paychecks still due on the pay schedule, and other income at its usual amount. Spending: what’s spent plus each category’s usual charges for the rest of the month. Transfers, card payments and investing are left out.',
+      mp.commissionsKnown ? '' : 'The commission tracker couldn’t be read, so no commission still to come is included.',
+    ].filter(Boolean).join(' ');
+    return `
+    <tr>
+      <td style="padding:0 28px 20px;">
+        <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;margin-bottom:14px;">${escapeHtml(mp.label)} — Where the Month Is Heading</div>
+          <table role="presentation" width="100%" style="border-collapse:collapse;">
+            <tr>
+              <td width="50%" valign="top" style="padding-right:12px;">${incomeCell}</td>
+              <td width="50%" valign="top" style="padding-left:12px;">${spendCell}</td>
+            </tr>
+          </table>${netLine}
+          <div style="font-size:11px;color:#94a3b8;margin-top:8px;">${notes}</div>
         </div>
       </td>
     </tr>`;
