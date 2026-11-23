@@ -22,7 +22,7 @@ function relTime(date) {
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export function SettingsPage() {
-  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay, rangeExcludedCategories, cardPromos, statementCloseDays, incomeCategories } = useData();
+  const { loading, error, lastSync, analytics, balances, transactions, accountNicknames, accountGroups, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, weeklyEmailSections, weeklyEmailDay, rangeExcludedCategories, cardPromos, statementCloseDays, incomeCategories, spendMonthPrefs } = useData();
   const { commissions } = useCommissions();
   const { refresh, updatePaymentReminderPrefs, updateCalendarSyncPrefs, updateWeeklyEmailSections, updateWeeklyEmailDay, toggleRangeExcludedCategory } = useDataActions();
   // Send day is synced via DataContext (Firestore) so the cron reads it; fall
@@ -48,9 +48,10 @@ export function SettingsPage() {
       cardPromos,
       incomeCategories: [...(incomeCategories || [])],
       commissions,
+      spendMonthPrefs,
     });
     return renderWeeklyEmailHtml(summary, { sections: weeklyEmailSections });
-  }, [transactions, accountNicknames, accountGroups, weeklyEmailSections, rangeExcludedCategories, cardPromos, incomeCategories, commissions]);
+  }, [transactions, accountNicknames, accountGroups, weeklyEmailSections, rangeExcludedCategories, cardPromos, incomeCategories, commissions, spendMonthPrefs]);
 
   // Which categories the "Above Normal Range" section is allowed to report on.
   // Every category with spend in the last 30 days gets a switch — the ones

@@ -571,7 +571,8 @@ export function renderWeeklyEmailHtml(summary, opts = {}) {
     const netLine = net == null ? '' : `
           <div style="font-size:14px;color:#475569;margin-top:14px;">Projected to end ${escapeHtml(mp.label)} <strong style="color:${net < 0 ? '#b91c1c' : '#16a34a'};">${net < 0 ? '▼' : '▲'} ${money(Math.abs(net))} ${net < 0 ? 'over income' : 'under income'}</strong>.</div>`;
     const notes = [
-      'Income: what has arrived, the paychecks still due on the pay schedule, and other income at its usual amount. Spending: what’s spent plus each category’s usual charges for the rest of the month. Transfers, card payments and investing are left out.',
+      'Income: what has arrived plus the paychecks still due on the pay schedule. Spending: what’s spent plus each category’s usual charges for the rest of the month, or your own expected amount where you’ve set one. Transfers, card payments and investing are left out.',
+      mp.hiddenSpending && mp.hiddenSpending.length ? `Switched off on the Spending tab and not counted here: ${escapeHtml(mp.hiddenSpending.join(', '))}.` : '',
       mp.commissionsKnown ? '' : 'The commission tracker couldn’t be read, so no commission still to come is included.',
     ].filter(Boolean).join(' ');
     return `

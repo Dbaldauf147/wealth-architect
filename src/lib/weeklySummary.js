@@ -8,6 +8,7 @@ import { rangeWindows, spendByWindow, bandsFor, seriesFor } from './normalRange.
 import { findSuboptimalCharges, detectCardKey, CARD_LABELS } from './cardRewards.js';
 import { summarizeCardPromos, SEED_PROMOS } from './cardPromos.js';
 import { monthOutlook, topRows } from './monthOutlook.js';
+import { activeHidden } from './monthFilter.js';
 
 function parseDate(v) {
   if (!v) return null;
@@ -482,17 +483,21 @@ const MONTH_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'Jul
  *
  * @param commissions  the Commissions table, or null when it couldn't be read
  *                     (the projection then carries base salary only, and says so)
+ * @param spendMonthPrefs  the Spending → This month filter and expected totals
+ *                     (lib/monthFilter), so the email matches that tab
  * @returns null without a ledger, else
  *   { key, label, status, commissionsKnown, stillDue, net,
  *     income:   { actual, projected, rows: [{ name, actual, projected, other? }] },
  *     spending: { actual, projected, rows: [...] } }   rows cut to the largest few
  */
-export function monthProjection({ transactions, incomeCategories = [], commissions = null, asOf = new Date() }) {
+export function monthProjection({ transactions, incomeCategories = [], commissions = null, spendMonthPrefs = null, asOf = new Date() }) {
   const cutoff = asOf.getTime();
   const seen = (transactions || []).filter(t => { const d = parseDate(t.date); return d && d.getTime() <= cutoff; });
   const next = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate() + 1, 12);
   const today = next.getMonth() !== asOf.getMonth() ? next : asOf;
-  const o = monthOutlook({ transactions: seen, incomeCategories, commissions: commissions || [], today });
+  const key = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const spendPrefs = { hidden: activeHidden(spendMonthPrefs, key), expected: spendMonthPrefs?.expected || {} };
+  const o = monthOutlook({ transactions: seen, incomeCategories, commissions: commissions || [], today, spendPrefs });
   if (!o) return null;
   const [y, m] = o.key.split('-').map(Number);
   return {
@@ -505,10 +510,11 @@ export function monthProjection({ transactions, incomeCategories = [], commissio
     // Payroll first, in its fixed order, so the stack reads the same every week.
     income: { ...o.income, rows: [...o.income.rows.filter(r => r.payroll), ...topRows(o.income.rows.filter(r => !r.payroll), 4, 'Other income')] },
     spending: { ...o.spending, rows: topRows(o.spending.rows, 6) },
+    hiddenSpending: o.spending.hidden,
   };
 }
 
-export function buildWeeklySummary({ transactions, start, end, asOf = end, accountNicknames = {}, accountGroups = {}, rangeExcludedCategories = [], cardMap = {}, cardPromos = null, promoTags = null, incomeCategories = [], commissions = null }) {
+export function buildWeeklySummary({ transactions, start, end, asOf = end, accountNicknames = {}, accountGroups = {}, rangeExcludedCategories = [], cardMap = {}, cardPromos = null, promoTags = null, incomeCategories = [], commissions = null, spendMonthPrefs = null }) {
   const inRange = (transactions || []).filter(t => withinRange(t, start, end) && !isTransferLike(t));
   // Prior week of the same length for week-over-week comparison
   const spanMs = end.getTime() - start.getTime();
@@ -637,7 +643,7 @@ export function buildWeeklySummary({ transactions, start, end, asOf = end, accou
     aboveRange,
     suboptimalCards,
     cardPromos: promoSummary,
-    monthProjection: monthProjection({ transactions, incomeCategories, commissions, asOf }),
+    monthProjection: monthProjection({ transactions, incomeCategories, commissions, spendMonthPrefs, asOf }),
     fmt,
   };
 }

@@ -14,6 +14,7 @@ import {
   applyOverrides,
 } from '../lib/categorize';
 import { normalizeEmailSections } from '../lib/renderWeeklyEmail';
+import { normalizeSpendPrefs, mergeSpendPrefs, spendPrefsFromLegacy } from '../lib/monthFilter';
 import { SEED_PROMOS } from '../lib/cardPromos';
 import { keepRentDismissals } from '../lib/rentDuplicates';
 import { paymentFromTransaction, mergeLoan, withBalanceEntry } from '../lib/loanInterest';
@@ -202,6 +203,21 @@ const loadSplitwisePrefs = () => {
   return { ...DEFAULT_SPLITWISE_PREFS, ...(stored || {}) };
 };
 const saveSplitwisePrefs = (v) => saveJSON('splitwisePrefs', v);
+// Spending → This month: the categories switched off and your own expected
+// month totals (lib/monthFilter). Synced so Overshot and the weekly email
+// project the same month. Before it synced it lived in three browser-only
+// keys, which seed it the first time.
+const loadSpendMonthPrefs = () => {
+  const stored = loadJSON('spendMonthPrefs', null);
+  if (stored) return normalizeSpendPrefs(stored);
+  const raw = k => { try { return localStorage.getItem(k); } catch { return null; } };
+  return spendPrefsFromLegacy({
+    hidden: raw('wa-spend-month-hidden'),
+    monthHidden: raw('wa-spend-month-hidden-this-month'),
+    expected: raw('wa-spend-month-expected'),
+  });
+};
+const saveSpendMonthPrefs = (v) => saveJSON('spendMonthPrefs', v);
 // Commissions page: which deal columns have been checked off ("figured out")
 // in the paycheck popup. { figured: { [dealKey]: 'YYYY-MM-DD' | null } } —
 // unmarking stores null rather than deleting, so a device that still has the
@@ -553,6 +569,10 @@ function mergedDiffersFromRemote(merged, remote) {
   if (JSON.stringify(merged.netWorthPrefs ?? null) !== JSON.stringify(remote.netWorthPrefs ?? null)) {
     return true;
   }
+  // Spending → This month filter — single object, compare normalized.
+  if (JSON.stringify(normalizeSpendPrefs(merged.spendMonthPrefs)) !== JSON.stringify(normalizeSpendPrefs(remote.spendMonthPrefs))) {
+    return true;
+  }
   // Short-term loan — single object, compare serialized.
   if (JSON.stringify(merged.shortTermLoan ?? null) !== JSON.stringify(remote.shortTermLoan ?? null)) {
     return true;
@@ -602,7 +622,7 @@ const EMPTY_LOCALS = {
   dateOverrides: {}, transactionNotes: {}, splitTags: {}, accountNicknames: {}, accountGroups: {},
   assetClasses: {}, netWorthCategories: {}, netWorthLiquidCategories: {}, netWorthPrefs: null,
   customAssets: [], customLiabilities: [], customAssetClasses: [],
-  hiddenCards: [], paymentReminderPrefs: {}, calendarSyncPrefs: {}, splitwisePrefs: {}, commissionReview: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
+  hiddenCards: [], paymentReminderPrefs: {}, calendarSyncPrefs: {}, splitwisePrefs: {}, spendMonthPrefs: null, commissionReview: {}, weeklyEmailSections: null, weeklyEmailDay: null, customCategories: [],
   cardPromos: null, cardPromosUpdatedAt: null, promoTags: {}, vendorAlerts: [], vendorAlertsUpdatedAt: null, watchedVendors: [], watchedVendorsUpdatedAt: null,
   hiddenCategories: new Set(), rangeExcludedCategories: [], rangeExcludedSeeded: false, shortTermLoan: null, robinhoodTrades: null,
   organizedCategories: new Set(), incomeCategories: new Set(), savedTxnViews: {},
@@ -646,6 +666,7 @@ function readLocalConfig() {
     paymentReminderPrefs: loadPaymentReminderPrefs(),
     calendarSyncPrefs: loadCalendarSyncPrefs(),
     splitwisePrefs: loadSplitwisePrefs(),
+    spendMonthPrefs: loadSpendMonthPrefs(),
     commissionReview: loadCommissionReview(),
     weeklyEmailSections: loadJSON('weeklyEmailSections', null),
     weeklyEmailDay: loadJSON('weeklyEmailDay', null),
@@ -732,6 +753,7 @@ function mergeConfig(remote, locals) {
     paymentReminderPrefs: { ...DEFAULT_PAYMENT_REMINDER_PREFS, ...(remote.paymentReminderPrefs || {}), ...(locals.paymentReminderPrefs || {}) },
     calendarSyncPrefs: { ...DEFAULT_CALENDAR_SYNC_PREFS, ...(remote.calendarSyncPrefs || {}), ...(locals.calendarSyncPrefs || {}) },
     splitwisePrefs: { ...DEFAULT_SPLITWISE_PREFS, ...(remote.splitwisePrefs || {}), ...(locals.splitwisePrefs || {}) },
+    spendMonthPrefs: mergeSpendPrefs(locals.spendMonthPrefs, remote.spendMonthPrefs),
     commissionReview: {
       figured: { ...(remote.commissionReview?.figured || {}), ...(locals.commissionReview?.figured || {}) },
     },
@@ -804,6 +826,7 @@ function buildSyncPayload(v) {
     paymentReminderPrefs: v.paymentReminderPrefs,
     calendarSyncPrefs: v.calendarSyncPrefs,
     splitwisePrefs: v.splitwisePrefs,
+    spendMonthPrefs: normalizeSpendPrefs(v.spendMonthPrefs),
     commissionReview: v.commissionReview || {},
     weeklyEmailSections: v.weeklyEmailSections,
     weeklyEmailDay: v.weeklyEmailDay ?? null,
@@ -923,6 +946,7 @@ export function DataProvider({ children }) {
   const [paymentReminderPrefs, setPaymentReminderPrefs] = useState(loadPaymentReminderPrefs);
   const [calendarSyncPrefs, setCalendarSyncPrefs] = useState(loadCalendarSyncPrefs);
   const [splitwisePrefs, setSplitwisePrefs] = useState(loadSplitwisePrefs);
+  const [spendMonthPrefs, setSpendMonthPrefs] = useState(loadSpendMonthPrefs);
   const [commissionReview, setCommissionReview] = useState(loadCommissionReview);
   // Live Splitwise data. Deliberately not persisted anywhere: a balance is
   // only worth showing if it is current.
@@ -1001,6 +1025,7 @@ export function DataProvider({ children }) {
     setPaymentReminderPrefs(m.paymentReminderPrefs); savePaymentReminderPrefs(m.paymentReminderPrefs);
     setCalendarSyncPrefs(m.calendarSyncPrefs); saveCalendarSyncPrefs(m.calendarSyncPrefs);
     setSplitwisePrefs(m.splitwisePrefs); saveSplitwisePrefs(m.splitwisePrefs);
+    setSpendMonthPrefs(m.spendMonthPrefs); saveSpendMonthPrefs(m.spendMonthPrefs);
     setCommissionReview(m.commissionReview); saveCommissionReview(m.commissionReview);
     setWeeklyEmailSections(m.weeklyEmailSections); saveWeeklyEmailSections(m.weeklyEmailSections);
     setWeeklyEmailDay(m.weeklyEmailDay); saveWeeklyEmailDay(m.weeklyEmailDay);
@@ -1141,7 +1166,7 @@ export function DataProvider({ children }) {
       categoryRules, subcategoryRules, categoryOverrides, subcategoryOverrides, dateOverrides,
       transactionNotes, splitTags, accountNicknames, accountGroups, cardMap, statementCloseDays, placeLinks, placeRules, cardPromos, cardPromosUpdatedAt, promoTags, vendorAlerts, vendorAlertsUpdatedAt, watchedVendors, watchedVendorsUpdatedAt, assetClasses,
       netWorthCategories, netWorthLiquidCategories, netWorthPrefs, customAssets,
-      customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, splitwisePrefs, commissionReview, weeklyEmailSections, weeklyEmailDay,
+      customLiabilities, customAssetClasses, hiddenCards, paymentReminderPrefs, calendarSyncPrefs, splitwisePrefs, spendMonthPrefs, commissionReview, weeklyEmailSections, weeklyEmailDay,
       customCategories, hiddenCategories, rangeExcludedCategories, rangeExcludedSeeded, shortTermLoan, robinhoodTrades, organizedCategories,
       incomeCategories, savedTxnViews, chartHiddenCats, chartHiddenSubs, txnColumnWidths: columnWidths,
       categoryColors, calendarColors, visibleColumns, activeTxnView, showAccounts, pareto8020View,
@@ -1199,6 +1224,7 @@ export function DataProvider({ children }) {
     paymentReminderPrefs,
     calendarSyncPrefs,
     splitwisePrefs,
+    spendMonthPrefs,
     commissionReview,
     weeklyEmailSections,
     weeklyEmailDay,
@@ -1853,6 +1879,17 @@ export function DataProvider({ children }) {
     setSplitwisePrefs(prev => {
       const next = { ...prev, ...(patch || {}) };
       saveSplitwisePrefs(next);
+      return next;
+    });
+  }, []);
+
+  // Change the Spending → This month filter or expected totals. `change` is a
+  // patch, or a function of the current prefs returning one.
+  const updateSpendMonthPrefs = useCallback((change) => {
+    setSpendMonthPrefs(prev => {
+      const patch = typeof change === 'function' ? change(prev) : change;
+      const next = normalizeSpendPrefs({ ...prev, ...(patch || {}), updatedAt: Date.now() });
+      saveSpendMonthPrefs(next);
       return next;
     });
   }, []);
@@ -2699,6 +2736,7 @@ export function DataProvider({ children }) {
     updatePaymentReminderPrefs,
     updateCalendarSyncPrefs,
     updateSplitwisePrefs,
+    updateSpendMonthPrefs,
     setCommissionFigured,
     updateWeeklyEmailSections,
     updateWeeklyEmailDay,
@@ -2781,6 +2819,7 @@ export function DataProvider({ children }) {
     updatePaymentReminderPrefs,
     updateCalendarSyncPrefs,
     updateSplitwisePrefs,
+    updateSpendMonthPrefs,
     setCommissionFigured,
     updateWeeklyEmailSections,
     updateWeeklyEmailDay,
@@ -2852,6 +2891,7 @@ export function DataProvider({ children }) {
     paymentReminderPrefs: shownPaymentPrefs,
     calendarSyncPrefs,
     splitwisePrefs,
+    spendMonthPrefs,
     commissionReview,
     splitwise,
     weeklyEmailSections,
@@ -2899,6 +2939,7 @@ export function DataProvider({ children }) {
     netWorthPrefs,
     calendarSyncPrefs,
     splitwisePrefs,
+    spendMonthPrefs,
     commissionReview,
     splitwise,
     weeklyEmailSections,

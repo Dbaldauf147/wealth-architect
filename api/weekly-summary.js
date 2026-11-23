@@ -235,6 +235,7 @@ export default async function handler(req, res) {
       promoTags: (config && config.promoTags) || null,
       incomeCategories: (config && Array.isArray(config.incomeCategories)) ? config.incomeCategories : [],
       commissions,
+      spendMonthPrefs: (config && config.spendMonthPrefs) || null,
     });
 
     summary.nextCardBill = await buildNextCardBill(transactions, config, process.env.WEEKLY_EMAIL_TZ || 'America/New_York');

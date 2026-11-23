@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useData } from '../contexts/DataContext';
+import { useData, useDataActions } from '../contexts/DataContext';
 import { useBudgets } from '../hooks/useBudgets';
 import { projectMonthSpending, sumDaily, withExpected } from '../lib/spendProjection';
-import { monthKeyOf, parseDefault, parseMonth, sameSet } from '../lib/monthFilter';
+import { monthKeyOf, activeHidden, sameSet } from '../lib/monthFilter';
 import { BudgetsPage } from './BudgetsPage';
 import { TrendsPage } from './TrendsPage';
 import styles from './OvershotPage.module.css';
@@ -26,23 +26,13 @@ const LINE = 'var(--color-text-primary)';
 // One colour per category, by its rank in the projection (the app's
 // categorical dataviz slots, then a second round of distinct hues).
 const CAT_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#8b5cf6', '#e0a40b', '#e0457b', '#0ea5b7', '#6b7280', '#84cc16', '#b45309', '#4f46e5', '#be185d', '#0f766e', '#a16207'];
-// Categories switched off on the This month tab: a view preference, kept in
-// this browser only. The page says so whenever any are off. Two layers
+// Categories switched off on the This month tab, in two layers
 // (lib/monthFilter): your default, which stands, and this month's filter,
-// which is dropped when the month turns over.
-const HIDDEN_KEY = 'wa-spend-month-hidden';
-const MONTH_HIDDEN_KEY = 'wa-spend-month-hidden-this-month';
-// Your own expected month total per category, in place of the projection:
-// kept in this browser, and standing until cleared.
-const EXPECTED_KEY = 'wa-spend-month-expected';
-function loadExpected() {
-  try {
-    const v = JSON.parse(localStorage.getItem(EXPECTED_KEY) || '{}');
-    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
-  } catch { return {}; }
-}
+// which is dropped when the month turns over. Synced with your own expected
+// totals as `spendMonthPrefs`, so Overshot's month panel and the weekly email
+// leave out the same categories and use the same expected amounts.
 // Your targets: one for the whole month and one per category. Standing numbers
-// (not tied to a month), kept in this browser like the expected values.
+// (not tied to a month), kept in this browser.
 const TARGETS_KEY = 'wa-spend-month-targets';
 function loadTargets() {
   try {
@@ -52,9 +42,6 @@ function loadTargets() {
   } catch { return { total: null, categories: {} }; }
 }
 const TARGET = 'var(--color-secondary, #0058be)';
-const readKey = k => { try { return localStorage.getItem(k); } catch { return null; } };
-function loadDefaultHidden() { return new Set(parseDefault(readKey(HIDDEN_KEY))); }
-function loadHidden() { return new Set(parseMonth(readKey(MONTH_HIDDEN_KEY), monthKeyOf()) ?? parseDefault(readKey(HIDDEN_KEY))); }
 const money = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
 const signed = n => (n > 0 ? '+' : n < 0 ? '−' : '') + money(Math.abs(n));
 const axis = n => (n >= 1000 ? `$${Math.round(n / 100) / 10}k` : `$${Math.round(n)}`);
@@ -181,30 +168,28 @@ function PaceChart({ p, cats, daily, totals, target, onPick, focused }) {
 }
 
 function ThisMonth() {
-  const { transactions, loading } = useData();
+  const { transactions, loading, spendMonthPrefs } = useData();
+  const { updateSpendMonthPrefs } = useDataActions();
   const { budgets } = useBudgets();
   const full = useMemo(() => (transactions?.length ? projectMonthSpending({ transactions, today: new Date() }) : null), [transactions]);
   // `hidden` is what this month shows; it starts from the default and any
   // change is saved for this month only.
-  const [defaultHidden, setDefaultHidden] = useState(loadDefaultHidden);
-  const [hidden, setHidden] = useState(loadHidden);
-  const saveHidden = next => { try { localStorage.setItem(MONTH_HIDDEN_KEY, JSON.stringify({ month: monthKeyOf(), hidden: [...next] })); } catch { /* private mode */ } return next; };
-  const saveAsDefault = () => {
-    try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...hidden])); localStorage.removeItem(MONTH_HIDDEN_KEY); } catch { /* private mode */ }
-    setDefaultHidden(new Set(hidden));
-  };
-  const backToDefault = () => {
-    try { localStorage.removeItem(MONTH_HIDDEN_KEY); } catch { /* private mode */ }
-    setHidden(new Set(defaultHidden));
-  };
-  const toggleCat = c => setHidden(prev => { const next = new Set(prev); if (next.has(c)) next.delete(c); else next.add(c); return saveHidden(next); });
-  const [expected, setExpected] = useState(loadExpected);
-  const setExpectedFor = (c, raw) => setExpected(prev => {
-    const next = { ...prev };
+  const defaultHidden = useMemo(() => new Set(spendMonthPrefs?.hidden || []), [spendMonthPrefs]);
+  const hidden = useMemo(() => new Set(activeHidden(spendMonthPrefs, monthKeyOf())), [spendMonthPrefs]);
+  const setHidden = next => updateSpendMonthPrefs({ month: monthKeyOf(), monthHidden: [...next] });
+  const saveAsDefault = () => updateSpendMonthPrefs({ hidden: [...hidden], month: null, monthHidden: [] });
+  const backToDefault = () => updateSpendMonthPrefs({ month: null, monthHidden: [] });
+  const toggleCat = c => updateSpendMonthPrefs(prev => {
+    const next = new Set(activeHidden(prev, monthKeyOf()));
+    if (next.has(c)) next.delete(c); else next.add(c);
+    return { month: monthKeyOf(), monthHidden: [...next] };
+  });
+  const expected = useMemo(() => spendMonthPrefs?.expected || {}, [spendMonthPrefs]);
+  const setExpectedFor = (c, raw) => updateSpendMonthPrefs(prev => {
+    const next = { ...(prev?.expected || {}) };
     const v = Number(raw);
     if (raw === '' || raw == null || !(v >= 0)) delete next[c]; else next[c] = Math.round(v * 100) / 100;
-    try { localStorage.setItem(EXPECTED_KEY, JSON.stringify(next)); } catch { /* private mode */ }
-    return next;
+    return { expected: next };
   });
   const [targets, setTargets] = useState(loadTargets);
   const saveTargets = next => { try { localStorage.setItem(TARGETS_KEY, JSON.stringify(next)); } catch { /* private mode */ } return next; };
@@ -380,8 +365,8 @@ function ThisMonth() {
               <i style={{ background: r.color }} />{r.category}
             </button>
           ))}
-          {offCount > 0 && <button type="button" className={own.chipLink} onClick={() => setHidden(saveHidden(new Set()))} data-testid="spend-show-all">Show all</button>}
-          {offCount < rows.length && rows.length > 1 && <button type="button" className={own.chipLink} onClick={() => setHidden(saveHidden(new Set(rows.map(r => r.category))))} data-testid="spend-hide-all">Hide all</button>}
+          {offCount > 0 && <button type="button" className={own.chipLink} onClick={() => setHidden(new Set())} data-testid="spend-show-all">Show all</button>}
+          {offCount < rows.length && rows.length > 1 && <button type="button" className={own.chipLink} onClick={() => setHidden(new Set(rows.map(r => r.category)))} data-testid="spend-hide-all">Hide all</button>}
         </div>
         {!sameSet(hidden, defaultHidden) && (
           <div className={own.filterNote} data-testid="spend-filter-month">
@@ -483,7 +468,7 @@ function ThisMonth() {
                 <td className={styles.num}>{money(p.soFar)}</td>
                 <td className={styles.num}>{money(p.remaining)}</td>
                 <td className={styles.num}>{money(p.projected)}</td>
-                <td className={styles.num}>{Object.keys(expected).some(c => rows.some(r => r.category === c)) && <button type="button" className={own.chipLink} onClick={() => { setExpected({}); try { localStorage.removeItem(EXPECTED_KEY); } catch { /* private mode */ } }} data-testid="spend-expected-clear-all">Clear all</button>}</td>
+                <td className={styles.num}>{Object.keys(expected).some(c => rows.some(r => r.category === c)) && <button type="button" className={own.chipLink} onClick={() => updateSpendMonthPrefs({ expected: {} })} data-testid="spend-expected-clear-all">Clear all</button>}</td>
                 <td className={styles.num} data-testid="spend-cat-target-total">{withTarget.length > 0 && money(catTargetTotal)}</td>
                 <td className={styles.num}>{money(p.typical)}</td>
                 <td className={styles.num}>{hasBasis ? signed(delta) : ''}</td>
