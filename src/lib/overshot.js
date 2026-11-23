@@ -2,7 +2,8 @@
 
    Income and spending are counted exactly as the Cash Flow page counts them
    (cashFlowBreakdown): transfers, card payments and investing are money
-   moving, not earned or spent; refunds net against their category, and a
+   moving, not earned or spent; rent received is income rather than a refund
+   of rent paid; other refunds net against their category, and a
    category that nets positive in a month is money in that month. So a month's numbers here
    are the same as that month's Income and Expenses on Cash Flow for the same
    window.
@@ -13,7 +14,7 @@
 
    Pure: no React, no DOM. */
 
-import { cashFlowBreakdown, cashFlowMonthKey } from './cashflowExport.js';
+import { cashFlowBreakdown, cashFlowMonthKey, flowCategory } from './cashflowExport.js';
 
 const DAY = 86400000;
 const round2 = n => Math.round(n * 100) / 100;
@@ -84,7 +85,7 @@ export function computeOvershot({ transactions, monthKeys, today = new Date() })
     if (!t.date || !t.amount) continue;
     const r = role(t);
     if (!r || r === 'move') continue;
-    const cat = t.category || 'Uncategorized';
+    const cat = flowCategory(t);
     const key = cashFlowMonthKey(t);
     if (!inWindow.has(key)) continue;
     const d = new Date(t.date);
@@ -245,7 +246,7 @@ export function incomeBuckets({ months, paychecks }) {
     let commission = 0;
     const otherBy = [];
     for (const [category, v] of Object.entries(m.incomeByCategory || {})) {
-      const pcs = mine.filter(p => (p.t?.category || 'Uncategorized') === category);
+      const pcs = mine.filter(p => flowCategory(p.t || {}) === category);
       const paid = pcs.reduce((s, p) => s + p.amount, 0);
       const f = paid > 0 ? Math.min(1, v / paid) : 0;
       const b = pcs.reduce((s, p) => s + p.base, 0) * f;
