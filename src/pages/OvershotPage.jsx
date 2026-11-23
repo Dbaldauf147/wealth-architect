@@ -14,6 +14,7 @@ import { computeIncome, commissionTakeHome, monthKeysEnding, monthKeyFor as inco
 import { baseSalary, paySchedule } from '../lib/commissionSchedule';
 import { projectedMonth } from '../lib/overIncomeAlert';
 import { monthOutlook } from '../lib/monthOutlook';
+import { activeHidden } from '../lib/monthFilter';
 import styles from './OvershotPage.module.css';
 
 /* When spending overtakes income. Same income/spending definitions as Cash
@@ -75,7 +76,7 @@ function niceMax(v) {
 }
 
 export function OvershotPage() {
-  const { transactions, balanceHistory, balances, incomeCategories, hiddenCards, statementCloseDays, accountNicknames, accountGroups, loading } = useData();
+  const { transactions, balanceHistory, balances, incomeCategories, hiddenCards, statementCloseDays, accountNicknames, accountGroups, loading, spendMonthPrefs } = useData();
   const { payouts: commissionPayouts, commissions } = useCommissions();
   const [range, setRange] = useState(12);
   const [surplusMode, setSurplusMode] = useState('cash'); // 'cash' | 'flow'
@@ -159,8 +160,10 @@ export function OvershotPage() {
 
   const outlook = useMemo(() => {
     if (!picked || !transactions?.length) return null;
-    return monthOutlook({ transactions, incomeCategories, commissions, key: picked, today: new Date() });
-  }, [picked, transactions, incomeCategories, commissions]);
+    // The Spending tab's filter and expected totals, so the two pages agree.
+    const spendPrefs = { hidden: activeHidden(spendMonthPrefs, picked), expected: spendMonthPrefs?.expected || {} };
+    return monthOutlook({ transactions, incomeCategories, commissions, key: picked, today: new Date(), spendPrefs });
+  }, [picked, transactions, incomeCategories, commissions, spendMonthPrefs]);
 
   // Each month's surplus split into invested and kept, beside what the cash
   // position actually did (needs the month-end before the window too).
@@ -759,10 +762,10 @@ function MonthDetail({ outlook, rentSubtracted, onClose }) {
   const max = Math.max(income.actual, income.projected || 0, spending.actual, spending.projected || 0, 1);
   const typicalNote = basis.length ? `the average of ${basis.map(short).join(', ')}` : 'no earlier months to average';
   const hint = status === 'current'
-    ? 'Projected income is what has come in plus the paychecks still due on the pay schedule, and other income (rent received, say) at its usual amount if it hasn’t arrived. Projected spending is what’s spent plus each category’s usual charges from today to month-end.'
+    ? 'Projected income is what has come in plus the paychecks still due on the pay schedule (and rent received, if it hasn’t arrived yet). Projected spending is what’s spent plus each category’s usual charges from today to month-end, or your own expected amount from the Spending tab where you’ve set one.'
     : status === 'next'
-      ? `Nothing has happened yet. Income is the pay schedule plus other income at its usual amount; spending is a typical month, ${typicalNote}.`
-      : `Expected going in: the pay the schedule planned for the month, other income at its usual amount, and a typical month’s spending at the time (${typicalNote}).`;
+      ? `Nothing has happened yet. Income is the pay schedule plus your usual rent received; spending is a typical month, ${typicalNote}.`
+      : `Expected going in: the pay the schedule planned for the month, your usual rent received, and a typical month’s spending at the time (${typicalNote}).`;
   const sides = [
     { id: 'income', label: 'Income', color: INCOME, data: income, good: 1 },
     { id: 'spending', label: 'Spending', color: SPENDING, data: spending, good: -1 },
@@ -827,7 +830,7 @@ function MonthDetail({ outlook, rentSubtracted, onClose }) {
                         const gap = r.projected == null ? null : r.actual - r.projected;
                         return (
                           <tr key={r.name}>
-                            <td>{r.name}</td>
+                            <td>{r.name}{r.own && <span className={styles.muted}> · your expected amount</span>}</td>
                             {status !== 'next' && <td className={styles.num}>{money(r.actual)}</td>}
                             <td className={styles.num}>{r.projected == null ? '—' : money(r.projected)}</td>
                             {status === 'past' && <td className={`${styles.num} ${gap != null && gap * side.good < -0.5 ? styles.negText : ''}`}>{gap == null || Math.abs(gap) < 0.5 ? '—' : signed(gap)}</td>}
@@ -842,6 +845,11 @@ function MonthDetail({ outlook, rentSubtracted, onClose }) {
           );
         })}
       </div>
+      {spending.hidden.length > 0 && (
+        <div className={styles.muted} style={{ marginTop: 10 }} data-testid="overshot-detail-hidden">
+          Left out, as switched off on the Spending tab: {spending.hidden.join(', ')}. With them, spending {status === 'current' ? 'so far' : 'that month'} is {money(spending.total)}, the bar above.
+        </div>
+      )}
       <div className={styles.detailNet} data-testid="overshot-detail-net">
         {status !== 'next' && <span>{status === 'current' ? 'Net so far' : 'Net'} <b className={net.actual < 0 ? styles.negText : ''}>{signed(net.actual)}</b></span>}
         <span>{status === 'past' ? 'Expected net' : 'Projected net'} <b className={net.projected < 0 ? styles.negText : ''}>{net.projected == null ? '—' : signed(net.projected)}</b></span>

@@ -112,3 +112,37 @@ describe('monthOutlook — other income', () => {
     expect(o.income.projected).toBe(5328 + 2400);
   });
 });
+
+describe('monthOutlook — agreeing with the other pages', () => {
+  it('counts other income as it arrives, without projecting more of it', () => {
+    // Interest every month: usual, but not rent, so nothing more is expected.
+    const t = ledger();
+    for (const m of [7, 8, 9, 10]) t.push(tx(`${m}/28/2026`, 400, 'Interest', 'Interest earned'));
+    t.push(tx('11/3/2026', 42, 'Interest', 'Interest earned'));
+    const o = monthOutlook({ ...args, transactions: t });
+    expect(row(o.income, 'Interest')).toMatchObject({ actual: 42, projected: 42 });
+    // What's in, plus exactly the pay still due: the Income page's figure plus the 42.
+    expect(o.income.projected).toBe(o.income.actual + o.stillDue);
+    expect(monthOutlook({ ...args, transactions: t, key: '2026-12' }).income.projected).toBe(5328 + 2400);
+  });
+
+  it('leaves out categories switched off on the Spending tab', () => {
+    const o = monthOutlook({ ...args, spendPrefs: { hidden: ['Travel', 'Groceries'], expected: {} } });
+    expect(o.spending.rows.map(r => r.name)).toEqual(['Rent']);
+    expect(o.spending.hidden).toEqual(['Groceries', 'Travel']);
+    expect(o.spending.actual).toBe(5500);
+    expect(o.spending.total).toBe(5800);
+    expect(o.spending.projected).toBe(5500);
+    expect(o.net.projected).toBe(7728 - 5500);
+  });
+
+  it('uses your own expected total this month, never below what is spent', () => {
+    const o = monthOutlook({ ...args, spendPrefs: { hidden: [], expected: { Groceries: 450, Rent: 100, Travel: 0 } } });
+    expect(row(o.spending, 'Groceries')).toMatchObject({ actual: 300, projected: 450, own: true });
+    expect(row(o.spending, 'Rent')).toMatchObject({ projected: 5500, own: true });
+    expect(row(o.spending, 'Travel')).toBeUndefined();
+    expect(o.spending.projected).toBe(5500 + 450);
+    // A finished month is still set against a typical month, not this month's number.
+    expect(row(monthOutlook({ ...args, key: '2026-10', spendPrefs: { hidden: [], expected: { Groceries: 450 } } }).spending, 'Groceries').projected).toBe(600);
+  });
+});

@@ -21,10 +21,16 @@
    A typical month's spending is each category's average over the three
    complete months before the one in question.
 
-   Income that isn't payroll (rent received, say) has no schedule. It's
-   projected at its usual amount: each category's median over the same three
-   months, so rent that arrives every month is expected again and a one-off
-   (a tax refund) isn't. Once more than that has arrived, what arrived stands.
+   Income that isn't payroll has no schedule, so it counts once it arrives
+   and isn't projected — which keeps this month's projected income equal to
+   the Income page's "month, expected" plus whatever else Cash Flow counts as
+   income. The one exception is rent received: it comes every month, so until
+   it lands it's expected at its usual amount (its median over the same three
+   months), and next month includes it.
+
+   Spending follows the Spending → This month tab (`spendPrefs`): categories
+   switched off there are left out of both columns, and a category you've
+   given your own expected month total uses that in place of the projection.
 
    Pure: no React, no DOM. */
 
@@ -33,7 +39,7 @@ import { computeIncome, commissionTakeHome, monthKeysEnding } from './income.js'
 import { baseSalary, paySchedule, payByMonth, commissionRows, addMonths } from './commissionSchedule.js';
 import { payouts, expectedPayouts } from './commissions.js';
 import { projectMonthSpending } from './spendProjection.js';
-import { isMoneyMove } from './cashflowExport.js';
+import { isMoneyMove, RENT_RECEIVED } from './cashflowExport.js';
 
 const round2 = n => Math.round(n * 100) / 100;
 const TYPICAL_MONTHS = 3;
@@ -53,18 +59,21 @@ const total = (rows, f) => round2(rows.reduce((s, r) => s + (r[f] || 0), 0));
  * @param incomeCategories  the Income bucket (for telling payroll apart)
  * @param commissions       the Commissions table, or null/[] when it isn't known
  * @param key               the month, 'YYYY-MM' (default: today's)
+ * @param spendPrefs        { hidden: [category], expected: { [category]: amount } } from the
+ *                          Spending tab (hidden already resolved for the month), or null
  * @param today             "now"
  * @returns null when the month is outside the ledger and isn't next month, else {
  *   key, status: 'past' | 'current' | 'next',
  *   income:   { actual, projected (null = no pay schedule for it), rows: [{ name, actual, projected, payroll }] },
- *   spending: { actual, projected (null = no earlier months to go by), rows: [{ name, actual, projected }] },
+ *   spending: { actual, projected (null = no earlier months to go by), rows: [{ name, actual, projected, own? }],
+ *               hidden: [category] switched off on the Spending tab and left out, total (actual, hidden included) },
  *   net:      { actual, projected (null when either side is) },
  *   basis:    the complete months "typical" spending was averaged over, oldest first,
  *   stillDue: paychecks still expected this month (current only),
  * }
  * Rows are largest first, by the larger of actual and projected.
  */
-export function monthOutlook({ transactions, incomeCategories, commissions, key, today = new Date() }) {
+export function monthOutlook({ transactions, incomeCategories, commissions, key, today = new Date(), spendPrefs = null }) {
   if (!transactions?.length) return null;
   const nowKey = monthKeyFor(today);
   const month = key || nowKey;
@@ -100,7 +109,8 @@ export function monthOutlook({ transactions, incomeCategories, commissions, key,
   const before = keys.filter(k => k < month && k !== nowKey && Object.keys(byKey[k]?.spendingByCategory || {}).length);
   const basis = before.slice(-TYPICAL_MONTHS);
 
-  // Other income at its usual amount, or what has arrived if that's more.
+  // Other income counts as it arrives; rent received is also expected at its
+  // usual amount until it does.
   const basisBuckets = incomeBuckets({ months: basis.map(k => byKey[k]), paychecks });
   const otherActual = Object.fromEntries(bucket.otherBy.map(o => [o.category, o.amount]));
   const otherNames = new Set(Object.keys(otherActual));
@@ -111,7 +121,8 @@ export function monthOutlook({ transactions, incomeCategories, commissions, key,
     { name: COMMISSION, actual: bucket.commission, projected: planned ? planned.commission : null, payroll: true },
     ...[...otherNames].map(name => {
       const actual = otherActual[name] || 0;
-      return { name, actual, projected: status === 'past' ? usual(name) : Math.max(actual, usual(name)), payroll: false };
+      const expects = name === RENT_RECEIVED ? usual(name) : 0;
+      return { name, actual, projected: status === 'past' ? (name === RENT_RECEIVED ? expects : actual) : Math.max(actual, expects), payroll: false };
     }),
   ].filter(r => r.actual > 0.005 || r.projected > 0.005);
 
@@ -134,12 +145,23 @@ export function monthOutlook({ transactions, incomeCategories, commissions, key,
   } else if (basis.length) {
     projectedBy = typical;
   }
+  // Your own expected total for the month in progress stands in for the
+  // projection (never below what's already spent), as on the Spending tab.
+  const own = status === 'current' && projectedBy ? spendPrefs?.expected || {} : {};
+  const off = new Set(spendPrefs?.hidden || []);
   const names = new Set([...Object.keys(actualBy), ...Object.keys(projectedBy || {})]);
-  const spendingRows = [...names].map(name => ({
-    name,
-    actual: round2(actualBy[name] || 0),
-    projected: projectedBy ? round2(projectedBy[name] || 0) : null,
-  })).filter(r => r.actual > 0.005 || r.projected > 0.005);
+  const allSpending = [...names].map(name => {
+    const actual = round2(actualBy[name] || 0);
+    const mine = own[name] >= 0 ? Math.max(actual, own[name]) : null;
+    return {
+      name,
+      actual,
+      projected: mine != null ? round2(mine) : projectedBy ? round2(projectedBy[name] || 0) : null,
+      ...(mine != null ? { own: true } : {}),
+    };
+  }).filter(r => r.actual > 0.005 || r.projected > 0.005);
+  const spendingRows = allSpending.filter(r => !off.has(r.name));
+  const hiddenSpending = allSpending.filter(r => off.has(r.name)).map(r => r.name).sort();
 
   const bySize = (a, b) => Math.max(b.actual, b.projected || 0) - Math.max(a.actual, a.projected || 0) || a.name.localeCompare(b.name);
   spendingRows.sort(bySize);
@@ -152,9 +174,11 @@ export function monthOutlook({ transactions, incomeCategories, commissions, key,
     rows: [...payroll, ...rest],
   };
   const spending = {
-    actual: m ? m.spending : 0,
+    actual: hiddenSpending.length ? total(spendingRows, 'actual') : m ? m.spending : 0,
     projected: projectedBy ? total(spendingRows, 'projected') : null,
     rows: spendingRows,
+    hidden: hiddenSpending,
+    total: m ? m.spending : 0,
   };
   return {
     key: month,
