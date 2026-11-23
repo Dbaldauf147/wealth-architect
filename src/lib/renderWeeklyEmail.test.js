@@ -193,3 +193,81 @@ describe('month-to-date movers', () => {
     expect(html).toMatch(/background:#16a34a;height:12px;width:53%;border-radius:3px;margin-left:auto;/);
   });
 });
+
+describe('month projection section', () => {
+  const projection = (over = {}) => ({
+    monthProjection: {
+      key: '2026-11', label: 'November 2026', status: 'current', commissionsKnown: true, stillDue: 3664,
+      net: { actual: -1451, projected: 651 },
+      income: { actual: 5064, projected: 8728, rows: [
+        { name: 'Base salary', actual: 2664, projected: 5328, payroll: true },
+        { name: 'Commission', actual: 0, projected: 1000, payroll: true },
+        { name: 'Rent received', actual: 2400, projected: 2400 },
+      ] },
+      spending: { actual: 6515, projected: 8077, rows: [
+        { name: 'Rent', actual: 5510, projected: 5510 },
+        { name: 'Groceries', actual: 420, projected: 800 },
+        { name: 'Everything else', actual: 585, projected: 1767, other: true },
+      ] },
+      ...over,
+    },
+  });
+  const charts = (patch) => {
+    const seen = {};
+    const summary = {
+      range: { start: '2026-11-09', end: '2026-11-15' }, topCategories: [], topMerchants: [], uncategorized: [],
+      monthlyTrends: null, monthCompare: null, weekCompare: null, aboveRange: [], suboptimalCards: null, cardPromos: null,
+      ...patch,
+    };
+    const html = renderWeeklyEmailHtml(summary, {
+      sections: [{ id: 'monthProjection', enabled: true }],
+      chart: (key, svg) => { seen[key] = svg; return `[${key}]`; },
+    });
+    return { html, seen };
+  };
+
+  it('draws one stacked chart for income and one for spending, with every category listed', () => {
+    const { html, seen } = charts(projection());
+    expect(Object.keys(seen)).toEqual(['incomeProjectionChart', 'spendProjectionChart']);
+    expect(html).toContain('November 2026 — Where the Month Is Heading');
+    for (const name of ['Base salary', 'Commission', 'Rent received', 'Rent', 'Groceries', 'Everything else']) expect(html).toContain(name);
+    expect(html).toContain('$8,728.00');
+    expect(html).toContain('$8,077.00');
+    expect(html).toContain('▲ $651.00 under income');
+    // Two bars in each chart: so far, and projected.
+    expect(seen.incomeProjectionChart).toContain('>So far<');
+    expect(seen.incomeProjectionChart).toContain('>Projected<');
+  });
+
+  it('keeps base salary blue and commission orange, and the fold-in row gray', () => {
+    const { seen } = charts(projection());
+    expect(seen.incomeProjectionChart).toContain('#2a78d6');
+    expect(seen.incomeProjectionChart).toContain('#eb6834');
+    expect(seen.spendProjectionChart).toContain('#94a3b8');
+  });
+
+  it('says so when the commission tracker could not be read, or a side has nothing to go on', () => {
+    expect(charts(projection({ commissionsKnown: false })).html).toContain('commission tracker couldn’t be read');
+    const none = charts(projection({ income: { actual: 0, projected: null, rows: [] }, net: { actual: 0, projected: null } }));
+    expect(none.html).toContain('No pay schedule to project income from yet.');
+    expect(Object.keys(none.seen)).toEqual(['spendProjectionChart']);
+    expect(none.html).not.toContain('under income');
+  });
+
+  it('is left out when there is no projection', () => {
+    expect(charts({ monthProjection: null }).html).not.toContain('Where the Month Is Heading');
+  });
+});
+
+describe('section order', () => {
+  it('slots a section added later in after the one it follows, keeping the saved order', async () => {
+    const { normalizeEmailSections } = await import('./renderWeeklyEmail.js');
+    // A layout saved before the section existed, in the user's own order.
+    const order = ['topCategories', 'spendCharts', 'aboveRange', 'suboptimalCards', 'cardPromos', 'topMerchants', 'monthlyTrends', 'uncategorized'];
+    const saved = order.map(id => ({ id, enabled: id !== 'spendCharts' }));
+    const ids = normalizeEmailSections(saved).map(s => s.id);
+    expect(ids).toEqual(['topCategories', 'spendCharts', 'monthProjection', ...order.slice(2)]);
+    expect(normalizeEmailSections(saved).find(s => s.id === 'spendCharts').enabled).toBe(false);
+    expect(normalizeEmailSections(null).map(s => s.id).slice(0, 2)).toEqual(['spendCharts', 'monthProjection']);
+  });
+});
