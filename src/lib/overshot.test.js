@@ -219,3 +219,22 @@ describe('subtractRent', () => {
     expect(r.expected[2]).toEqual(expected[2]);
   });
 });
+
+describe('rent received on Overshot', () => {
+  const t = [
+    tx('10/15/2026', 5000, 'Paycheck'),
+    tx('10/01/2026', -5500, 'Rent', 'Zelle payment to, Landlord, for, "rent"'),
+    tx('10/01/2026', 2400, 'Rent', 'Zelle payment from, Roommate, for, "rent"'),
+  ];
+  const r = computeOvershot({ transactions: t, monthKeys: ['2026-10'], today: new Date(2026, 10, 5) });
+
+  it('shows it as income, with rent paid in full as spending', () => {
+    expect(r.months[0]).toMatchObject({ income: 7400, spending: 5500, net: 1900, over: false, rent: 5500 });
+    expect(r.months[0].incomeByCategory).toEqual({ Paycheck: 5000, 'Rent received': 2400 });
+  });
+
+  it('puts it in the other-income bucket', () => {
+    const b = incomeBuckets({ months: r.months, paychecks: [] });
+    expect(b['2026-10'].otherBy).toContainEqual({ category: 'Rent received', amount: 2400 });
+  });
+});

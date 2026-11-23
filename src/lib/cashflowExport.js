@@ -62,6 +62,26 @@ export function isRentIncome(t) {
   return /\brent\b/.test(desc);
 }
 
+// Rent coming in — a roommate's or tenant's share — is income, not a refund of
+// the rent paid out, even though both are usually filed under "Rent". It's a
+// positive amount filed under Rent, or one nobody has categorised whose
+// description says rent (a Zelle 'for "rent"'). A described "rent" inside some
+// other category stays there: a Rent-A-Car refund in Travel is a refund.
+const UNFILED = new Set(['', 'uncategorized', 'uncategorised']);
+export const RENT_RECEIVED = 'Rent received';
+export function isRentReceived(t) {
+  if (!isRentIncome(t)) return false;
+  const cat = (t.category || '').trim().toLowerCase();
+  const sub = (t.subcategory || '').trim().toLowerCase();
+  return cat === 'rent' || sub === 'rent' || UNFILED.has(cat);
+}
+
+/** The category a transaction is netted in when income and spending are
+ *  counted: its own, except rent received, which stands apart from rent paid. */
+export function flowCategory(t) {
+  return isRentReceived(t) ? RENT_RECEIVED : (t.category || 'Uncategorized');
+}
+
 /** Snap a date to the month whose 1st it falls closest to, returning a YYYY-MM
  *  key. If the date is closer to next month's 1st than to the current month's
  *  1st (i.e. it lands in the back half of the month), it rolls forward a month;
@@ -109,6 +129,8 @@ function digitsMatch(rawAcctNum, suffix) {
 //     or spending — buys, sells, reinvestments, the brokerage's side of a
 //     transfer, anything left uncategorised there — is money moving too.
 //     Dividends, interest and fees there still count.
+//   • Rent received is income in its own right (flowCategory): it doesn't net
+//     against the rent you pay.
 //   • Refunds net against the category they're in. A category is spending when
 //     it nets negative over the window; in a month where it nets positive (a
 //     refund with nothing to refund against), that month's net is money in.
@@ -186,7 +208,7 @@ export function cashFlowBreakdown(transactions, monthKeys) {
       continue;
     }
     if (isMoneyMove(t)) continue;
-    const cat = t.category || 'Uncategorized';
+    const cat = flowCategory(t);
     (signed[cat] ||= {})[key] = (signed[cat][key] || 0) + t.amount;
   }
 
@@ -215,7 +237,7 @@ export function cashFlowBreakdown(transactions, monthKeys) {
     const key = cashFlowMonthKey(t);
     if (!keys.has(key)) return null;
     if (isMoneyMove(t)) return 'move';
-    const v = signed[t.category || 'Uncategorized']?.[key] || 0;
+    const v = signed[flowCategory(t)]?.[key] || 0;
     return v > 0 ? 'income' : 'expense';
   };
 

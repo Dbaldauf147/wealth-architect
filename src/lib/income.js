@@ -30,7 +30,7 @@
 
    Pure: no React, no DOM. */
 
-import { cashFlowMonthKey, isRentIncome } from './cashflowExport.js';
+import { cashFlowMonthKey, isRentReceived, RENT_RECEIVED } from './cashflowExport.js';
 import { isPayroll } from './commissions.js';
 
 const DAY = 86400000;
@@ -47,18 +47,9 @@ export function isInvestmentIncome(t) {
   if (INVESTMENT_NAME.test(String(t.subcategory || '').trim())) return true;
   return INVESTMENT_TEXT.test(`${t.description || ''} ${t.fullDescription || ''}`);
 }
-// Rent coming in: a positive amount filed under Rent, or one nobody has
-// categorised whose description says rent (a Zelle 'for "rent"'). A described
-// "rent" inside some other category stays there — a Rent-A-Car refund in
-// Travel is a refund.
-const UNFILED = new Set(['', 'uncategorized', 'uncategorised']);
-export const RENT_SOURCE = 'Rent received';
-export function isRentReceived(t) {
-  if (!isRentIncome(t)) return false;
-  const cat = String(t.category || '').trim().toLowerCase();
-  const sub = String(t.subcategory || '').trim().toLowerCase();
-  return cat === 'rent' || sub === 'rent' || UNFILED.has(cat);
-}
+// Rent coming in counts as income on every page (cashflowExport isRentReceived).
+export { isRentReceived };
+export const RENT_SOURCE = RENT_RECEIVED;
 // A paycheck this little over base is payroll noise, not commission.
 const NOISE = 50;
 // Share of a pre-tax commission that reaches the account, until the ledger

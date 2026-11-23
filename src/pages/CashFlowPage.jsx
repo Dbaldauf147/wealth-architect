@@ -4,7 +4,7 @@ import { buildCardSchedule } from '../lib/cardSchedule';
 import { downloadXlsx } from '../lib/xlsx';
 import { buildCashPosition } from '../lib/cashPosition';
 import { SurplusSplit } from '../components/SurplusSplit';
-import { buildDeepDiveSheets, cashFlowBreakdown, cashFlowMonthKey, computeMonthReconciliation, monthLabel, prevMonthKey } from '../lib/cashflowExport';
+import { buildDeepDiveSheets, cashFlowBreakdown, cashFlowMonthKey, isRentReceived, RENT_RECEIVED, computeMonthReconciliation, monthLabel, prevMonthKey } from '../lib/cashflowExport';
 
 function fmt(n) {
   if (n == null) return '—';
@@ -119,7 +119,7 @@ export function CashFlowPage() {
     for (const t of transactions) {
       if (role(t) !== 'income') continue;
       const key = cashFlowMonthKey(t);
-      const subLabel = t.subcategory || t.category || 'Other';
+      const subLabel = isRentReceived(t) ? RENT_RECEIVED : t.subcategory || t.category || 'Other';
       const subs = (incomeSubs[key] ||= {});
       subs[subLabel] = (subs[subLabel] || 0) + t.amount;
     }

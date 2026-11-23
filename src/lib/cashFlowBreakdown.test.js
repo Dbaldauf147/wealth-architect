@@ -85,3 +85,28 @@ describe('activity inside an investment account', () => {
     expect(m).toMatchObject({ income: 12, expenses: 5, invested: 0 });
   });
 });
+
+describe('rent received', () => {
+  const joo = 'Zelle payment from, Joo Yeon Seo, for, "rent"';
+  const t = [
+    tx('11/13/2026', 2664, 'Paycheck'),
+    tx('11/02/2026', -5510.15, 'Rent', 'Venmo', 'Zelle payment to, Ye Tian Landlord, for, "rent"'),
+    tx('11/02/2026', 2200, 'Rent', 'Venmo', joo),
+    tx('11/02/2026', 200, 'Rent', 'Venmo', joo),
+    tx('11/05/2026', -300, 'Travel', 'Dan checking', 'Enterprise Rent-A-Car'),
+    tx('11/09/2026', 60, 'Travel', 'Dan checking', 'Enterprise Rent-A-Car refund'),
+  ];
+  const { totals, role } = cashFlowBreakdown(t, ['2026-11']);
+
+  it('is income, not a refund of the rent paid', () => {
+    expect(totals['2026-11'].income).toBeCloseTo(2664 + 2400);
+    expect(totals['2026-11'].expenses).toBeCloseTo(5510.15 + 240);
+    expect(role(t[2])).toBe('income');
+    expect(role(t[1])).toBe('expense');
+  });
+
+  it('leaves the surplus where it was, and other refunds netting', () => {
+    expect(totals['2026-11'].net).toBeCloseTo(2664 - 5510.15 + 2400 - 240);
+    expect(role(t[5])).toBe('expense');
+  });
+});
