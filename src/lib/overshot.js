@@ -66,7 +66,8 @@ function median(xs) {
  * @param today         "now": its month is reported as in progress, not judged
  * @returns {
  *   months:  [{ key, income, spending, net, over, gap, partial, runOutDate, drivers, cumulative, rolling,
- *              incomeByCategory, rent (rent paid, part of spending) }],
+ *              incomeByCategory, spendingByCategory (each category's net that month, on the side it fell),
+ *              rent (rent paid, part of spending) }],
  *   summary: { status, overCount, completeCount, totalGap, net, currentStreak, longestStreak, rolling, crossings },
  *   pace:    null | { key, income, spending, typicalIncome, typicalSpending, daysLeft, share, alreadyOver },
  * }
@@ -107,8 +108,12 @@ export function computeOvershot({ transactions, monthKeys, today = new Date() })
     // The categories that are money in this month (net positive), which is
     // what `income` adds up.
     const incomeByCategory = {};
-    for (const [cat, v] of Object.entries(byCat[key] || {})) if (v > 0) incomeByCategory[cat] = round2(v);
-    return { key, income: round2(income), spending: round2(spending), net, invested: round2(invested), kept: round2(kept), over: spending > income, gap: round2(Math.max(0, spending - income)), partial, cumulative, incomeByCategory, rent: round2(Math.min(spending, rentPaid[key] || 0)) };
+    const spendingByCategory = {};
+    for (const [cat, v] of Object.entries(byCat[key] || {})) {
+      if (v > 0) incomeByCategory[cat] = round2(v);
+      else if (v < 0) spendingByCategory[cat] = round2(-v);
+    }
+    return { key, income: round2(income), spending: round2(spending), net, invested: round2(invested), kept: round2(kept), over: spending > income, gap: round2(Math.max(0, spending - income)), partial, cumulative, incomeByCategory, spendingByCategory, rent: round2(Math.min(spending, rentPaid[key] || 0)) };
   });
 
   const complete = months.filter(m => !m.partial);
