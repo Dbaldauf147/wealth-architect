@@ -18,7 +18,7 @@ import { db } from '../firebase';
 
 const REF = ['hsa', 'default'];
 const CACHE = 'hsa:v1';
-const EMPTY = { rows: [], coverage: 'self', catchUp: false };
+const EMPTY = { rows: [], coverage: 'self', catchUp: false, plan: null };
 
 function readCache() {
   try { return { ...EMPTY, ...(JSON.parse(localStorage.getItem(CACHE)) || {}) }; }

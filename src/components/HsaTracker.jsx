@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import HsaCoverage from './HsaCoverage';
 import { parseHsaPaste, mergeHsaRows, summarizeHsa, hsaYears, hsaLimit, HSA_KINDS } from '../lib/hsa';
 
 /* The HSA sub-tab of Cards: paste activity from the HSA provider's site, see
@@ -18,7 +19,7 @@ const btn = { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7p
 const ghostBtn = { ...btn, background: 'transparent', color: 'var(--color-text-secondary)', border: '1px solid var(--border-ghost)' };
 
 export default function HsaTracker({ hsa }) {
-  const { rows, coverage, catchUp, save, error } = hsa;
+  const { rows, coverage, catchUp, plan, save, error } = hsa;
   const years = useMemo(() => {
     const ys = hsaYears(rows);
     const now = new Date().getFullYear();
@@ -71,6 +72,8 @@ export default function HsaTracker({ hsa }) {
         <Stat label={`Spent in ${year}`} value={fmt(summary.spending)} color={KIND_COLOR.spending} />
         <Stat label="Net change" value={fmt(summary.net)} sub={summary.other ? `Includes ${fmt(summary.other)} other (interest, transfers, fees)` : 'Contributions minus spending'} />
       </div>
+
+      <HsaCoverage plan={plan} spent={summary.spending} year={year} save={save} />
 
       <PasteImport rows={rows} save={save} />
 
