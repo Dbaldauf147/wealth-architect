@@ -305,3 +305,62 @@ export function hsaAlerts(rows, today = new Date()) {
     missing: missing.map(m => m.key),
   }];
 }
+
+/* The health plan behind the HSA, in-network: a deductible paid in full,
+   then coinsurance (insurance pays `coinsurance` of each bill, you the rest)
+   until what you've paid reaches the out-of-pocket max, after which insurance
+   pays everything. Money figures are per calendar year. */
+export const DEFAULT_PLAN = { deductible: 1700, coinsurance: 0.8, oopMax: 4500 };
+
+export function normalizePlan(plan) {
+  const p = { ...DEFAULT_PLAN, ...(plan || {}) };
+  const deductible = Math.max(0, Number(p.deductible) || 0);
+  const oopMax = Math.max(deductible, Number(p.oopMax) || 0);
+  const coinsurance = Math.min(1, Math.max(0, Number(p.coinsurance) || 0));
+  return { deductible, coinsurance, oopMax };
+}
+
+/* Total bills at which each phase ends. With 100% coinsurance the max is
+   reached the moment the deductible is; with 0% it is reached dollar for
+   dollar. */
+export function planBreakpoints(plan) {
+  const { deductible, coinsurance, oopMax } = normalizePlan(plan);
+  const youShare = Math.round((1 - coinsurance) * 1e6) / 1e6;
+  const oopAt = Math.round((youShare > 0 ? deductible + (oopMax - deductible) / youShare : deductible) * 100) / 100;
+  return { deductibleAt: deductible, oopAt };
+}
+
+/* How `bills` of in-network care in a year split between you and insurance. */
+export function planCost(bills, plan) {
+  const p = normalizePlan(plan);
+  const b = Math.max(0, Number(bills) || 0);
+  const { oopAt } = planBreakpoints(p);
+  let you;
+  let phase;
+  if (b <= p.deductible) { you = b; phase = 'deductible'; }
+  else if (b < oopAt) { you = p.deductible + (b - p.deductible) * Math.round((1 - p.coinsurance) * 1e6) / 1e6; phase = 'coinsurance'; }
+  else { you = p.oopMax; phase = 'covered'; }
+  const r2 = (n) => Math.round(n * 100) / 100;
+  you = r2(Math.min(you, p.oopMax, b));
+  return { bills: r2(b), you, insurance: r2(b - you), phase };
+}
+
+/* Where you stand given what you've paid out of pocket so far this year:
+   how much deductible and out-of-pocket room is left, which phase you're in,
+   and the total bills that would have taken you there. */
+export function planProgress(paid, plan) {
+  const p = normalizePlan(plan);
+  const spent = Math.min(Math.max(0, Number(paid) || 0), p.oopMax);
+  const youShare = Math.round((1 - p.coinsurance) * 1e6) / 1e6;
+  const bills = spent <= p.deductible ? spent
+    : spent >= p.oopMax ? planBreakpoints(p).oopAt
+    : p.deductible + (spent - p.deductible) / (youShare || 1);
+  const r2 = (n) => Math.round(n * 100) / 100;
+  return {
+    paid: r2(spent),
+    bills: r2(bills),
+    deductibleLeft: r2(Math.max(0, p.deductible - spent)),
+    oopLeft: r2(p.oopMax - spent),
+    phase: spent >= p.oopMax ? 'covered' : spent >= p.deductible && p.deductible < p.oopMax ? 'coinsurance' : 'deductible',
+  };
+}

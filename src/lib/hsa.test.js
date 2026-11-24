@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   parseHsaPaste, parseHsaDate, parseHsaMoney, classifyHsa, mergeHsaRows, summarizeHsa, hsaLimit, hsaYears, hsaAlerts, pastFullMonths,
+  DEFAULT_PLAN, normalizePlan, planBreakpoints, planCost, planProgress,
 } from './hsa';
 
 describe('parseHsaDate / parseHsaMoney', () => {
@@ -164,5 +165,28 @@ describe('hsaAlerts', () => {
     const [a] = hsaAlerts([], today);
     expect(a.title).toBe('HSA data missing for September 2026 and October 2026');
     expect(a.detail).toMatch(/No HSA activity/);
+  });
+});
+
+describe('health plan coverage', () => {
+  const plan = { deductible: 1700, coinsurance: 0.8, oopMax: 4500 };
+  it('finds where each phase ends', () => {
+    expect(planBreakpoints(plan)).toEqual({ deductibleAt: 1700, oopAt: 15700 });
+  });
+  it('splits bills between you and insurance', () => {
+    expect(planCost(1000, plan)).toEqual({ bills: 1000, you: 1000, insurance: 0, phase: 'deductible' });
+    expect(planCost(1700, plan)).toMatchObject({ you: 1700, insurance: 0, phase: 'deductible' });
+    expect(planCost(5000, plan)).toMatchObject({ you: 2360, insurance: 2640, phase: 'coinsurance' });
+    expect(planCost(15700, plan)).toMatchObject({ you: 4500, insurance: 11200, phase: 'covered' });
+    expect(planCost(30000, plan)).toMatchObject({ you: 4500, insurance: 25500, phase: 'covered' });
+  });
+  it('places what you have paid on the curve', () => {
+    expect(planProgress(500, plan)).toMatchObject({ bills: 500, deductibleLeft: 1200, oopLeft: 4000, phase: 'deductible' });
+    expect(planProgress(2360, plan)).toMatchObject({ bills: 5000, deductibleLeft: 0, oopLeft: 2140, phase: 'coinsurance' });
+    expect(planProgress(9000, plan)).toMatchObject({ paid: 4500, bills: 15700, oopLeft: 0, phase: 'covered' });
+  });
+  it('falls back to the default plan and tolerates odd input', () => {
+    expect(normalizePlan(undefined)).toEqual(DEFAULT_PLAN);
+    expect(planBreakpoints({ deductible: 1000, coinsurance: 1, oopMax: 3000 }).oopAt).toBe(1000);
   });
 });
