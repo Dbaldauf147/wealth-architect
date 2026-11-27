@@ -18,6 +18,14 @@ describe('monthForKind', () => {
     expect(monthForKind(t({ amount: -10 }))).toBe(null);
     expect(monthForKind(t({ category: 'Uncategorized', amount: 3000 }))).toBe(null);
   });
+  it('never asks about dividends or interest', () => {
+    expect(monthForKind(t({ category: 'Income', subcategory: 'Interest', amount: 4 }))).toBe(null);
+    expect(monthForKind(t({ category: 'Income', subcategory: 'Dividends', amount: 94 }))).toBe(null);
+    expect(monthForKind(t({ category: 'Income', description: 'Cash dividend of $94.26 from Vug', amount: 94.26 }))).toBe(null);
+    expect(monthForKind(t({ category: 'Income', description: 'Interest earned', amount: 3.1 }))).toBe(null);
+    expect(monthForKind(t({ category: 'Dividends', amount: 50 }), ['Dividends'])).toBe(null);
+    expect(monthForKind(t({ category: 'Paycheck', description: 'ACME PAYROLL', amount: 3000 }))).toBe('income');
+  });
   it('follows the Income bucket when one is set', () => {
     expect(monthForKind(t({ category: 'Commissions', amount: 500 }), ['Commissions'])).toBe('income');
     expect(monthForKind(t({ category: 'Paycheck', amount: 500 }), ['Commissions'])).toBe(null);
