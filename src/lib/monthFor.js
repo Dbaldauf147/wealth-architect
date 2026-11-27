@@ -16,7 +16,7 @@
    Pure: no React, no DOM. */
 
 import { cashFlowMonthKey, isRentIncome } from './cashflowExport.js';
-import { incomeCategorySet } from './income.js';
+import { incomeCategorySet, isInvestmentIncome } from './income.js';
 import { txnFallbackKey } from './categorize.js';
 
 // Asked only of transactions dated from here on: everything older has already
@@ -44,7 +44,8 @@ export function shiftMonthKey(key, n) {
 }
 
 /**
- * Whether a transaction is one the month question is asked about.
+ * Whether a transaction is one the month question is asked about. Dividends
+ * and interest never are: they belong to the month they post in.
  * @returns 'rent' (rent paid or received), 'income', or null
  */
 export function monthForKind(t, incomeCategories) {
@@ -54,6 +55,8 @@ export function monthForKind(t, incomeCategories) {
   if (cat === 'rent' || sub === 'rent') return 'rent';
   if (!(Number(t.amount) > 0)) return null;
   if (!incomeCategorySet(incomeCategories).has(cat)) return null;
+  // Dividends and interest are earned when they post; there's no month to pick.
+  if (isInvestmentIncome(t)) return null;
   return isRentIncome(t) ? 'rent' : 'income';
 }
 
